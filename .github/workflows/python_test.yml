@@ -1,0 +1,49 @@
+name: Tests
+
+on: [pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.6, 3.7, 3.8]
+
+    steps:
+    - name: clone repo
+      uses: actions/checkout@v2
+      with:
+        lfs: true
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        # setup netrc (password) for LT pypi
+        printf "\nmachine github.com\n login lt-research-bot\n password ${{ secrets.BOT_TOKEN }}\n" >> $HOME/.netrc
+        # setup netrc (password) for LT pypi
+        printf "\nmachine artifactory.lightricks.com\n login pypi-reader\n password ${{ secrets.PYPI_READER }}\n" >> $HOME/.netrc
+        python -m pip install --upgrade pip
+        pip uninstall PIL Pillow
+        pip install -r requirements.txt
+    - name: login GC
+      uses: google-github-actions/setup-gcloud@master
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Test with pytest
+      env:
+        CLEARML_API_ACCESS_KEY: ${{ secrets.CLEARML_API_ACCESS_KEY }}
+        CLEARML_API_SECRET_KEY: ${{ secrets.CLEARML_API_SECRET_KEY }}
+        CLEARML_API_HOST: https://api.lightricks.hosted.allegro.ai
+        CLEARML_WEB_HOST: https://app.lightricks.hosted.allegro.ai
+        CLEARML_FILES_HOST: https://files.lightricks.hosted.allegro.ai
+#        WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+      run: |
+        # run tests with more logging in case of failure
+        python -m pytest -ra --log-level=INFO tests

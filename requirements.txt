@@ -1,0 +1,11 @@
+--extra-index-url https://artifactory.lightricks.com/artifactory/api/pypi/pypi-local/simple
+black
+bump2version
+isort==5.7.0
+opencv-python-headless==4.5.3.56
+Pillow
+# jupytext # uncomment if you are  using jupiter
+pre-commit
+pytest
+pytorch-toolbox
+wandb
