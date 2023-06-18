@@ -11,36 +11,7 @@ sys.path.append('../search_data')
 
 from config import model_name
 
-
-# os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
-
-
-def create_condition(operator, *conditions):
-    """
-    Create a dictionary with conditions based on the specified operator.
-
-    Args:
-        operator (str): The logical operator ('$or' or '$and').
-        *conditions: Variable number of condition dictionaries.
-
-    Returns:
-        dict: The generated condition dictionary.
-    """
-    return {operator: list(conditions)}
-
-
-def create_contains_condition(field, value):
-    """
-    Create a dictionary with a '$contains' condition.
-
-    Args:
-        field (str): The field name to check for containment.
-        value (str): The value to search for.
-
-    Returns:
-        dict: The generated contains condition dictionary.
-    """
-    return {"$contains": f"{field}: {value}"}
+os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 
 
 def get_relevant(db, filter_input):
