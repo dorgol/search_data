@@ -4,7 +4,6 @@ from langchain.chains.qa_with_sources import load_qa_with_sources_chain
 from langchain.chat_models import ChatOpenAI
 
 from context import QUESTION_PROMPT, COMBINE_PROMPT
-import keys
 sys.path.append('../search_data')
 
 from config import model_name

@@ -6,8 +6,6 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
 
-import keys
-
 
 def indexing(split=False, **kwargs):
     # Load and process the text files
