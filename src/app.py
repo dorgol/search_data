@@ -1,8 +1,9 @@
+import os
 import streamlit as st
 from indexing import load_db
 from generate import get_relevant, summary_query, create_contains_condition
 
-
+os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 user_input = st.text_input("I'm looking for data about",
                            "number of installations per period in Facetune2")
 
