@@ -10,7 +10,7 @@ user_input = st.text_input("I'm looking for data about",
                            "number of installations per period in Facetune2")
 
 
-@st.cache()
+@st.cache
 def reindex():
     indexing(split=True, chunk_size=2000, chunk_overlap=400)
     vectordb = load_db()
