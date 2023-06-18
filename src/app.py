@@ -4,7 +4,6 @@ from indexing import load_db
 from generate import get_relevant, summary_query
 
 os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
-st.write(st.secrets["OPENAI_API_KEY"])
 
 user_input = st.text_input("I'm looking for data about",
                            "number of installations per period in Facetune2")
