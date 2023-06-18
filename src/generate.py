@@ -12,7 +12,8 @@ sys.path.append('../search_data')
 from config import model_name
 
 
-os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+# os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+
 
 def create_condition(operator, *conditions):
     """

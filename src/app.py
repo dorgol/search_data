@@ -5,6 +5,10 @@ from generate import get_relevant, summary_query
 
 os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 
+st.write(os.environ)
+
+st.write(st.secrets)
+
 user_input = st.text_input("I'm looking for data about",
                            "number of installations per period in Facetune2")
 
