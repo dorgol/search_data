@@ -68,7 +68,8 @@ def get_relevant(db, filter_input):
 
 
 def summary_query(docs, question):
-    llm = ChatOpenAI(model_name=model_name, temperature=0.5)
+    llm = ChatOpenAI(model_name=model_name, temperature=0.5, openai_api_key=os.environ['OPENAI_API_KEY'],
+                     openai_organization=os.environ['OPENAI_ORGANIZATION'])
     summary_chain = load_qa_with_sources_chain(llm=llm, chain_type="map_reduce", return_intermediate_steps=True,
                                                question_prompt=QUESTION_PROMPT, combine_prompt=COMBINE_PROMPT)
     summary_response = summary_chain({"input_documents": docs, "question": question}, return_only_outputs=False)
