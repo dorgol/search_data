@@ -11,7 +11,7 @@ user_input = st.text_input("I'm looking for data about",
 
 vectordb = load_db()
 retriever, docs = get_relevant(vectordb, user_input)
-st.write(vectordb.search("hello"))
+st.write(vectordb.asimilarity_search("hello", 5))
 response = summary_query(docs, user_input)
 
 st.write(response['output_text'])
