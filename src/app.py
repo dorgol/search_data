@@ -10,7 +10,7 @@ user_input = st.text_input("I'm looking for data about",
                            "number of installations per period in Facetune2")
 
 vectordb = load_db()
-st.write(vectordb)
+st.write(vectordb.as_retriever(search_kwargs={"k": 5}))
 retriever, docs = get_relevant(vectordb, user_input)
 st.write(docs)
 response = summary_query(docs, user_input)
