@@ -6,14 +6,18 @@ from generate import get_relevant, summary_query
 os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["OPENAI_ORGANIZATION"] = st.secrets["OPENAI_ORGANIZATION"]
 
-
 user_input = st.text_input("I'm looking for data about",
                            "number of installations per period in Facetune2")
 
-indexing(split=True, chunk_size=2000, chunk_overlap=400)
-st.write(os.listdir("src/"))
-st.write(os.listdir())
-vectordb = load_db()
+
+@st.cache()
+def reindex():
+    indexing(split=True, chunk_size=2000, chunk_overlap=400)
+    vectordb = load_db()
+    return vectordb
+
+
+vectordb = reindex()
 retriever, docs = get_relevant(vectordb, user_input)
 response = summary_query(docs, user_input)
 
