@@ -26,7 +26,8 @@ def indexing(split=False, **kwargs):
     # Supplying a persist_directory will store the embeddings on disk
     persist_directory = 'db'
 
-    embedding = OpenAIEmbeddings()
+    embedding = OpenAIEmbeddings(openai_api_key=os.environ['OPENAI_API_KEY'],
+                                 openai_organization=os.environ['OPENAI_ORGANIZATION'])
 
     vectordb = Chroma.from_documents(documents=documents,
                                      embedding=embedding,
