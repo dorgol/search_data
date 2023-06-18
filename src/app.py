@@ -11,8 +11,8 @@ user_input = st.text_input("I'm looking for data about",
 
 vectordb = load_db()
 retriever = vectordb.as_retriever(search_kwargs={"k": 5})
-docs = retriever.get_relevant_documents("whatsapp")
-st.write(retriever.dict())
+docs = retriever.get_relevant_documents("videoleap")
+st.write(docs)
 retriever, docs = get_relevant(vectordb, user_input)
 st.write(docs)
 response = summary_query(docs, user_input)
