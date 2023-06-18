@@ -2,7 +2,9 @@ import streamlit as st
 from indexing import load_db
 from generate import get_relevant, summary_query, create_contains_condition
 
-# filter_input = st.text_input("filter queries by this text (don't be too restrictive)", "installations in Facetune2")
+
+st.write(st.secrets['OPENAI_API_KEY'])
+
 user_input = st.text_input("I'm looking for data about",
                            "number of installations per period in Facetune2")
 
