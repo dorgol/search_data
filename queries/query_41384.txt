@@ -1,0 +1,50 @@
+/*
+    Name: Felix - Blocked Screen Recording FT iOS
+    Query ID: 41384
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-28T10:10:02.362Z
+    */
+    -- ASSUMPTIONS
+-- Converted users are users that were blocked and purchased the subscription on the same day
+-- display type is when the block was first displayed 
+
+with data as (
+    select 
+        --date_trunc(experiment_started_meta, week) as event_timestamp_week,
+        
+        count(distinct dv.id_for_vendor) as count_users_in_variant,
+        count(distinct case when display_type in ('Screenshot Blocked','Screen Recording Blocked','Any Screen Capture Blocked') then dv.id_for_vendor end) as count_blocked,
+        count(distinct case when display_type in ('Screenshot Blocked','Screen Recording Blocked','Any Screen Capture Blocked') and original_purchase_date = state_change then dv.id_for_vendor end) as converted_users
+    
+    from 
+        `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dv
+    left join (select distinct 
+                    device.lt_defacto_id,
+                    date_trunc(original_purchase_date, day) as original_purchase_date
+                from 
+                    `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions`
+                where license_applications = 'facetune2'
+                and payments.revenue_so_far > 0 ) subs on dv.lt_defacto_id = subs.lt_defacto_id
+    left join  (select distinct
+                    platform_device_id as id_for_vendor,
+                    date_trunc(meta_received_at, day) as state_change
+                from 
+                    `ltx-dwh-prod-raw.analytics_global.ltx_global_app_ab_test_assignment_changed_state`
+                where lower(experiment_name) like lower('%[FT-1080] Screenshot blocking upgrade V2%')
+                and experiment_state like '%displayed%') change on dv.id_for_vendor = change.id_for_vendor
+    
+    where
+        segmentation = '03 Existing Users'
+        and variant = 'Variant 1'
+        and lower(experiment) like lower('%[FT-1080] Screenshot blocking upgrade V2%')
+        
+    --group by 1
+    --order by 1 asc
+)
+
+select 
+    *,
+    (count_blocked/count_users_in_variant)*100 as blocked_rate,
+    (converted_users/count_blocked)*100 as conversion_rate_of_blocked,
+
+from data 

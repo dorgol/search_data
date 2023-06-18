@@ -1,0 +1,106 @@
+/*
+    Name: 20230124 - FT2 iOS - [FT-1062] Toolbar Categories V2 - Retention Rates by Time in Exp.
+    Query ID: 40595
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-26T10:45:29.952Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.id_for_vendor,
+        d.experiment_started_device,
+        experiment_started_meta,
+        timestamp_diff(current_timestamp(), experiment_started_meta, day) days_since_start,
+        d.display_type,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else country 
+        end as country,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+    and case 
+        when '{{display}}' = 'All' then true 
+        else  display_type = '{{display}}' end   
+    and case 
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then country not in ('United States','China')
+        when '{{countries}}' = 'All' then true
+        else country = '{{countries}}' end
+),
+
+user_totals as (
+    select
+        segmentation, 
+        variant,
+        time_in_exp,
+        sum(num_users) over (partition by segmentation, variant order by time_in_exp desc) num_users
+    from (
+        select
+            segmentation, 
+            variant,
+            case
+                when days_since_start >= 42 then 'week6'
+                when days_since_start >= 35 then 'week5'
+                when days_since_start >= 28 then 'week4'
+                when days_since_start >= 21 then 'week3'
+                when days_since_start >= 14 then 'week2'
+                when days_since_start >= 7 then 'week1'
+                when days_since_start >= 1 then 'week0'
+                when days_since_start >= 0 then 'day0'
+            end as time_in_exp,
+            count(distinct id_For_vendor) num_users
+        from users
+        group by 1,2,3
+    )
+)
+
+select
+    u.segmentation,
+    u.variant,
+    fg_timeframe,
+    count(distinct id_for_vendor) num_users,
+    max(total_users) total_users,
+    max(ut.num_users),
+    count(distinct id_for_vendor)/max(ut.num_users)*100 pct_total_users,
+from (
+    select
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_users,
+        case
+            when date_diff(fg.dt, date(experiment_started_meta), day) = 0 then 'day0'
+            when date_diff(fg.dt, date(experiment_started_meta), day) between 1 and 6 then 'week0'
+            when date_diff(fg.dt, date(experiment_started_meta), day) between 7 and 13 then 'week1'
+            when date_diff(fg.dt, date(experiment_started_meta), day) between 14 and 20 then 'week2'
+            when date_diff(fg.dt, date(experiment_started_meta), day) between 21 and 27 then 'week3'
+            when date_diff(fg.dt, date(experiment_started_meta), day) between 28 and 34 then 'week4'
+            when date_diff(fg.dt, date(experiment_started_meta), day) between 35 and 41 then 'week5'
+            when date_diff(fg.dt, date(experiment_started_meta), day) between 42 and 48 then 'week6'
+        end as fg_timeframe
+    from users u
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device_date` fg
+        on u.id_for_vendor = fg.platform_device_id
+        and app_name = 'facetune2'
+        and fg.dt >= date(experiment_started_meta)
+        and cntd_foregrounds > 0
+    -- where timestamp_diff(current_timestamp,experiment_started_meta, day) >= 7
+) u
+left join user_totals ut
+    on true
+    and u.segmentation = ut.segmentation 
+    and u.variant = ut.variant
+    and u.fg_timeframe = ut.time_in_exp
+group by 1,2,3
+order by 3,2,1

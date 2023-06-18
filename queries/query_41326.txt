@@ -1,0 +1,60 @@
+/*
+    Name: Felix - Same Day Conversion Rate (Onboarding - Correction)
+    Query ID: 41326
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-25T08:51:02.195Z
+    */
+    -- % of users that convert on first day 
+-- Find all users
+-- Find all subscriptions
+-- unified_subscriptions - day of PURCHASE (including unpaid) is same day as first launch
+-- calc: count(distinct subscription_id)/count(distinct defacto_id)
+
+declare start_date timestamp default '2022-01-01';
+
+with first_launches as (
+
+    select distinct
+                    lt_defacto_id,
+                    first_launch as first_launch,
+                    date_trunc(first_launch, month) as first_launch_month
+    from `ltx-dwh-prod-processed`.`agg`.`app_device`
+    where first_launch > start_date
+        and first_launch is not null
+        and app_name = 'videoleap'
+
+),
+
+subscriptions as (
+
+select distinct
+    device.lt_defacto_id,
+    lt_subscription_id,
+    original_purchase_date
+    from 
+        `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions`
+    where original_purchase_date > start_date
+        and original_purchase_date is not null
+        and license_applications = 'videoleap'
+        
+)
+    select 
+        first_launch_month,
+        count(distinct first_launches.lt_defacto_id) as count_launches,
+        count(distinct case when original_purchase_date = first_launch then lt_subscription_id end) as count_same_day_subscriptions,
+        count(distinct case when original_purchase_date = first_launch then lt_subscription_id end)/count(distinct first_launches.lt_defacto_id) as day0_conversion
+    
+    from 
+        first_launches
+    left join subscriptions using (lt_defacto_id)
+    group by 1
+    
+
+
+
+
+
+
+
+
+

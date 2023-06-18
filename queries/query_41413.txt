@@ -1,0 +1,20 @@
+/*
+    Name: VL Product Data Glossary - Installs Per Day
+    Query ID: 41413
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-03T10:39:08.791Z
+    */
+    -- Counts first launches perday 
+
+declare start_date date default '2023-01-01';
+
+select 
+    date_trunc(attribution_timestamp, week) as install_dt,
+    count(distinct attribution_user_id) as count_installs
+from 
+    `ltx-dwh-prod-processed`.`agg`.`app_attribution_user`
+where 
+    app_name = 'videoleap' -- videoleap_android
+    and first_active_dt > start_date
+group by 1
+order by 1

@@ -1,0 +1,71 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Trial Reminder Push Notifications
+    Query ID: 40534
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-01T07:47:45.962Z
+    */
+    with 
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        country,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1072]Lama Inpainting')
+    and display_type = '{{display}}'
+),
+
+first_installation_id_per_idfv as (
+  select distinct
+    u.id_for_vendor,
+    il.installation_id as first_installation_id
+  from users u
+  left join `ltx-dwh-prod-raw.analytics_global.ltx_global_app_device_info_log` il
+      on il.platform_device_id = u.id_for_vendor
+      and il.app_name = 'facetune2'
+  where true
+  qualify row_number() over (partition by u.id_for_vendor order by il.meta_received_at asc) = 1
+),
+
+campaign_users as (
+  select distinct
+    external_user_id,
+    campaign_name
+  from `ltx-dwh-prod-raw.analytics.backend_braze_push_send`
+  where true 
+  and campaign_name in ('FT2_iOS_TrailEndTrigger_20302022')
+)
+
+select  
+    segmentation,
+    variant,
+    cu.campaign_name,
+    max(total_users) users_in_variant,
+    count(distinct cu.external_user_id) users_in_variant_with_braze_sends,
+    count(distinct po.external_user_id) users_in_variant_with_braze_opens,
+from users u
+left join first_installation_id_per_idfv fid
+    on u.id_for_vendor = fid.id_for_vendor
+left join campaign_users cu 
+    on cu.external_user_id = fid.first_installation_id
+left join `ltx-dwh-prod-raw`.`analytics`.`backend_braze_push_open` po
+    on po.external_user_id = cu.external_user_id
+    and po.campaign_name = cu.campaign_name
+group by 1,2,3
+having users_in_variant_with_braze_sends > 0 
+order by 1,2,3

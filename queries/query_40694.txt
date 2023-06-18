@@ -1,0 +1,53 @@
+/*
+    Name: VL iOS - Assets first experiment - How many assets users select?
+    Query ID: 40694
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-16T06:54:30.968Z
+    */
+    with experiment_users as (
+    select distinct
+        variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_device,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and experiment = "Assets First Production"
+        and case when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                 when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                 when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                 end
+)
+
+, data as (
+    select
+        ex.variant,
+        ex.segmentation,
+        count(distinct imp.presentation_id) as import_screen_presentations,
+        count(distinct dis.presentation_id) as import_screen_dismissed,
+        count(distinct case when array_length(json_extract_array(dis.asset_selected_json, "$.selected_assets_details")) = 1 
+                    and json_extract(json_extract_array(asset_selected_json, "$.selected_assets_details")[offset(0)], "$.asset_type") like "%Video%" then dis.presentation_id end) as imports_with_1_selected_video,
+        count(distinct case when array_length(json_extract_array(dis.asset_selected_json, "$.selected_assets_details")) = 1 
+                    and json_extract(json_extract_array(asset_selected_json, "$.selected_assets_details")[offset(0)], "$.asset_type") like "%Image%" then dis.presentation_id end) as imports_with_1_selected_image,
+        count(distinct case when array_length(json_extract_array(dis.asset_selected_json, "$.selected_assets_details")) > 1 then dis.presentation_id end) as imports_with_more_than_1_selected_asset,
+    from experiment_users as ex
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_screen_presented` as imp
+        on imp.app_name = "videoleap"
+        and imp.reason = "home_plus_button"
+        and ex.experiment_started_device < imp.device_timestamp
+        and imp.platform_device_id = ex.id_for_vendor
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_screen_dismissed` as dis
+        on imp.presentation_id = dis.presentation_id
+        and dis.app_name = "videoleap"
+        and dis.reason = "add_to_project_button"
+    group by 1,2
+    having (count(distinct imp.platform_device_id) > 10)
+)
+
+select  
+    *,
+    -- num_users_selected_1_asset / num_users_chose_assets * 100 as pct_users_selected_1_asset
+    imports_with_1_selected_video / import_screen_dismissed * 100 as pct_imports_with_1_selected_video,
+    imports_with_1_selected_image / import_screen_dismissed * 100 as pct_imports_with_1_selected_image,
+    imports_with_more_than_1_selected_asset / import_screen_dismissed * 100 as pct_imports_with_more_than_1_selected_asset,
+from data

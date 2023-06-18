@@ -1,0 +1,60 @@
+/*
+    Name: [FT-1067] Beauty Feed - time on screen (per flow_id) - cumulative
+    Query ID: 40502
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-21T14:20:42.797Z
+    */
+    with feed_sessions as (
+    select distinct
+        f.screen_name,
+        f.reason,
+        f.feed_type,
+        f.platform_device_id,
+        f.session_id,
+        f.flow_id,
+        f.feed_screen_id,
+        f.device_timestamp as presented_device_timestamp,
+        f.meta_received_at as presented_meta_received_at,
+        fd.device_timestamp as dismissed_device_timestamp,
+        fd.meta_received_at as dismissed_meta_received_at,
+        timestamp_diff(fd.device_timestamp, f.device_timestamp, second) as time_on_screen
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_screen_presented` as f
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_screen_dismissed` as fd
+        on fd.meta_source = 'facetune2'
+        and fd.platform = 'ios'
+        and f.platform_device_id = fd.platform_device_id
+        and f.flow_id = fd.flow_id
+    where true
+        and f.meta_source = "facetune2"
+        and f.platform = "ios"
+        and date(f.meta_received_at) >= '{{start_date}}'
+),
+
+series as (
+select * from unnest(generate_array(0,1000)) as num_series
+)
+
+
+select *
+from (
+select
+    screen_name,
+    num_series,
+    max(total_num_screen_dismissed) as total_num_screen_dismissed,
+    sum(num_screen_dismissed) as num_screen_dismissed,
+    100* sum(num_screen_dismissed) / max(total_num_screen_dismissed) as pct_num_screen_dismissed
+from
+(
+select distinct
+    screen_name,
+    time_on_screen,
+    count(distinct flow_id) over (partition by screen_name, time_on_screen) as num_screen_dismissed,
+    count(distinct flow_id) over (partition by screen_name) as total_num_screen_dismissed,
+from feed_sessions
+) fs
+join series s
+    on fs.time_on_screen <= s.num_series
+group by 1,2
+)
+where num_series <= 90
+order by 1,2

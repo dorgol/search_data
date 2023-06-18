@@ -1,0 +1,54 @@
+/*
+    Name: feed export_id check
+    Query ID: 42008
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-19T06:51:25.107Z
+    */
+    select
+    "post_create" as source,
+    date_trunc(date(pc.created_at), week) as dt,
+    count(distinct pc.post_id) as num_posts,
+    count(distinct pc.export_id) as num_export_ids,
+    count(distinct ex.export_id) as num_export_ids_device,
+    count(distinct case when ex.export_id is not null then pc.post_id end) / count(distinct pc.post_id) * 100 as pct_posts_with_matching_device_export
+from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` as pc
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+    on lower(pc.export_id) = lower(ex.export_id)
+where date(pc.created_at) >= date_sub(current_date(), interval 1 year)
+    and date(pc.created_at) <= current_date()
+    and pc.app_name = "videoleap"
+group by 1,2
+    
+union all
+
+select
+    "post_published" as source,
+    date_trunc(date(pc.meta_received_at), week) as dt,
+    count(distinct pc.post_id) as num_posts,
+    count(distinct pc.export_id) as num_export_ids,
+    count(distinct ex.export_id) as num_export_ids_device,
+    count(distinct case when ex.export_id is not null then pc.post_id end) / count(distinct pc.post_id) * 100 as pct_posts_with_matching_device_data
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` as pc
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+    using(export_id)
+where date(pc.meta_received_at) >= date_sub(current_date(), interval 1 year)
+    and pc.meta_source = "videoleap"
+group by 1,2
+
+-- with raw as (
+--     select distinct
+--         pc.post_id,
+--         lower(pc.export_id) as export_id,
+--         lower(pp.export_id) as export_id_device
+--     from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` as pc
+--     left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` as pp
+--         using(post_id)
+--     where true
+--         and pc.app_name = "videoleap"
+-- )
+
+-- select 
+--     count(distinct post_id) as num_posts,
+--     count(distinct case when export_id_device <> export_id then post_id end) as num_posts_wit_no_matching_export_id,
+--     count(distinct case when export_id_device <> export_id then post_id end) / count(distinct post_id) * 100 as pct_posts_wit_no_matching_export_id
+-- from raw

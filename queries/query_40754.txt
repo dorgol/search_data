@@ -1,0 +1,87 @@
+/*
+    Name: VL iOS - Identifying SMBs
+    Query ID: 40754
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-06T14:27:13.576Z
+    */
+    
+with posts as (
+    select
+        post_id,
+        template_id,
+        date(created_at) as date,
+        c.tag as content_tag
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`, UNNEST(content_annotation) c
+)
+
+, installs as (
+    select distinct
+        platform_device_id,
+        date(first_active_dt) as first_dt,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where app_name = 'videoleap'
+    and date(first_active_dt) >= '2022-07-01')
+
+, users as (
+  select
+    'onboarding questionnaire' as level,
+    u.platform_device_id
+    
+  from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and pq.app_name = 'videoleap'
+        and pq.origin_page_index = 0
+        and pq.origin_page_name = 'So, what brings you here?'
+    where origin_page_response like '%business%'
+        and u.app_name = 'videoleap'
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+
+UNION ALL
+
+  select
+    'search terms' as level,
+    f.platform_device_id
+    
+  from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented` as f
+    where f.screen_name like "%search.%"
+        and f.meta_source = "videoleap" and f.platform = "ios"
+        and lower(f.search_query) like '%business%' 
+         or lower(f.search_query) like '%real estate%'
+         or lower(f.search_query) like '%product%'
+         or lower(f.search_query) like '%fashion%'
+         or lower(f.search_query) like '%food%'
+            --in ('real estate', 'tourism', 'restaurant', 'coffee', 'business', 'product')
+        
+UNION ALL
+
+  select
+    'content tags' as level,
+    es.id_for_vendor as platform_device_id
+    
+  from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started`  es
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_ended`  en
+        on es.template_editing_flow_id = en.template_editing_flow_id
+    inner join posts as p
+        on p.template_id = en.parent_template_id
+  where lower(p.content_tag) like '%business%'
+     or lower(p.content_tag) like '%real estate%'
+     or lower(p.content_tag) like '%product%'
+     or lower(p.content_tag) like '%fashion%'
+     or lower(p.content_tag) like '%food%'
+    --in ('tourism', 'real estate', 'restaurant', 'coffee', 'business', 'product')
+
+)
+
+select 
+    date_trunc(i.first_dt, week) as dt,
+    count(distinct i.platform_device_id) as all_users,
+    count(distinct case when level = 'onboarding questionnaire' then u.platform_device_id end) as smb_onboarding,
+    count(distinct case when level = 'search terms' then u.platform_device_id end) as smb_search,
+    count(distinct case when level = 'content tags' then u.platform_device_id end) as smb_tags
+from installs i
+    left join users u
+        on i.platform_device_id = u.platform_device_id
+group by 1
+order by 1 desc

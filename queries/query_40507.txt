@@ -1,0 +1,33 @@
+/*
+    Name: VL iOS - Assets first experiment - selected editor distribution
+    Query ID: 40507
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-30T13:49:30.497Z
+    */
+    with experiment_users as (
+    select distinct
+        variant,
+        id_for_vendor,
+        experiment_started_device,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and experiment = "Assets First Production"
+        and case when '{{segmentation}}' = 'All' then segmentation = "01 All Users"
+                 when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+                  
+)
+
+select distinct
+    ex.variant,
+    json_extract(input_value, "$.editor") as selected_editor,
+    count(distinct event_id) as num_times
+from experiment_users as ex
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` as b
+    on b.platform_device_id = ex.id_for_vendor
+    and b.device_timestamp > ex.experiment_started_device
+where app_name = "videoleap"
+    and screen_name = "new_project_wizard"
+    and button_identifier = "create_button"
+group by 1,2
+having (count(distinct event_id) > 20)

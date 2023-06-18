@@ -1,0 +1,77 @@
+/*
+    Name: Photoleap iOS - Ai Enhance v2 Experiment- variant exports
+    Query ID: 41350
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-10T15:49:48.260Z
+    */
+    with devices as
+(
+select 
+distinct
+segmentation,
+variant,
+id_for_vendor,
+experiment_started_meta
+from
+
+`ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+where application='editor'
+and experiment='Enhance V2'
+--and segmentation= 
+--'03 Existing Users'
+--'02 New Users'
+--and had_trial= true
+--and subscription_duration='1y'
+  and   case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                --when '{{segments}}' = 'All Users Without Existing Segmentation' then dav.segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+                end
+and display_type='activated_for_device'
+--and id_for_vendor='24179840-46FD-48EF-9079-3F3461E2C866'
+and variant !='Enabled'
+and variant='Variant 1'
+and experiment_started_meta>='2023-04-15'
+
+)
+
+select
+*
+from
+(
+select
+exps.preset_name,
+count(distinct exps.process_id) as exports,
+count(distinct exps.platform_device_id) as exporters,
+count(distinct exps.process_id)/count(distinct exps.platform_device_id) as exports_per_exporter
+from  devices as dav
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_flow_started` as ies
+on ies.id_for_vendor=dav.id_for_vendor
+and ies.meta_received_at>=dav.experiment_started_meta
+and ies.instant_edit_name='AIEnhance'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as fs
+on fs.platform_device_id=dav.id_for_vendor
+and fs.app_name='editor'
+and fs.meta_received_at>=dav.experiment_started_meta
+and fs.feature_name='ai_enhance'
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_exported` as iexp
+on iexp.id_for_vendor=dav.id_for_vendor
+and iexp.meta_received_at>=dav.experiment_started_meta
+and iexp.instant_edit_name='AIEnhance'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` as exps
+on exps.platform_device_id=dav.id_for_vendor
+and exps.app_name='editor'
+and exps.meta_received_at>=dav.experiment_started_meta
+and exps.export_source='ai_enhance'
+left join ltx-dwh-prod-raw.analytics.ios_editor_subscription_presented l
+on dav.id_for_vendor=l.id_for_vendor
+and l.meta_received_at>=dav.experiment_started_meta
+and l.source in ('ai_enhance.save','ai_enhance','ai_enhance.all','ai_enhance.retouch','ai_enhance.descratch','AIEnhance')
+left join ltx-dwh-prod-raw.analytics.ios_editor_subscription_purchase_succeeded r
+    on l.id_for_vendor=r.id_for_vendor
+    and l.presentation_id=r.presentation_id
+where exps.preset_name is not null
+group by 1
+--limit 100
+)

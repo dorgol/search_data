@@ -1,0 +1,51 @@
+/*
+    Name: VL iOS - % Template Exporters Wk0
+    Query ID: 40642
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-27T15:14:27.533Z
+    */
+    -- VL Feed Funnel
+
+with installs as (
+    select 
+        d.id_for_vendor as platform_device_id,
+        lt_defacto_id,
+        date(first_launch) as first_launch
+    from `ltx-dwh-prod-processed`.`devices`.`unified_devices` as d
+    where d.first_launch >= '2022-01-02'
+    and application = 'videoleap'
+    --and date_diff(date(current_date), date(d.first_launch), day) >7 -- out of trial period
+    )
+ 
+        
+, actions as (
+        
+ 
+         select 
+             date_trunc(first_launch,{{period}}) as install_dt,
+             count(distinct u.platform_device_id) as cohort,
+             count(distinct case when xx.parent_template_id is not null then xx.id_for_vendor end) as remake_exporters,
+             count(distinct case when xx.parent_template_id is null then xx.id_for_vendor end) as og_exporters,
+             count(distinct xx.id_for_vendor) as total_exporters
+             
+         from installs u
+         left join (select xs.id_for_vendor, ex.meta_received_at, xs.parent_template_id
+                        from `ltx-dwh-prod-raw.analytics.ios_videoleap_media_export_started` xs
+                    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_exported` ex
+                        on xs.id_for_vendor = ex.id_for_vendor
+                        and xs.export_id = ex.export_id) xx
+                    on xx.id_for_vendor = u.platform_device_id
+                    and date(xx.meta_received_at) <= date_add(date(first_launch), interval 7 day) -- week0
+        where date(first_launch) < date_trunc(current_date(),{{period}})
+         group by 1
+    
+        )
+        
+    select
+        *,
+        safe_divide(remake_exporters, cohort)*100 as remake_exporter_pct,
+        safe_divide(og_exporters, cohort)*100 as og_exporter_pct,
+        safe_divide(total_exporters, cohort)*100 as total_exporter_pct
+    from actions a
+
+    

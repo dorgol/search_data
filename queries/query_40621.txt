@@ -1,0 +1,63 @@
+/*
+    Name: 20230124 - FT2 iOS - [FT-1062] Toolbar Categories V2 - Exports during Trial
+    Query ID: 40621
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-27T09:58:02.652Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        original_purchase_date
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1062]Toolbar Categories V2')
+    and display_type = 'displayed'
+    and `original_purchase_date` >= experiment_started_meta
+    and had_trial
+    and `is_in_trial_period` = false
+)
+
+select
+    segmentation,
+    variant,
+    count(distinct platform_device_id) num_users,
+    count(distinct e_platform_device_id) num_exporters,
+    count(distinct e_platform_device_id)/count(distinct platform_device_id)*100 pct_exporters_during_trial,
+    count(distinct e_editing_session_id)/count(distinct editing_session_id)*100 export_rate_of_used,
+    count(distinct case when reason = 'accepted' then e_editing_session_id end)/count(distinct editing_session_id)*100 export_rate_of_accepted,
+    count(distinct e_event_id)/count(distinct platform_device_id) exports_per_device,
+from (
+    select distinct
+        segmentation,
+        variant,
+        e.platform_device_id as e_platform_device_id,
+        fe.platform_device_id,
+        fe.editing_session_id,
+        e.editing_session_id e_editing_session_id,
+        e.event_id as e_event_id,
+        fe.reason,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.app_name = 'facetune2'
+        and fe.meta_received_at >= '2023-01-24'
+        and fe.meta_received_at between original_purchase_date and timestamp_add(original_purchase_date, interval 7 day)
+        and fe.platform_device_id = u.id_for_vendor
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_ended` e
+        on fe.editing_session_id = e.editing_session_id
+)
+group by 1,2
+order by 1,2

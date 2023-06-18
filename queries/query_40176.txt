@@ -1,0 +1,20 @@
+/*
+    Name: Facetune Android: Subscription Screen Purchase Sources
+    Query ID: 40176
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-09T09:50:17.321Z
+    */
+    select
+    timestamp_trunc(d.meta_received_at, month) as month,
+    d.version_code,
+    d.source,
+    count(distinct d.installation_id) as users
+from `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_subscription_screen_displayed` d
+join `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_subscription_purchase_succeeded` s
+    on d.purchase_session_id = s.purchase_session_id
+    and s.meta_received_at >= timestamp_sub(current_timestamp(), interval 180 day)
+where true
+and d.meta_received_at >= timestamp_sub(current_timestamp(), interval 180 day)
+group by 1,2,3
+having users > 500
+order by 1,2,3

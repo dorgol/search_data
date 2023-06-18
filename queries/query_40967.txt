@@ -1,0 +1,57 @@
+/*
+    Name: [FT-1086] Video Toolbar Reorder - Video Conversions
+    Query ID: 40967
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-10T17:01:28.190Z
+    */
+    with users as (
+    select
+        segmentation,
+        application,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else country end as country,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and case
+        when '{{countries}}' = 'Global' then true
+        when '{{countries}}' = 'Rest of the world' then country not in ('United States', 'China')
+        else country = '{{countries}}' end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) = lower('[FT-1086] Video Toolbar Reorder')
+    and display_type = 'reached video editor'
+)
+
+select
+    u.segmentation,
+    u.experiment,
+    u.country,
+    u.variant,
+    count(distinct case when u.experiment_started_meta_by_type <= timestamp_sub(current_timestamp, interval 7 day) then u.id_for_vendor end) as day7users,
+    count(distinct s.id_for_vendor) as post_video_converters,
+    count(distinct case when s.revenue_so_far > 0 then s.id_for_vendor end) as post_video_paid_converters,
+    100*count(distinct s.id_for_vendor)/count(distinct u.id_for_vendor) as post_video_cvr,
+    100*count(distinct case when s.revenue_so_far > 0 and u.experiment_started_meta_by_type <= timestamp_sub(current_timestamp, interval 7 day) then s.id_for_vendor end)/
+            count(distinct case when u.experiment_started_meta_by_type <= timestamp_sub(current_timestamp, interval 7 day) then u.id_for_vendor end) as post_video_pcvr,
+from users u 
+left join `ltx-dwh-prod-processed.ab_test.raw_final_subs_and_variant` s
+    on u.experiment = s.experiment
+    and u.variant = s.variant
+    and u.segmentation = s.segmentation
+    and u.id_for_vendor = s.id_for_vendor
+    and s.original_purchase_date >= u.experiment_started_meta_by_type
+    and s.subscription_duration != 'l'
+    and product_category = 'subscription'
+group by 1,2,3,4
+order by 1,2,4

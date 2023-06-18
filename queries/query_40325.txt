@@ -1,0 +1,29 @@
+/*
+    Name: Facetune: Late Revenue Per Period (2022/23)
+    Query ID: 40325
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-15T11:53:22.378Z
+    */
+    with trans as (
+    select
+        date_trunc(date(purchase_date), {{period}}) as period,
+        round(sum(case when date(payments.first_payment_date) = date(purchase_date) and timestamp_trunc(attribution.attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription.subscription_duration = '1y' then payments.actual_proceeds end),0) as late_yearly_revenue,
+        round(sum(case when date(payments.first_payment_date) = date(purchase_date) and timestamp_trunc(attribution.attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription.subscription_duration = '1m' then payments.actual_proceeds end),0) as late_monthly_revenue,
+        round(sum(case when date(payments.first_payment_date) = date(purchase_date) and timestamp_trunc(attribution.attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) then payments.actual_proceeds end),0) as late_revenue,
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` t
+    where application = 'facetune2'
+    and date_trunc(date(purchase_date), {{period}}) >= '2022-01-01'
+    and date_trunc(date(purchase_date), {{period}}) <= '2023-03-11'
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(purchase_date), {{period}})
+    and case 
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then subscription.current_subscription_store_country not in ('US','CN')
+        else subscription.current_subscription_store_country = '{{countries}}' end
+    group by 1
+)
+
+select
+    trans.*,
+    100*(late_revenue/lag(late_revenue) over (order by period asc) - 1) as wow_change
+from trans
+order by 1

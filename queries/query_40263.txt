@@ -1,0 +1,52 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Accepted VIP Features - Normalized
+    Query ID: 40263
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-12T13:24:34.315Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1072]Lama Inpainting')
+    and display_type = 'entered photo editor'
+)
+
+select
+    variant,
+    segmentation,
+    feature_name,
+    count(distinct fs.usage_id) num_sessions_used_feature,
+    count(distinct aa.flow_id) num_sessions_attempted_accept,
+    count(distinct aa.event_id) num_times_attempted_accept,
+    count(distinct aa.event_id)/count(distinct fs.usage_id) as avg_attempted_accept_per_feature_session,
+    count(distinct case when aa.flow_id is not null then fs.usage_id end)/ count(distinct fs.usage_id)*100 pct_attempted_accepted_of_feature_used,
+from users u
+join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+    on u.id_for_vendor = fs.id_for_vendor
+    and fs.meta_received_at >= '{{first_day}}'
+    and fs.meta_received_at >= experiment_started_meta
+    -- and feature_name = 'Patch'
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_button_pressed` aa
+    on fs.usage_id = aa.flow_id
+    and aa.meta_received_at >= '{{first_day}}'
+    and destination in ( 'blocking_subscription_screen')
+    and button_identifier = 'accept'
+group by 1,2, 3
+order by 1,2, 4 desc

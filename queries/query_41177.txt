@@ -1,0 +1,22 @@
+/*
+    Name: PL android: New Installs Per Hour By Country
+    Query ID: 41177
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-06-11T05:21:38.577Z
+    */
+    select
+    app_real_world_name,
+        case when country in ('IN','BD','ID','US','MY','MM','VN','KH','TH','PK',
+        'DZ','IQ','TR','PH','MX','AR','BR','PE','CL','CO','EC'
+        ) then country else 'ROW' end as country,
+    date_trunc(f.first_launch,hour) as hour,
+    count(distinct f.lt_defacto_id) as installs,
+
+from `ltx-dwh-prod-processed`.`devices`.`unified_devices` f
+where f.application in (
+--'editor'
+ 'editor_android'
+)
+and first_launch >= '2023-04-13'
+group by 1,2,3
+order by 1,2,3

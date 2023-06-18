@@ -1,0 +1,16 @@
+/*
+    Name: FT Android Assignment Query
+    Query ID: 40746
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-29T14:24:46.040Z
+    */
+    select
+    experiment,
+    variant,
+    reason,
+    count(distinct installation_id)
+from `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_assignment_state_changed`
+where lower(experiment) like lower('%{{experiment}}%')
+and meta_received_at >= '{{activation date -1}}'
+group by 1,2,3
+order by 1,2,3

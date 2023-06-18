@@ -1,0 +1,43 @@
+/*
+    Name: Facetune Android: Period Feature Adoption
+    Query ID: 41469
+    Created By: Nicky Kamins
+    Last Updated At: 2023-06-12T12:03:17.906Z
+    */
+    create temp table pau as (
+    select
+        date_trunc(f.dt, {{period}}) as period,
+        count(distinct f.attribution_user_id) as active_users,
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` f
+    where date_trunc(dt, {{period}}) >= date_sub(current_date(), interval 90 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(dt, {{period}})
+    and f.app_name = 'facetune2_android'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+    group by 1
+);
+
+select
+    period,
+    active_users,
+    feature as feature_name,
+    count(distinct d.attribution_user_id) as feature_users,
+    100*count(distinct d.attribution_user_id)/active_users as feature_adoption,
+from pau p
+join `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_feature_started` f
+    on date_trunc(date(meta_received_at), {{period}}) = p.period
+    and date_trunc(date(meta_received_at), {{period}}) >= date_sub(current_date(), interval 90 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(meta_received_at), {{period}})
+join `ltx-dwh-prod-processed`.`ulei`.`ulei_att_user_groups_and_devices` d
+    on farm_fingerprint(f.installation_id) = d.lt_defacto_id
+    and d.application = 'facetune2_android'
+join `ltx-dwh-prod-processed`.`agg`.`app_attribution_user` a
+    on d.attribution_user_id = a.attribution_user_id
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then a.current_store_country not in ('US','CN')
+        else a.current_store_country = '{{countries}}' end
+group by 1,2,3
+having feature_users > 5000

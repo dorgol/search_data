@@ -1,0 +1,59 @@
+/*
+    Name: xx
+    Query ID: 40886
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-04T13:00:43.997Z
+    */
+    with users as (
+  select distinct
+    date(date_trunc(d.dt, {{Time granularity}} )) as dt,
+    d.platform_device_id,
+    d.first_active_dt,
+    case when d.dt = d.first_active_dt then "day0"
+         when 
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where dt >= "2022-01-01"
+    --and dt < date_trunc(current_date, {{Time granularity}})
+    and d.app_name = "videoleap"
+    and d.platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then d.dt = d.first_active_dt
+             when '{{Day}}' = "non day0" then d.dt > d.first_active_dt
+             else true end
+)
+
+
+, response as (
+    select  
+         u.platform_device_id,
+         case when origin_page_response is null then 'No Answer' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as response,
+    from users u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+
+select  
+    u.dt,
+    case when response is null then 'No Answer' else response end as response,
+    count(distinct u.platform_device_id) as users,
+    sum(count(distinct u.platform_device_id)) over (partition by dt) as total_users,
+    count(distinct u.platform_device_id) / sum(count(distinct u.platform_device_id)) over (partition by dt) *100 as pct_response
+from users u
+left join response r
+    on r.platform_device_id = u.platform_device_id
+group by 1,2
+    order by 1,2 desc

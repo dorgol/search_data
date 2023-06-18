@@ -1,0 +1,74 @@
+/*
+    Name: VL iOS - AI Feature Used
+    Query ID: 42426
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-06-12T15:59:29.550Z
+    */
+    with features as (
+    select distinct
+        st.id_for_vendor,
+        st.open_project_id,
+        st.event_id,
+        st.is_subscriber,
+        st.action_name,
+        date(st.meta_received_at) as usage_dt
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_feature_used` st
+    join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.platform_device_id = st.id_for_vendor
+        and d.app_name = "videoleap"
+    where true
+        and date(st.meta_received_at) >= '2023-01-01' and date_trunc(current_date(), {{period}}) > date_trunc(date(st.meta_received_at), {{period}}) -- not today
+        and case when '{{sub_type}}' = 'subscriber' then st.is_subscriber is true
+                 when '{{sub_type}}' = 'free user' then st.is_subscriber is false
+                else true end
+        and case when '{{day0}}' = 'day0' then (d.first_active_dt is null or date(d.first_active_dt) = date(st.meta_received_at))
+             when '{{day0}}' = 'non day0' then date(d.first_active_dt) < date(st.meta_received_at)
+             else true end
+    )
+
+, projects_total as (
+    select
+    date_trunc(usage_dt, {{period}}) as dt,
+    count(distinct id_for_vendor) as num_total_devices,
+    count(distinct open_project_id) as num_total_projects,
+    --count(distinct case when is_subscriber is true then id_for_vendor end) as num_total_vip_devices,
+    --count(distinct case when is_subscriber is false then id_for_vendor end) as num_total_free_devices,
+    --count(distinct case when is_subscriber is true then open_project_id end) as num_total_vip_projects,
+    --count(distinct case when is_subscriber is false then open_project_id end) as num_total_free_projects
+    from features
+    group by 1
+)
+
+
+, feature_total as 
+(
+    select
+        date_trunc(usage_dt, {{period}}) as dt,
+        action_name as Feature,
+        count(distinct open_project_id) as projects,
+        count(distinct event_id) as events
+    from features
+    where action_name like '%_ai_%'
+    group by 1,2
+
+)
+
+select 
+    p.dt,
+    Feature,
+    num_total_projects,
+    projects,
+    events,
+    safe_divide(projects,num_total_projects)*100 as pct_projects
+
+from  projects_total p
+left join feature_total f
+    on f.dt = p.dt
+where projects is not null
+
+
+
+
+
+
+

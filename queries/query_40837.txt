@@ -1,0 +1,22 @@
+/*
+    Name: PL Android Experiment AA TEST Assignment Check
+    Query ID: 40837
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-13T08:13:05.802Z
+    */
+    select 
+app_version_code,
+experiment_name,
+experiment_state,
+variant_name,
+count(distinct installation_id) as users,
+count(distinct event_id) as freq,
+count(distinct event_id)/count(distinct installation_id) as freq_per_user
+
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_app_ab_test_assignment_changed_state`
+where app_name='editor_android'
+and meta_received_at>='2023-03-27'
+and variant_name !='baseline variant1'
+--and app_version_code='112000106'
+group by 1,2,3,4
+order by 1,2,3

@@ -1,0 +1,23 @@
+/*
+    Name: FT iOS - Exports per Day by Feature
+    Query ID: 42402
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-01T07:45:47.320Z
+    */
+    select
+    timestamp_trunc(e.meta_received_at, day) day,
+    feature_name,
+    count(distinct e.event_id) num_exports,
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_ended` e
+    on true
+    and e.app_name = 'facetune2'
+    and e.meta_received_at >= '2023-04-30'
+    and fe.editing_session_id = e.editing_session_id
+where true
+and fe.app_name = 'facetune2'
+and fe.meta_received_at >= '2023-04-30'
+and fe.reason = 'accepted'
+group by 1,2
+having day is not null
+order by 1,2

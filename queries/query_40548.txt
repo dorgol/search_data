@@ -1,0 +1,58 @@
+/*
+    Name: Facetune: New Users BF Feature Retention - per Week
+    Query ID: 40548
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-23T09:29:58.358Z
+    */
+    with devices as (
+    select distinct
+        d.last_platform_user_id as user_id,
+        d.platform_device_id as id_for_vendor,
+        d.first_session_icloud_app_ts as first_launch,
+        v.experiment_started_meta,
+        v.segmentation,
+        v.variant,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` d
+    join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` v
+        on d.platform_device_id = v.id_for_vendor
+        and segmentation in ('02 New Users' )
+        and lower(v.experiment) like lower('%FT-1067%')
+        and display_type = 'reached home screen' 
+    where app_name = 'facetune2'
+    and d.first_session_icloud_app_ts >= timestamp_sub(current_timestamp(), interval 180 day)
+),
+
+feature_usage as (
+    select
+        feature_name,
+        d.segmentation,
+        d.user_id,
+        d.variant,
+        meta_received_at as use_time,
+        min(meta_received_at) over (partition by d.user_id, feature_name, d.variant) as first_use,
+        cast(floor(timestamp_diff(current_timestamp(), min(meta_received_at) over (partition by d.user_id, feature_name), day)/7) as int64) as weeks_finished,
+    from devices d
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` f
+        on d.id_for_vendor = f.id_for_vendor
+        and f.meta_received_at >= timestamp_sub(current_timestamp(), interval 60 day)
+        and f.meta_received_at >= first_launch
+        and f.meta_received_at >= experiment_started_meta
+        -- and feature_name in ('Looks', 'Paint', 'Adjust', 'Filters')
+)
+
+select distinct
+    feature_name,
+    segmentation,
+    variant,
+    count(distinct user_id) over (partition by feature_name, segmentation, variant) as total_users,
+    floor(timestamp_diff(use_time, first_use, day)/7) as retention_in_week,
+    count(distinct user_id) over (partition by feature_name, segmentation, variant) as weekly_users,
+    count(distinct case when use_time != first_use then user_id end) over (partition by feature_name, segmentation, variant, cast(floor(timestamp_diff(use_time, first_use, day)/7) as int64)) as weekly_returns,
+    100*count(distinct case when use_time != first_use then user_id end) over (partition by feature_name, segmentation, variant, cast(floor(timestamp_diff(use_time, first_use, day)/7) as int64))
+        /count(distinct user_id) over (partition by feature_name, segmentation, variant) as retention,
+from feature_usage
+where true
+and weeks_finished > {{week number}}
+qualify total_users > 1000
+and retention_in_week = {{week number}}
+order by 7 desc, 3

@@ -1,0 +1,203 @@
+/*
+    Name: [FT-1071] AI Avatars: Remove banner and new badge - Global Metrics with AI Avatar Purchases
+    Query ID: 40031
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-26T13:04:28.169Z
+    */
+    with users as (
+    select
+        *
+    from (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            case when lower(experiment) like lower('%AI Avatars - Exp Baseline%') then 'Control' else d.variant end as variant,
+            d.segmentation,
+            d.country,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.display_type,
+            count(distinct id_for_vendor) over (partition by experiment, segmentation, variant) total_activated_users
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = '{{app}}'
+        and (lower(experiment) like lower('%[FT-1071]%') 
+            or lower(experiment) like lower('%AI Avatars - Exp Baseline%'))
+        and experiment_started_meta >= '{{first_day}}'
+    )
+    where true
+    and display_type = '{{display_type}}'
+),
+
+subs as (
+    select
+        u.experiment,
+        u.variant,
+        u.segmentation,
+        u.id_for_vendor,
+        sum(s.payments.revenue_so_far) as revenue_so_far,
+        max((case when date(s.original_purchase_date) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7 then s.payments.revenue_so_far end) > 0) as paid_sub_day7,
+        sum(case when date(s.original_purchase_date) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7 then s.payments.revenue_so_far end) as revenue_day7,
+        max(case when subscription.is_sol then true else false end) as sol_sub,
+        max(case when subscription.is_sol then true else false end and payments.revenue_so_far > 0) as paid_sol_sub,
+        max(subscription.subscription_duration = '1y') as sub_1y,
+        max(subscription.subscription_duration = '1m') as sub_1m,
+        max(subscription.subscription_duration = 'l') as sub_l,
+        max(payments.first_known_cancellation_date is not null) as cancelled,
+        max(subscription.had_trial and subscription.current_is_in_trial_period) as had_trial_still_in_trial,
+        max(subscription.had_trial and not subscription.current_is_in_trial_period) as had_trial_not_in_trial,
+        max(subscription.had_trial and not subscription.current_is_in_trial_period and payments.revenue_so_far > 0) as paid_had_trial_not_in_trial,
+        max(subscription.had_trial) as had_trial,
+    from users u 
+    join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation` s
+        on true
+        and application = '{{app}}'
+        and u.id_for_vendor = s.device.platform_device_id
+        and s.original_purchase_date >= u.experiment_started_meta
+    group by 1,2,3,4
+),
+
+transactions as (
+    select
+        sd.lt_defacto_id, 
+        count(distinct t.lt_subscription_id) as ai_avatar_transactions,
+        sum(t.payments.actual_proceeds) as ai_avatar_revenue,
+    FROM `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` t
+    left join `ltx-dwh-prod-processed.subscriptions.purchase_to_verified_devices` as sd
+        on sd.lt_subscription_id = t.lt_subscription_id
+    WHERE true
+    and t.application = '{{app}}'
+    and DATE(t.purchase_date) >= "2023-03-01"
+    and date(t.original_purchase_date) >= "2023-03-01"
+    and t.subscription.product_id like '%YouniverseCoin%'
+    group by 1
+),
+
+exports as (
+    select
+        u.id_for_vendor,
+        count(distinct case when export_source like 'ai_avatar_save_all%' then e.project_id else e.event_id end) as num_exports,
+    from users u 
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_export_started` e
+        on true
+        and e.app_name = '{{app}}'
+        and e.meta_received_at >= '{{first_day}}'
+        and u.id_for_vendor = e.platform_device_id
+        and e.meta_received_at >= experiment_started_meta
+    group by 1
+),
+
+retention as (
+    select
+        u.experiment,
+        u.segmentation,
+        u.first_day, 
+        u.country,
+        u.variant,
+        u.id_for_vendor,
+        u.experiment_started_meta, 
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 7, false) as week_0_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 14, false) as week_1_user,
+        max(date_diff(dt, date(experiment_started_meta), day) between 1 and 7) as retained_week_0,
+        max(date_diff(dt, date(experiment_started_meta), day) between 8 and 14) as retained_week_1,
+    from users u 
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device_date` d
+        on u.id_for_vendor = d.platform_device_id
+        and d.dt >= date(experiment_started_meta)
+        and d.dt >= '2023-03-08'
+        and d.dt <= date_add(date(experiment_started_meta), interval 14 day)
+        and d.app_name = '{{app}}'
+    group by 1,2,3,4,5,6,7
+)
+
+select 
+    u.segmentation,
+    u.experiment, 
+    u.variant,
+    u.display_type,
+    --count(distinct u.id_for_vendor)/max(total_activated_users)*100 display_rate,
+    count(distinct u.id_for_vendor) as num_devices,
+    --count(distinct case when current_date > date(u.experiment_started_meta) + 7 then u.id_for_vendor end) as num_devices_day7,
+
+    --count(distinct t.id_for_vendor) as ai_avatar_purchasers,
+    --100* count(distinct t.id_for_vendor) / count(distinct u.id_for_vendor) as ai_avatar_purchase_rate,
+    --sum(ai_avatar_transactions) as ai_avatar_transactions,
+    --sum(ai_avatar_transactions) / count(distinct t.id_for_vendor) as ai_avatar_purchases_per_purchaser,
+    --sum(ai_avatar_revenue) as ai_avatar_revenue,
+    --sum(ai_avatar_revenue) / count(distinct u.id_for_vendor) as ai_avatar_RPD,
+    
+    count(distinct case when s.id_for_vendor is not null and had_trial then u.id_for_vendor end) num_had_trial,
+    count(distinct case when s.id_for_vendor is not null and paid_had_trial_not_in_trial then u.id_for_vendor end) num_paid_had_trial_not_in_trial,
+    count(distinct case when s.id_for_vendor is not null and had_trial_not_in_trial then u.id_for_vendor end) num_had_trial_not_in_trial,
+    
+    count(distinct case when s.id_for_vendor is not null and sol_sub is true then u.id_for_vendor end) as num_sol_subs,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is false then u.id_for_vendor end) as num_non_sol_subs,
+
+    count(distinct case when s.id_for_vendor is not null or t.lt_defacto_id is not null then u.id_for_vendor end) / nullif(count(distinct u.id_for_vendor),0)*100 as CVR_subs_and_ai,
+    (sum(coalesce(revenue_so_far,0)) + sum(coalesce(ai_avatar_revenue,0))) / nullif(count(distinct u.id_for_vendor),0) as RPD_subs_and_ai,
+    
+    count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as CVR_subs_only,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_CVR_subs_only,
+    count(distinct case when s.id_for_vendor is not null and paid_had_trial_not_in_trial then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and had_trial_not_in_trial then u.id_for_vendor end),0)*100 as trial_to_paid_CVR,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is false then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as non_sol_CVR_subs_only,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is false and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_non_sol_CVR_subs_only,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is false and current_date > date(u.experiment_started_meta) + 7 and paid_sub_day7 is true then u.id_for_vendor end)/nullif(count(distinct case when current_date > date(u.experiment_started_meta) + 7 then u.id_for_vendor end),0)*100 as paid_non_sol_CVR_day7_subs_only,
+    count(distinct case when s.id_for_vendor is not null and current_date > date(u.experiment_started_meta) + 7 and paid_sub_day7 is true then u.id_for_vendor end)/nullif(count(distinct case when current_date > date(u.experiment_started_meta) + 7 then u.id_for_vendor end),0)*100 as paid_CVR_day7_subs_only,
+    sum(revenue_so_far)/nullif(count(distinct u.id_for_vendor),0) as RPD_subs_only,
+    sum(case when current_date > date(u.experiment_started_meta) + 7 then revenue_day7 end)/nullif(count(distinct case when current_date > date(u.experiment_started_meta) + 7 then u.id_for_vendor end),0) as RPD_day7_subs_only,
+    --sum(revenue_so_far) as rev,
+    --sum(case when current_date > date(u.experiment_started_meta) + 7 then revenue_day7 end) as rev_day7,
+    
+    --count(distinct case when s.id_for_vendor is not null and sol_sub is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as sol_CVR_subs_only,
+    
+    --count(distinct case when s.id_for_vendor is not null and paid_sol_sub is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_sol_CVR_subs_only,
+    
+    count(distinct case when s.id_for_vendor is not null and s.sub_1y then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_yearly_subs,
+    count(distinct case when s.id_for_vendor is not null and s.sub_1m then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_monthly_subs,
+    count(distinct case when s.id_for_vendor is not null and s.sub_l then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_otp_subs,
+    
+    count(distinct case when s.id_for_vendor is not null and cancelled then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as cancellation_rate,
+    count(distinct case when s.id_for_vendor is not null and cancelled and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as paid_cancellation_rate,
+    
+    count(distinct case when e.id_for_vendor is not null then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_exporters,
+    sum(num_exports)/nullif(count(distinct u.id_for_vendor),0) as exports_per_device,
+    
+    -- day0, week0, week1 retention
+    count(distinct case when t.lt_defacto_id is not null then u.id_for_vendor end) as Conversions_ai,
+    count(distinct case when s.id_for_vendor is not null or t.lt_defacto_id is not null then u.id_for_vendor end) as Conversions_subs_and_ai,
+    sum(coalesce(revenue_so_far,0)) + sum(coalesce(ai_avatar_revenue,0)) as Revenue_subs_and_ai,
+    sum(revenue_so_far) Revenue_subs_only,
+
+    count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end) as num_subscribers,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is false then u.id_for_vendor end) as num_non_sol_subscribers,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end) as num_paid_subscribers,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is false and revenue_so_far > 0 then u.id_for_vendor end) as num_paid_non_sol_subscribers,
+    count(distinct case when s.id_for_vendor is not null and had_trial_still_in_trial then u.id_for_vendor end) num_still_in_trial,
+    count(distinct case when s.id_for_vendor is not null and had_trial_not_in_trial then u.id_for_vendor end) num_finished_trial,
+    count(distinct case when e.id_for_vendor is not null then u.id_for_vendor end) num_exporters,
+    sum(num_exports) as num_exports,
+    100*count(distinct case when retained_week_0 and week_0_user then u.id_for_vendor end)/count(distinct case when week_0_user then u.id_for_vendor end) as pct_retained_week_0,
+    100*count(distinct case when retained_week_1 and week_1_user then u.id_for_vendor end)/count(distinct case when week_1_user then u.id_for_vendor end) as pct_retained_week_1,
+from users u
+left join exports e
+    on e.id_for_vendor = u.id_for_vendor
+left join subs s
+    on s.experiment = u.experiment
+    and s.variant = u.variant
+    and s.segmentation = u.segmentation
+    and s.id_for_vendor = u.id_for_vendor
+left join transactions t
+    on t.lt_defacto_id = farm_fingerprint('{{app}}' || coalesce(u.id_for_vendor, '')) 
+left join retention r
+    on r.experiment = u.experiment
+    and r.variant = u.variant
+    and r.segmentation = u.segmentation
+    and r.id_for_vendor = u.id_for_vendor
+where true
+group by 1,2,3,4
+order by 1,2,3,4

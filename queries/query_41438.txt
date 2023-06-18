@@ -1,0 +1,44 @@
+/*
+    Name: Screen Recording Block - VL iOS (Projections) - 2
+    Query ID: 41438
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-28T11:30:12.086Z
+    */
+    -- 
+
+
+select
+    date_trunc(dt, month) as event_timestamp,
+    count(distinct d.platform_device_id) as count_active_users,
+    --count(distinct case when date_trunc(meta_received_at, month) = min_day then id_for_vendor end) as first_attempt_screen_record,
+    --count(distinct case when date_trunc(meta_received_at, month) <> min_day then id_for_vendor end) as attempt_screen_record,
+    count(distinct scr.id_for_vendor)  as count_users_screen_record,
+    -- count(distinct id_for_vendor)*blocked_rate as projected_blocked_users,
+    (count(distinct scr.id_for_vendor)/count(distinct d.platform_device_id))*100 as screen_record_pct_of_active
+
+from `ltx-dwh-prod-processed`.`agg`.`app_device_date` d
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_screen_capture_and_play`  scr
+    on platform_device_id = id_for_vendor
+    and is_subscriber = False
+    and date(dt) = date(meta_received_at)
+/*left join  (select  
+                id_for_vendor,
+                min(date_trunc(meta_received_at, month)) as min_day
+            from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_screen_capture_and_play`
+            where is_subscriber = False
+            group by 1) md using(id_for_vendor) */
+left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on d.platform_device_id = s.platform_device_id
+        and date(s.original_purchase_date) <= d.dt
+        and date(s.last_expiration_date_or_renewal_date) >= d.dt
+        and s.app_name = 'videoleap'
+
+
+where 
+    dt > '2022-01-01'
+    and lt_subscription_id is null
+    and d.app_name = 'videoleap'
+group by 1
+order by 1,2 asc
+
+

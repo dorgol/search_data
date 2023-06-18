@@ -1,0 +1,38 @@
+/*
+    Name: Payments Increase Investigation - VL iOS
+    Query ID: 41967
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-21T08:19:27.144Z
+    */
+    with trans as (
+    select distinct
+        date_trunc(date(s.purchase_date), week) as dt,
+        s.lt_transaction_id,
+        s.projected.adjusted_actual_proceeds_alloc_cs,
+        s.purchase_date,
+        s.subscription.subscription_duration,
+        s.subscription.current_subscription_store_country,
+        s.payments.local_currency
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation_cross_sell` s
+    where true
+        and s.application in ('videoleap')
+        and s.projected.adjusted_actual_proceeds_alloc_cs > 0
+        and date(s.original_purchase_date) >= '2022-09-01'
+        and date_trunc(current_date(), month) > date_trunc(date(s.original_purchase_date), month)
+        and subscription.subscription_duration = '1y'
+        and subscription.original_transaction_id = transaction.transaction_id
+        and subscription.product_category = 'subscription'
+        and payments.purchase_platform = 'ios'
+        and s.subscription.current_subscription_store_country = 'US'
+        )
+        
+select
+dt,
+adjusted_actual_proceeds_alloc_cs,
+count(distinct lt_transaction_id) as payments
+--avg(adjusted_actual_proceeds_alloc_cs) avg_payment_usd,
+--min(adjusted_actual_proceeds_alloc_cs) min_payment_usd,
+--max(adjusted_actual_proceeds_alloc_cs) max_payment_usd,
+from trans
+where local_currency = 'USD'
+group by 1,2

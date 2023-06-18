@@ -1,0 +1,48 @@
+/*
+    Name: VL iOS - Mini-Editor Dashboard - Export Rate
+    Query ID: 41133
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-18T15:45:02.424Z
+    */
+    with features as (
+    select distinct
+        date_trunc(ts.meta_received_at, {{Time granularity}}) as dt,
+        ts.open_project_id,
+        case when ex.open_project_id is not null then true else false end as exported,
+        case when action_name is not null then 'feature used' else 'no feature' end as action_name
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` u
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as ts
+        on u.platform_device_id = ts.id_for_vendor
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_feature_used` fu
+        on fu.open_project_id = ts.open_project_id
+        and action_source like '%template%'
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ex.open_project_id = ts.open_project_id
+    where date(ts.meta_received_at) >= '{{start date}}'
+        and case when '{{Day}}' = "day0" then date(ts.meta_received_at) = date(u.first_active_dt)
+                 when '{{Day}}' = "non day0" then date(ts.meta_received_at) > date(u.first_active_dt)
+                     else true end
+        and u.app_name = 'videoleap'
+)
+
+, final as (
+    select
+        f.dt,
+        count(distinct f.open_project_id) as total_projects,
+        count(distinct case when exported is true then f.open_project_id end) as exported_projects,
+        
+        count(distinct case when action_name = 'feature used' then f.open_project_id end) as feature_projects,
+        count(distinct case when action_name = 'feature used' and exported is true then f.open_project_id end) as exported_feature_projects,
+        
+        count(distinct case when action_name = 'no feature' then f.open_project_id end) as no_feature_projects,
+        count(distinct case when action_name = 'no feature' and exported is true then f.open_project_id end) as exported_no_feature_projects,
+    from features f
+    group by 1
+    )
+    
+select
+    *,
+    safe_divide(exported_projects, total_projects)*100 as export_rate,
+    safe_divide(exported_feature_projects, feature_projects)*100 as feature_export_rate,
+    safe_divide(exported_no_feature_projects, no_feature_projects)*100 as no_feature_export_rate
+from final

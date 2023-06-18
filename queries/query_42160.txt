@@ -1,0 +1,19 @@
+/*
+    Name: Global events - message events validation
+    Query ID: 42160
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-23T11:44:39.830Z
+    */
+    select distinct 
+  p.context,
+  p.view_name,
+  p.view_type,
+  p.source,
+  d.reason,
+  destination,
+  count(1) as num_entries
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_message_view_presented` as p
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_message_view_dismissed` as d
+  using (presentation_id)
+where p.app_name = "videoleap"
+group by 1,2,3,4,5,6

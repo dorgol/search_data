@@ -1,0 +1,21 @@
+/*
+    Name: PL Android Scenes Presets Exported
+    Query ID: 41776
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-11T10:50:44.372Z
+    */
+    select 
+--app_version_code,
+date(meta_received_at) as day,
+preset_name
+,
+count(distinct process_id) as exports,
+count(distinct installation_id) as users
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_export_started`
+where app_name='editor_android'
+and meta_received_at>'2023-05-01'
+and export_source='ai_scene'
+and cast(app_version_code as int64)>=115000121
+group by 1,2;
+
+

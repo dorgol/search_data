@@ -1,0 +1,33 @@
+/*
+    Name: VL iOS- Assets First Analysis - Templates per User
+    Query ID: 41740
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-10T11:37:03.094Z
+    */
+    select
+    date_trunc(st.meta_received_at, day) as dt,
+    count(distinct st.open_project_id) as num_projects,
+    count(distinct ex.open_project_id) as num_exported_projects,
+    
+    count(distinct st.id_for_vendor) as num_project_users,
+    count(distinct ex.id_for_vendor) as num_exported_users,
+    
+    count(distinct coalesce(st.parent_template_id,st.id_for_vendor)) as num_templates,
+    
+    safe_divide(count(distinct ex.open_project_id), count(distinct st.open_project_id))*100 as project_to_export_rate,
+    safe_divide(count(distinct ex.id_for_vendor), count(distinct st.id_for_vendor))*100 as user_export_rate,
+    
+    safe_divide(count(distinct coalesce(st.parent_template_id,st.id_for_vendor)),count(distinct st.id_for_vendor))  as templates_per_user
+    
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as st
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac
+    on st.action_identifier = ac.action_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+    on st.open_project_id = exs.open_project_id
+    --and exs.parent_template_id is not null
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+    on exs.export_id = ex.export_id
+where date_trunc(st.meta_received_at, day) >= '2023-03-21'
+    and st.flow_name = "assets_first"
+group by 1
+having user_export_rate < 100

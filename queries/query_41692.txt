@@ -1,0 +1,114 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 - Feed Purchase Retention
+    Query ID: 41692
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-30T14:23:51.917Z
+    */
+    with purchases as (
+select
+    w.platform_device_id,
+    w.meta_received_at
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_flow_started` f
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_purchase_process_ended` w
+        on true
+        and f.app_name = '{{app_name}}'
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '{{start_date}}'
+        and f.product_type = 'consumable_item'
+        and f.source like 'beauty%'
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = f.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.result = 'success'
+        and w.flow_id = f.flow_id
+),
+
+users as (
+    select  
+        d.experiment,
+        d.first_day, 
+        '{{variant}}' as variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        min(p.meta_received_at) as first_purchase_ts,
+        date(date_trunc(min(p.meta_received_at), week)) as cohort,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    join purchases p
+        on d.id_for_vendor = p.platform_device_id
+    where d.segmentation = '{{segmentation}}'
+    and d.application = '{{app_name}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+    and lower(d.experiment) not like lower('%AU_UK%')
+    and d.display_type = 'reached home screen'
+    and case 
+        when '{{variant}}' = 'Variant1' then d.variant = '{{variant}}'
+        when '{{variant}}' = 'Variant2' then d.variant = '{{variant}}'
+        when '{{variant}}' = 'Variant3' then d.variant = '{{variant}}'
+        when '{{variant}}' = 'All' then true
+    end
+    group by 1,2,3,4,5,6,7,8
+),
+
+cohorts as (
+    select  
+        d.experiment,
+        d.variant,
+        d.segmentation,
+        cohort,
+        date_diff(date_trunc(current_date(), week),date_trunc(date(first_purchase_ts), week),week) as weeks_back,
+        count(distinct d.id_for_vendor) as total_users,
+    from users d
+    group by 1,2,3,4,5
+),
+
+purchase_retention as (
+    select distinct
+        experiment,
+        variant,
+        segmentation,
+        country,
+        id_for_vendor,
+        experiment_started_meta,
+        display_type,
+        cohort,
+        floor(cast(date_diff(date(r.meta_received_at), date(first_purchase_ts), day) as float64) / cast(7 as float64)) as week_diff,
+        floor(cast(date_diff(current_date(), date(first_purchase_ts), day) as float64) / cast(7 as float64)) as weeks_from_first_purchase,
+        date(first_purchase_ts) as first_purchase_ts
+    from users as l
+    left join purchases as r
+        on l.id_for_vendor = r.platform_device_id
+        and first_purchase_ts < r.meta_received_at
+),
+
+ test_week as (
+    select week_num
+    from(select generate_array(0,6) as week_diff_array),unnest(week_diff_array) as week_num
+)
+
+select
+    c.experiment,
+    c.variant,
+    c.segmentation,
+    c.cohort,
+    c.total_users,
+    t.week_num,
+    count(distinct r.id_for_vendor) as retained,
+    100*count(distinct r.id_for_vendor)/total_users as pct_retained,
+    'week ' || cast (week_num as string) || ' retention' as period_name,
+from cohorts c
+join test_week t
+    on t.week_num < c.weeks_back
+left join purchase_retention r
+    on c.experiment = r.experiment
+    and c.variant = r.variant
+    and c.segmentation = r.segmentation
+    and c.cohort = r.cohort
+    and r.week_diff = t.week_num
+where c.cohort != date_trunc(current_date(), week)
+-- and c.total_users >= 1000
+group by 1,2,3,4,5,6
+order by 1,2,3,4,6

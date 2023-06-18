@@ -1,0 +1,65 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1074] PN Provisional Access V2 - Specific PNs received from Braze (using new table)
+    Query ID: 41834
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-14T07:02:53.997Z
+    */
+    with 
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        country
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%[FT-1074] PN Provisional Access V2%')
+    and display_type = '{{display}}'
+),
+
+first_installation_id_per_idfv as (
+  select distinct
+    u.id_for_vendor,
+    first_installation_id
+  from users u
+  left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_dismissed` il
+      on il.platform_device_id = u.id_for_vendor
+      and il.app_name = 'facetune2'
+  where true
+),
+
+campaign_users as (
+  select distinct
+    platform_device_id,
+    campaign_name
+  from `ltx-dwh-prod-processed`.`marketing`.`retention_braze_2_usage_and_subs_step_level`
+  where true 
+  and app_name = 'facetune2'
+--   and campaign_name in ('ft_ios_non-sub_p0_prod-exp_push_150323_ft-provisional_v3')
+)
+
+
+select  
+    segmentation,
+    variant,
+    campaign_name,
+    count(distinct cu.platform_device_id) users_with_braze_sends,
+from users u
+-- left join first_installation_id_per_idfv fid
+--     on u.id_for_vendor = fid.id_for_vendor
+left join campaign_users cu 
+    on cu.platform_device_id = u.id_for_vendor
+group by 1,2,3
+order by 4 desc,1,2

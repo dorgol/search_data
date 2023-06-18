@@ -1,0 +1,37 @@
+/*
+    Name: VL iOS - Second Free Trial
+    Query ID: 42121
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-23T13:55:27.320Z
+    */
+    -- Aim: Of active users, how many 
+
+declare start_date date default '2023-01-01';
+ 
+with data as (
+
+    select 
+        date_trunc(first_active_dt, month) as first_active_month,
+        date_trunc(date(a.dt), month) as active_month,
+        a.dt,
+        attribution_user_id,
+        subscription.had_trial,
+    from 
+        `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` a
+    inner join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation_cross_sell` s
+        on a.attribution_user_id = s.attribution.attribution_user_id
+        
+    where  
+        app_name = 'videoleap' -- videoleap_android
+        --and date_trunc(date(dt), month) < date_trunc(current_date(), month)
+        and subscription.had_trial = true -- had trial before
+        --and subscription.current_is_active = false -- not active
+        and a.platform = 'ios'
+        and date(dt) >= date_sub(current_date(), interval 6 month)
+    
+)
+
+select * from data 
+order by 3
+limit 100
+        

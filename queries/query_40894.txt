@@ -1,0 +1,31 @@
+/*
+    Name: [FT-1084] Video Exports
+    Query ID: 40894
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-04T19:52:19.461Z
+    */
+    with users as (
+    select
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = 'facetune2'
+    and display_type = 'reached video editor'
+    and experiment = '[FT-1084] Face Detector Small Faces 1.1'
+    and segmentation in ('02 New Users', '03 Existing Users')
+)
+ 
+select
+    segmentation,
+    variant,
+    100*count(distinct e.id_for_vendor)/count(distinct u.id_for_vendor) as pct_video_exporters,
+    count(distinct e.event_id)/count(distinct u.id_for_vendor) as video_exports_per_device,
+from users u
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported` e
+    on u.id_for_vendor = e.id_for_vendor
+    and e.meta_received_at >= u.experiment_started_meta_by_type
+    and e.meta_received_at >= '2023-03-02'
+group by 1,2
+order by 1,2

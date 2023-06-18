@@ -1,0 +1,23 @@
+/*
+    Name: Statistical Functions Attempt - Two Sample Prop Test
+    Query ID: 42132
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-23T10:00:40.591Z
+    */
+    with 
+data as (
+    select
+        'baseline' as variant,
+        863 as converted_trials,
+        5084 as finished_trials
+    
+    union all 
+    
+    select
+        'variant1' as variant,
+        772 as converted_trials,
+        5024 as finished_trials
+)
+
+select
+    `ltx-dwh-playground.bi.jstat_two_sided_prop_test`(863/5084,5084,772/5024,5024) probability

@@ -1,0 +1,20 @@
+/*
+    Name: PL Android Trial 2 Paid
+    Query ID: 41247
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-21T16:51:07.766Z
+    */
+    
+select 
+date(original_purchase_date) as dt,
+count(distinct lt_subscription_id) as trials,
+count(distinct case when is_in_trial_period =false then lt_subscription_id end ) as completed_trials,
+count(distinct case when is_in_trial_period =false and revenue_so_far>0 then lt_subscription_id end ) as paid_trials,
+safe_divide(count(distinct case when is_in_trial_period =false and revenue_so_far>0 then lt_subscription_id end ),count(distinct case when is_in_trial_period =false then lt_subscription_id end ))*100 as trial_2_paid_rate
+from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_state`
+where application='editor_android'
+and original_purchase_date >='2023-04-06'
+and product_id='v2_ph_gp_vip_sub_1y_p0_t7_ip0x.0'
+and had_trial = true
+group by 1
+order by 1

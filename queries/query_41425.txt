@@ -1,0 +1,27 @@
+/*
+    Name: VL Product Data Glossary - Project to Export Rate
+    Query ID: 41425
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-09T10:25:35.007Z
+    */
+    declare start_date date default '2023-01-01';
+
+with projects as (
+    select 
+        cast(dt as date) as dt, 
+        attribution_user_id,
+        cntd_projects_started, 
+        cntd_exported_projects
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date`
+    where 
+        first_active_dt > start_date
+)
+
+select 
+    date_trunc(dt, week) as timeframe,
+    sum(cntd_projects_started) as started_projects,
+    sum(cntd_exported_projects) as exports,
+    (sum(cntd_exported_projects)/sum(cntd_projects_started))*100 as export_rate
+from projects 
+group by 1
+order by 1 asc

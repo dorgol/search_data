@@ -1,0 +1,21 @@
+/*
+    Name: Facetune: Active iOS versions - Subscribers
+    Query ID: 42337
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-30T10:49:51.221Z
+    */
+    select distinct
+    ios_version,
+    count(distinct id_for_vendor) over (partition by ios_version) as devices,
+    count(distinct id_for_vendor) over (partition by ios_version)/count(distinct id_for_vendor) over () as pct_devices,
+    count(id_for_vendor) over (order by ios_version asc)/count(distinct id_for_vendor) over () as cum_pct_devices,
+from (
+  select distinct 
+  id_for_vendor,
+  max(ios_version) as ios_version,
+  from `ltx-dwh-prod-raw.analytics.ios_facetune2_device_info_log`
+  where meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+  and is_subscriber
+  group by 1
+)
+order by 1 desc

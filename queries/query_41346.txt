@@ -1,0 +1,13 @@
+/*
+    Name: VL iOS - Speed
+    Query ID: 41346
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-25T11:27:42.457Z
+    */
+    SELECT action_node,action_type, count(distinct open_project_id) as projects 
+FROM `ltx-dwh-prod-raw.analytics.ios_videoleap_toolbar_feature_used` WHERE 
+DATE(_PARTITIONTIME) >= "2023-04-01" 
+and lower(navigation_path) like '%speed'
+group by 1,2
+having projects > 500
+order by 3 desc

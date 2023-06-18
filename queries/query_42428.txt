@@ -1,0 +1,66 @@
+/*
+    Name: VL iOS - AI Request Limit Reached
+    Query ID: 42428
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-06-02T09:42:47.549Z
+    */
+    with store_presented as (
+    select distinct
+        st.platform_device_id as id_for_vendor,
+        st.is_subscriber,
+        st.reason,
+        date(st.meta_received_at) as usage_dt
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_store_view_presented` st
+    join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.platform_device_id = st.platform_device_id
+        and d.app_name = "videoleap"
+    where true
+        and st.app_name = 'videoleap'
+        and date(st.meta_received_at) >= '2023-01-01' and date_trunc(current_date(), {{period}}) > date_trunc(date(st.meta_received_at), {{period}}) -- not today
+        and case when '{{sub_type}}' = 'subscriber' then st.is_subscriber is true
+                 when '{{sub_type}}' = 'free user' then st.is_subscriber is false
+                else true end
+        and case when '{{day0}}' = 'day0' then (d.first_active_dt is null or date(d.first_active_dt) = date(st.meta_received_at))
+             when '{{day0}}' = 'non day0' then date(d.first_active_dt) < date(st.meta_received_at)
+             else true end
+    )
+
+, presented_total as (
+    select
+    date_trunc(usage_dt, {{period}}) as dt,
+    count(distinct id_for_vendor) as num_total_devices
+    from store_presented
+    group by 1
+)
+
+
+, ai_total as 
+(
+    select
+        date_trunc(usage_dt, {{period}}) as dt,
+        reason,
+        count(distinct id_for_vendor) as users
+    from store_presented
+    where reason in ('ai_main_editor_request_limit_alert', 'ai_template_request_limit_alert')
+    group by 1,2
+
+)
+
+select 
+    p.dt,
+    reason,
+    num_total_devices,
+    users,
+    safe_divide(users,num_total_devices)*100 as pct_users
+
+from  presented_total p
+left join ai_total f
+    on f.dt = p.dt
+where users is not null
+
+
+
+
+
+
+

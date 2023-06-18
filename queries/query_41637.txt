@@ -1,0 +1,29 @@
+/*
+    Name: FT iOS - Trial Reminder Click Rate - By Feature
+    Query ID: 41637
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-13T07:52:15.929Z
+    */
+    select
+    message_name,
+    replace(replace(replace(message_source, 'starting_vip_photo_',''),'sub_feature_','sf_'), 'feature_','') message_source,
+    -- mp.app_version_code,
+    count(distinct mp.event_id) num_times_presented,
+    count(distinct case when md.reason = 'accepted' then mp.event_id end) num_accepted,
+    count(distinct case when md.reason = 'accepted' then mp.event_id end)/count(distinct mp.event_id)*100 pct_accepted,
+    count(distinct case when (md.reason = 'rejected' or md.reason = 'background_tapped') then mp.event_id end)/count(distinct mp.event_id)*100 pct_rejected,
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` md
+    on true
+    and md.meta_received_at >= '{{since_date}}' 
+    and md.app_name = 'facetune2'
+    and md.flow_id = mp.flow_id
+where true
+and mp.meta_received_at >= '{{since_date}}'
+and mp.app_name = 'facetune2'
+and message_id like '%TrialReminder%'
+and cast(mp.app_version_code as int64) > 4678
+group by 1,2
+-- ,3
+having num_times_presented > 100
+order by 5 desc

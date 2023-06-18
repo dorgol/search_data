@@ -1,0 +1,58 @@
+/*
+    Name: Interview Task - Query 2 (min date)
+    Query ID: 40623
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-27T08:53:31.886Z
+    */
+    with post_info as (
+    select
+        post_id,
+        creation_date,
+        effect_unnest
+    from `bi`.`post_create`, unnest(effects) as effect_unnest
+    )
+    
+, impressions as (
+    select
+        post_id,
+        sum(impressions) as num_impressions
+    from `ltx-dwh-playground.bi.imp_post_per_day`
+    group by 1)
+    
+, clicks as (
+    select
+        post_id,
+        sum(clicks) as num_clicks
+    from `ltx-dwh-playground.bi.click_use_per_day`
+    group by 1)
+    
+, exports as (
+    select
+        post_id,
+        sum(exports) as num_exports
+    from `ltx-dwh-playground.bi.exports_per_day`
+    group by 1)
+
+
+
+select
+    --post_info.post_id,
+    effect_unnest,
+    min(creation_date) as min_date,
+    sum(num_impressions) as sum_impressions, 
+    sum(num_clicks) as sum_clicks,
+    sum(num_exports) as sum_exports,
+    safe_divide(sum(num_exports), sum(num_impressions))*100 as export_rate,
+    safe_divide(sum(num_clicks), sum(num_impressions))*100 as click_rate,
+    safe_divide(sum(num_exports), sum(num_clicks))*100 as click_to_export_rate
+from post_info
+left join impressions
+    on post_info.post_id = impressions.post_id
+left join clicks
+    on post_info.post_id = clicks.post_id
+left join exports
+    on post_info.post_id = exports.post_id
+group by 1
+order by 2 desc
+
+

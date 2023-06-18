@@ -1,0 +1,17 @@
+/*
+    Name: Facetune: AI Scenes Generations
+    Query ID: 42249
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-27T18:13:54.179Z
+    */
+    select 
+    timestamp_trunc(meta_received_at, {{period}}) as period,
+    endpoint,
+    process_name,
+    count(distinct process_id) as runs,
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_process_started`
+where app_name = 'facetune2'
+and meta_received_at >= '2023-05-20'
+and process_name = 'ai_selfies_cloud_processing'
+group by 1,2,3
+order by 1

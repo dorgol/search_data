@@ -1,0 +1,36 @@
+/*
+    Name: PL- AI Transform Word cloud- hair prompts
+    Query ID: 41088
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-17T14:43:29.551Z
+    */
+    
+ select
+ --process_name, 
+ --process_details,
+ --json_extract_array(process_details,'$.Final_text'),
+lower( trim(trim(trim(json_extract_scalar(process_details,"$.Final_text"),','),'.'),' ')) as generated_text,
+ count(distinct event_id) as frequency,
+ count(distinct platform_device_id) as users
+ 
+ 
+ --trim(trim(prompt,','),'.') as prompt,
+ --reason,
+ --count(*) as freq
+ 
+ from
+ `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_process_ended`,
+  UNNEST(split(lower( trim(trim(json_extract_scalar(process_details,"$.Final_text"),','),'.')), " ")) as prompt
+ where app_name='editor'
+ and process_name in (
+ --'ai_cars_generate'
+ --,
+ 'ai_transform_generate'
+ )
+ and meta_received_at >'2023-03-01'
+ and reason= 'success'
+ and prompt ='hair'
+ 
+--group by 1,2
+group by 1
+order by 3 desc

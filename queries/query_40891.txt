@@ -1,0 +1,47 @@
+/*
+    Name: VL iOS - Bundles Experiment - purchase errors
+    Query ID: 40891
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-05T07:09:38.914Z
+    */
+    with experiment_users as (
+    select distinct
+        id_for_vendor,
+        segmentation, 
+        variant,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and experiment = "Bundles (Production)"
+        -- and display_type like "mini_editor_displayed_%" 
+        and display_type = "activated_for_device"
+        and variant = 'Variant 1'
+) 
+ 
+, errors as (    select distinct
+        en.reason,
+        en.error,
+        en.platform_device_id,
+        en.event_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_assets_purchase_order_summary` as pos, 
+    unnest(assets) as bundle_data
+    inner join experiment_users eu
+        on eu.id_for_vendor = pos.platform_device_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_assets_purchase_ended` as en
+        on pos.flow_id = en.flow_id
+        --and en.reason = "success"
+    where pos.app_name = "videoleap"
+        and pos.app_version_code <> "4001"
+        and date(pos.meta_received_at) >= "2023-04-02"
+        and asset_type = 'bundle'
+
+)
+
+select distinct
+    reason,
+    error,
+    count(distinct platform_device_id) as users,
+    count(distinct event_id) as events,
+from errors
+group by 1,2

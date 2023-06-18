@@ -1,0 +1,20 @@
+/*
+    Name: Joe Non-SOL Analysis - VL iOS - Subscription Sources (paid)
+    Query ID: 41823
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-12T15:10:38.343Z
+    */
+    select
+    date_trunc(date(original_purchase_date), {{period}}) as dt,
+    case when subscription.subscription_source in ('FirstLaunch', 'Launch', 'ViolationList', 'HomeScreen',
+                                      'MainScreen_RemoveLimit', 'WhatsNew', 'free_trial_reminder'
+                                      , 'EVD_Trial_Plan_Closed', 'closed')  then subscription.subscription_source
+         when subscription.subscription_source = 'RemoveWatermarkBeforeSharing' then 'RemoveWatermark'
+         else 'Other' end as subscription_source,
+    count(distinct lt_subscription_id) as subs
+from `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions`
+where date(original_purchase_date) >= '2023-01-01'
+    and date_trunc(date(original_purchase_date), {{period}}) != date_trunc(date(current_date()), {{period}})
+    and license_applications = "videoleap"
+    and payments.revenue_so_far > 0
+group by 1,2

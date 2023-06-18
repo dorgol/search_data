@@ -1,0 +1,41 @@
+/*
+    Name: [FT-1095] Video Home Screen Banner: Banner Activity
+    Query ID: 41619
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-04T07:00:36.615Z
+    */
+    with users as (
+    select
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = 'facetune2'
+    and display_type = '{{display}}'
+    and experiment = '[FT-1095] Video Home Screen Banner 1.1'
+    and segmentation in ('02 New Users', '03 Existing Users')
+    and variant != 'Baseline'
+)
+ 
+select
+    segmentation,
+    variant,
+    count(distinct a.event_id) as times_appeared,
+    count(distinct s.event_id) as times_selected,
+    count(distinct s.event_id)/nullif(count(distinct u.id_for_vendor),0) as banner_presses_per_device,
+    100*count(distinct s.event_id)/nullif(count(distinct a.event_id),0) as click_through_rate,
+from users u
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_home_screen_item_appeared` a
+    on u.id_for_vendor = a.id_for_vendor
+    and a.meta_received_at >= u.experiment_started_meta_by_type
+    and a.meta_received_at >= '2023-05-02'    
+    and a.item_identifier = 'HomeScreenHighlight_promotion_FTV'
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_home_screen_item_selected` s
+    on u.id_for_vendor = s.id_for_vendor
+    and s.meta_received_at >= u.experiment_started_meta_by_type
+    and s.meta_received_at >= '2023-05-02'
+    and s.home_screen_session_id = a.home_screen_session_id
+    and s.item_identifier = 'HomeScreenHighlight_promotion_FTV'
+group by 1,2
+order by 1,2

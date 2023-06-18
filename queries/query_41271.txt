@@ -1,0 +1,32 @@
+/*
+    Name: [FT-1085] Live Photo as Video - Exports
+    Query ID: 41271
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-23T14:18:11.913Z
+    */
+    with users as (
+    select
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) as total_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = 'facetune2'
+    and display_type = 'reached home screen'
+    and experiment = '[FT-1085] Live Photo as Video'
+    and segmentation in ('02 New Users', '03 Existing Users')
+)
+
+select
+    segmentation || ' ' || variant as segment_variant,
+    asset_type,
+    count(distinct platform_device_id) as users,
+    count(distinct event_id) as times,
+    count(distinct event_id)/total_users as exports_per_device,
+from users u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` d
+    on u.id_for_vendor = d.platform_device_id
+    and app_name = 'facetune2'
+    and meta_received_at >= '2023-03-29'
+group by 1,2,total_users

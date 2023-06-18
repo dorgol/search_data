@@ -1,0 +1,29 @@
+/*
+    Name: PopPays Brands - Active Users - Session Started
+    Query ID: 40129
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-07T15:02:54.946Z
+    */
+    with events as (
+    
+    select distinct
+        'session started' as event,
+        anonymous_id,
+        lt_id,
+        sp.is_lt_team,
+        session_id,
+        date(meta_received_at) as dt
+    from `ltx-dwh-prod-raw.analytics.pp_web_brands_session_started` sp
+    where date(meta_received_at) >= '{{from_date}}'
+            
+            )
+            
+select
+    event,
+    count(distinct lt_id) as users,
+    count(distinct anonymous_id) as anon_users,
+    count(distinct session_id) as sessions
+from events
+where is_lt_team is false
+group by 1
+order by 2 asc

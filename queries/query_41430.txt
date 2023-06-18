@@ -1,0 +1,63 @@
+/*
+    Name: 20230403 - FT2 iOS - [FT-1087] Material Makeup - Feature Usage during Trial
+    Query ID: 41430
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-28T00:11:18.465Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        original_purchase_date
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%Material Makeup%')
+    and display_type = 'entered_photo_editor'
+    and `original_purchase_date` >= experiment_started_meta
+    and had_trial
+    and `is_in_trial_period` = false
+)
+
+select
+    segmentation,
+    variant,
+    feature_name,
+    min(toolbar_item_index) toolbar_item_index,
+    count(distinct id_for_vendor) num_users_used,
+    count(distinct id_for_vendor)/ max(total_num_users_used)*100 as pct_total_users_used,
+    count(distinct event_id) num_uses,
+    count(distinct event_id)/ max(total_num_uses)*100 pct_total_uses,
+    max(total_num_uses)/max(total_num_users_used) avg_features_used_per_user
+from (
+    select
+        segmentation,
+        variant,
+        feature_name,
+        toolbar_item_index,
+        u.id_for_vendor,
+        fs.event_id,
+        count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_num_users_used,
+        count(distinct fs.event_id) over (partition by segmentation, variant) total_num_uses
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2023-04-03'
+        and fs.meta_received_at between original_purchase_date and timestamp_add(original_purchase_date, interval 7 day)
+        and fs.platform_device_id = u.id_for_vendor
+)
+group by 1,2,3
+having num_users_used >= 100
+order by 1,2,4

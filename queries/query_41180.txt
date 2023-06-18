@@ -1,0 +1,49 @@
+/*
+    Name: Facetune Android: User Level CVR
+    Query ID: 41180
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-20T06:05:39.073Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(f.attribution_timestamp), {{period}}) as cohort_period,
+        f.attribution_user_id as user_id,
+        f.attribution_user_group_number,
+        s.lt_subscription_id is not null as is_subscriber,
+        floor(timestamp_diff(s.original_purchase_date,f.attribution_timestamp,hour)/24) as time_to_sub,
+    from `ltx-dwh-prod-processed.agg.app_attribution_user` f
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation` s
+        on f.attribution_user_id = s.attribution.attribution_user_id
+        and date(s.original_purchase_date) >= date(f.attribution_timestamp)
+        and s.application = 'facetune2_android'
+        -- and s.payments.revenue_so_far > 0
+    where date_trunc(date(f.attribution_timestamp), {{period}}) >= date_sub(current_date(), interval 30 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(f.attribution_timestamp), {{period}})
+    and f.app_name = 'facetune2_android'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+)
+
+
+select
+    cohort_period,
+    count(distinct user_id) as cohort_users,
+    count(distinct case when time_to_sub = 0 then user_id end) as day0subs,
+    count(distinct case when time_to_sub <= 7 then user_id end) as day7subs,
+    count(distinct case when time_to_sub <= 30 then user_id end) as day30subs,
+    100*count(distinct case when time_to_sub = 0 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 7 then user_id end),0) as day0cvr,
+    100*count(distinct case when time_to_sub <= 7 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 14 then user_id end),0) as day7cvr,
+    100*count(distinct case when time_to_sub <= 30 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 37 then user_id end),0) as day30cvr,
+    
+    count(distinct case when attribution_user_group_number = 1 and time_to_sub = 0 then user_id end) as userday0subs,
+    count(distinct case when attribution_user_group_number = 1 and time_to_sub <= 7 then user_id end) as userday7subs,
+    count(distinct case when attribution_user_group_number = 1 and time_to_sub <= 30 then user_id end) as userday30subs,
+    100*count(distinct case when attribution_user_group_number = 1 and time_to_sub = 0 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 7 then user_id end),0) as userday0cvr,
+    100*count(distinct case when attribution_user_group_number = 1 and time_to_sub <= 7 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 14 then user_id end),0) as userday7cvr,
+    100*count(distinct case when attribution_user_group_number = 1 and time_to_sub <= 30 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 37 then user_id end),0) as userday30cvr,
+from users
+group by 1
+having day0cvr > 0
+order by 1

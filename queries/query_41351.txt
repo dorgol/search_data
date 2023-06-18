@@ -1,0 +1,29 @@
+/*
+    Name: VL iOS - Main effects accept rate
+    Query ID: 41351
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-25T15:13:27.443Z
+    */
+    with projects as (
+        select 
+        new_object_class_name,
+        count(distinct case when action_name like "%_selected" then u.open_project_id end) as num_selected_projects,
+        count(distinct case when action_name like "%_accept" then u.open_project_id end) as num_accept_projects,
+        count(distinct case when u.is_subscriber is true and action_name like "%_selected" then u.open_project_id end) as num_vip_selected_projects,
+        count(distinct case when u.is_subscriber is false and action_name like "%_selected" then u.open_project_id end) as num_free_selected_projects,
+        count(distinct case when u.is_subscriber is true and action_name like "%_accept" then u.open_project_id end) as num_vip_accept_projects,
+        count(distinct case when u.is_subscriber is false and action_name like "%_accept" then u.open_project_id end) as num_free_accept_projects,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_used` u
+    where date(u.meta_received_at) >=date_sub(current_date(), interval 7 day)
+        and date(u.meta_received_at) < current_date()
+        and action_source = "feature_drawer"
+        --and action_name like "%_accept"
+        and app_name = "videoleap"
+    group by 1)
+    
+select
+*,
+safe_divide(num_accept_projects, num_selected_projects)*100 as total_accept_rate,
+safe_divide(num_free_accept_projects, num_free_selected_projects)*100 as free_accept_rate,
+safe_divide(num_vip_accept_projects, num_vip_selected_projects)*100 as vip_accept_rate 
+from projects

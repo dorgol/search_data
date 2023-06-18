@@ -1,0 +1,346 @@
+/*
+    Name: feed_posts_ratio_daily investigation
+    Query ID: 41007
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-16T14:55:11.522Z
+    */
+    
+with all_posts as (
+    select
+        l.meta_source,
+        l.post_id,
+        l.template_id,
+        min(dt) as dt
+    from (
+        -- sent from server, on record each change on post
+        select
+            meta_source,
+            post_id,
+            template_id,
+            date(min(created_at)) as dt
+        from `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily_all_posts` as pc
+        group by 1,2,3
+
+        union distinct
+
+--        Sent from the app once the user shared post
+        select
+            p.meta_source,
+            p.post_id,
+            lower(p.editing_instructions_id) as template_id,
+            date(min(meta_received_at)) as dt,
+        from `ltx-dwh-prod-raw.analytics_global.ltx_global_app_feed_post_published` as p
+        where p.post_id like "%-%-%-%"
+        group by 1,2,3
+        ) as l
+        left join `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily_internal_be_posts` as ip
+        on l.post_id = ip.post_id
+    where ip.post_id is null
+    group by 1,2,3
+),
+
+editing_started as (
+    select distinct
+        date(ves.meta_received_at) as dt,
+        lower(ves.parent_template_id) as parent_template_id,
+        ves.lt_id,
+        vee.open_project_id,
+        vee.id_for_vendor
+    from `ltx-dwh-prod-raw.analytics.ios_videoleap_template_editing_started` as ves
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_template_editing_ended` as vee
+        on ves.template_editing_flow_id = vee.template_editing_flow_id
+    where true
+        and ifnull(ves.flow_name, "use_template") <> "assets_first"
+
+    union all
+
+    select distinct
+        date(pes.meta_received_at) as dt, -- change to dt
+        lower(pes.parent_template_id) as parent_template_id,
+        pes.lt_id,
+        pee.open_project_id,
+        pee.id_for_vendor
+    from `ltx-dwh-prod-raw.analytics.ios_editor_template_editing_started` as pes
+    left join `ltx-dwh-prod-raw.analytics.ios_editor_template_editing_ended` as pee
+        on pes.template_editing_flow_id = pee.template_editing_flow_id
+
+    union all
+
+    select distinct
+        date(pes.meta_received_at) as dt,
+        lower(pes.parent_template_id) as parent_template_id,
+        ua.lt_id,
+        pee.project_id as open_project_id,
+        pee.installation_id as id_for_vendor -- ??
+    from `ltx-dwh-prod-raw.analytics.android_videoleap_template_editing_started` as pes
+    left join `ltx-dwh-prod-raw.analytics.android_videoleap_template_editing_ended` as pee
+        on pes.template_editing_flow_id = pee.template_editing_flow_id
+--     left join `ltx-dwh-prod-processed.app.feed_unnested_items_info` as fui --*
+    left join
+    (
+    select distinct platform_device_id,run_id,lt_id
+    from `ltx-dwh-prod-processed.app.feed_unnested_items_info` as fui
+        where true
+        and fui.platform ='android'
+        and fui.application = 'videoleap'
+    
+    union distinct
+        select distinct installation_id,run_id,lt_id
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_app_feed_user_action_started` as ua
+     where ua.meta_source = 'videoleap'
+    and ua.platform ='android' -- meta_source videoleap can be both ios and android
+    ) as ua
+    on ua.platform_device_id = pee.installation_id -- ??
+        and ua.run_id = pee.run_id
+),
+
+impressions as (
+    select
+        fui.dt as dt,
+        fui.application as meta_source,
+        fui.post_id,
+        count(distinct fui.lt_id) as distinct_total_impressions,
+    from `ltx-dwh-prod-processed.app.feed_unnested_items_info` as fui --*
+    where true
+        -- and fui.actions = 'become_ready'
+        and fui.application in ('videoleap', 'editor')
+    group by 1, 2, 3
+),
+
+clicks_temp as (
+    select distinct
+        fui.dt as dt,
+        fui.application as meta_source,
+        fui.post_id,
+        fui.lt_id
+    from `ltx-dwh-prod-processed.app.feed_unnested_items_info` as fui --*
+    where fui.actions = 'use_template'
+        and fui.application in ('videoleap', 'editor')
+        and fui.feed_type not like "assets_first%"
+        
+    union distinct
+
+    select distinct
+        date(uas.meta_received_at) as dt, --TODO: change to dt
+        uas.meta_source,
+        uas.post_id,
+        uas.lt_id
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_app_feed_user_action_started` as uas --*
+    where uas.action = 'use_template'
+        and uas.meta_source in ('videoleap', 'editor')
+        and uas.screen_name not like "assets_first%"
+),
+
+clicks as (
+    select
+        l.dt,
+        l.meta_source,
+        l.post_id,
+        count(distinct l.lt_id) as distinct_selected
+    from clicks_temp as l
+    group by 1, 2, 3
+),
+
+exports_temp as (
+select distinct
+    ct.meta_source,
+    ct.post_id,
+    ap.template_id
+from clicks_temp as ct
+left join all_posts as ap
+    on ct.post_id = ap.post_id
+),
+
+export_pressed as (
+    select
+        date(coalesce(sar.meta_received_at, sara.meta_received_at)) as dt,
+        fui.meta_source,
+        fui.post_id,
+        count(distinct case when coalesce(sar.id_for_vendor, sara.installation_id) is not null then u.lt_id end) as distinct_export_pressed    -- sum exports from both platforms together
+    from exports_temp as fui
+    left join editing_started as u
+        on fui.template_id = u.parent_template_id
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_session_analytics_reported` as sar
+        on u.id_for_vendor = sar.id_for_vendor
+        and u.open_project_id = sar.open_project_id
+        and sar.reason like '%export button pressed'
+    left join `ltx-dwh-prod-raw.analytics.android_videoleap_session_analytics_reported` as sara
+        on u.id_for_vendor = sara.installation_id
+        and u.open_project_id = sara.open_project_id
+        and sara.reason = 'export_clicked'
+    where fui.meta_source = 'videoleap'
+        and coalesce(sar.id_for_vendor, sara.installation_id) is not null
+    group by 1, 2, 3
+),
+
+export_started as (
+    select
+        dt,
+        meta_source,
+        post_id,
+        count(distinct lt_id) as distinct_export_started
+    from (
+        select distinct
+            date(es.meta_received_at) as dt,
+            es.meta_source,
+            ap.post_id,
+            es.lt_id
+        from `ltx-dwh-prod-raw.analytics.ios_videoleap_media_export_started` as es --*
+        join all_posts as ap
+            on lower(es.parent_template_id) = ap.template_id
+        where es.parent_template_id is not null
+
+        union distinct
+
+        select distinct
+            date(coalesce(ves.meta_received_at, vesa.meta_received_at, ees.meta_received_at)) as dt,
+            fui.meta_source,
+            fui.post_id,
+            u.lt_id
+        from exports_temp as fui
+        join editing_started as u
+            on fui.template_id = u.parent_template_id
+        left join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_export_started` as ves
+            on u.id_for_vendor = ves.id_for_vendor
+            and u.open_project_id = ves.open_project_id
+        left join `ltx-dwh-prod-raw.analytics.android_videoleap_media_export_started` as vesa
+            on u.id_for_vendor = vesa.installation_id
+            and u.open_project_id = vesa.project_id
+            
+        left join `ltx-dwh-prod-raw.analytics.ios_editor_editor_export_started` as ees
+            on u.id_for_vendor = ees.id_for_vendor
+            and u.open_project_id = ees.open_project_id
+        where coalesce(ees.id_for_vendor, ves.id_for_vendor, vesa.installation_id) is not null
+        )
+    group by 1, 2, 3
+),
+
+total_posts_to_include as (
+    select distinct
+        i.dt,
+        i.meta_source,
+        i.post_id
+    from impressions as i
+
+    union distinct
+
+    select distinct
+        c.dt,
+        c.meta_source,
+        c.post_id
+    from clicks as c
+
+    union distinct
+
+    select
+        ep.dt,
+        ep.meta_source,
+        ep.post_id
+    from export_pressed as ep
+
+    union distinct
+
+    select
+        es.dt,
+        es.meta_source,
+        es.post_id
+    from export_started as es
+)
+
+, result as (
+    select
+        ifnull(t.meta_source, ap.meta_source) as application,
+        ifnull(t.dt, ap.dt) as dt,
+        ifnull(t.post_id, ap.post_id) as post_id,
+        ifnull(it.is_template, 1) as is_template,
+        i.distinct_total_impressions,
+        s.distinct_selected as total_clicks,
+        ep.distinct_export_pressed,
+        es.distinct_export_started,
+        s.distinct_selected / nullif(i.distinct_total_impressions, 0) as ctr,
+        case
+            when t.meta_source = 'videoleap' then ep.distinct_export_pressed / nullif(i.distinct_total_impressions, 0)
+            when t.meta_source = 'editor' then es.distinct_export_started / nullif(i.distinct_total_impressions, 0)
+            end as distinct_export_rate,
+        ifnull(it.is_template, 1) * case
+            when t.meta_source = 'videoleap' then ep.distinct_export_pressed / nullif(i.distinct_total_impressions, 0)
+            when t.meta_source = 'editor' then es.distinct_export_started / nullif(i.distinct_total_impressions, 0)
+            end as popularity_score,
+        current_timestamp() as table_update_timestamp
+    from total_posts_to_include as t
+    -- extract all the post which are not daily active
+    full outer join
+    -- creation date
+    (SELECT meta_source, post_id, min(dt) as dt
+    from all_posts group by 1,2 ) as ap
+    on  t.post_id = ap.post_id
+    and t.meta_source = ap.meta_source
+    
+    left join impressions as i
+        on t.post_id = i.post_id
+        and t.meta_source = i.meta_source
+        and t.dt = i.dt
+    left join clicks as s
+        on t.post_id = s.post_id
+        and t.meta_source = s.meta_source
+        and t.dt = s.dt
+    left join export_pressed as ep
+        on t.post_id = ep.post_id
+        and t.meta_source = ep.meta_source
+        and t.dt = ep.dt
+    left join export_started as es
+        on t.post_id = es.post_id
+        and t.meta_source = es.meta_source
+        and t.dt = es.dt
+    left join `ltx-dwh-prod-processed.app.feed_posts_ratio_is_template` as it
+        on t.post_id = it.post_id
+        and t.meta_source = it.meta_source
+    where TRUE
+)
+
+select
+    "result" as source,
+    application,
+    count(distinct post_id) as num_posts
+from result
+group by 1,2
+
+union all
+
+select
+    "daily" as source,
+    application,
+    count(distinct post_id) as num_posts
+from `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily`
+group by 1,2
+
+union all
+
+select
+    "result_with_removed" as source,
+    r.application,
+    count(distinct r.post_id) as num_posts
+from result as r
+left join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_remove` as rm
+    using (post_id)
+where rm.post_id is null
+group by 1,2
+
+union all
+
+select
+    "general" as source,
+    application,
+    count(distinct post_id) as num_posts
+from `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio`
+group by 1,2
+
+
+-- select
+--     p.meta_source,
+--     count(distinct p.post_id) as num_posts
+-- from all_posts as p
+-- join impressions as al
+--     using(post_id)
+-- -- where al.post_id is null
+-- group by 1

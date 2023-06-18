@@ -1,0 +1,156 @@
+/*
+    Name: [FT-1058] Quickstart V2 - first flow funnel - accept first feature
+    Query ID: 41095
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-17T16:13:01.023Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else d.country end as country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.experiment_started_meta_by_type,
+        d.display_type,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed.ab_test.raw_final_subs_and_variant` s
+        on d.application = s.application
+        and d.experiment = s.experiment
+        and d.segmentation = s.segmentation
+        and d.variant = s.variant
+        and d.id_for_vendor = s.id_for_vendor
+        and d.display_type = s.display_type
+        and s.original_purchase_date <= d.experiment_started_meta_by_type
+    where case 
+        when '{{segments}}' = 'All Users' then d.segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then d.segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+        else true end
+    and  d.application = 'facetune2'
+    and d.experiment like '%[FT-1058]%'
+    and d.display_type = 'displayed'
+    and case 
+    when '{{countries}}' = 'Global' then true 
+    when '{{countries}}' = 'Rest of the World' then d.country not in ('US','CN')
+    when '{{countries}}' = 'All' then true
+    else d.country = '{{countries}}' end  
+    and case
+        when '{{subscriber}}' = 'Subscribers' then s.id_for_vendor is not null
+        when '{{subscriber}}' = 'Non-Subscribers' then s.id_for_vendor is null
+    else true end
+),
+
+first_quickstart_flow as (
+    select
+        u.display_type,
+        u.segmentation,
+        u.experiment,
+        u.country,
+        u.first_day, 
+        u.variant,
+        u.id_for_vendor,
+        u.experiment_started_meta, 
+        a.quickstart_screen_id as first_quickstart_screen_id,
+        a.meta_received_at as first_quickstart_appeared_ts,
+        a.features_presented
+    from users u 
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_appeared` a
+        on u.id_for_vendor = a.id_for_vendor
+    where true --variant = 'Variant 1'
+    qualify row_number() over (partition by experiment,variant,country,display_type,segmentation,id_for_vendor order by a.meta_received_at asc) = 1
+),
+
+first_quickstart_to_export as (
+select distinct
+    experiment,
+    country,
+    first_day, 
+    variant,
+    a.id_for_vendor,
+    experiment_started_meta, 
+    first_quickstart_screen_id,
+    first_quickstart_appeared_ts,
+    features_presented,
+    d.feature,
+    d.sub_feature,
+    d.feature_position,
+    d.reason,
+    qte.editing_session_id,
+    qte.feature_usage_id,
+    --fe.flow_name,
+    --fe.button_identifier,
+    fe.id_for_vendor is not null as accepted_in_editing_session,
+from first_quickstart_flow a
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_dismissed` d
+    on d.id_for_vendor = a.id_for_vendor
+    and d.quickstart_screen_id = a.first_quickstart_screen_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_to_editor` qte
+    on d.id_for_vendor = qte.id_for_vendor
+    and d.quickstart_screen_id = qte.quickstart_screen_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_ended` fe
+    on qte.id_for_vendor = fe.id_for_vendor
+    and qte.editing_session_id = fe.editing_session_id
+    and qte.feature_usage_id = fe.usage_id
+    and date(fe.meta_received_at) >= '2023-01-05'
+    and accepted
+),
+
+baseline_first_editing_session_post_experiment as (
+select
+    u.experiment,
+    u.first_day, 
+    u.variant,
+    u.segmentation,
+    u.country,
+    u.id_for_vendor,
+    u.experiment_started_meta,
+    u.experiment_started_meta_by_type,
+    u.display_type,
+    fs.editing_session_id,
+    fs.usage_id
+from users u
+join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_started` fs
+    on fs.id_for_vendor = u.id_for_vendor
+    and fs.meta_received_at >= u.experiment_started_meta_by_type
+    and date(fs.meta_received_at) >= '2023-01-05'
+where variant = 'baseline'
+qualify row_number() over (partition by experiment,variant,country,display_type,segmentation,id_for_vendor order by fs.meta_received_at asc) = 1
+),
+
+baseline_export_rate as (
+select 
+    count(distinct b.id_for_vendor) as baseline_users,
+    count(distinct fe.id_for_vendor) as baseline_accepters,
+from baseline_first_editing_session_post_experiment b
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_ended` fe
+    on b.id_for_vendor = fe.id_for_vendor
+    and b.editing_session_id = fe.editing_session_id
+    and b.usage_id = fe.usage_id
+    and date(fe.meta_received_at) >= '2023-01-05'
+    and accepted
+)
+
+select distinct
+    experiment,
+    country,
+    variant,
+    reason,
+    case when sub_feature is not null then feature || '.' || sub_feature
+        else feature end as feature,
+    
+    count(distinct case when accepted_in_editing_session then id_for_vendor end) over (partition by variant, case when sub_feature is not null then feature || '.' || sub_feature
+                                                                                                            else feature end) as cnt_devices_feature_accepted,
+    100*count(distinct case when accepted_in_editing_session then id_for_vendor end) over (partition by variant, case when sub_feature is not null then feature || '.' || sub_feature
+                                                                                                                else feature end) /
+    count(distinct id_for_vendor) over (partition by variant, case when sub_feature is not null then feature || '.' || sub_feature
+                                                            else feature end) as pct_devices_feature_accepted,                                                             
+    100*baseline_accepters / baseline_users as baseline_accept_rate,
+from first_quickstart_to_export
+join baseline_export_rate 
+    on true

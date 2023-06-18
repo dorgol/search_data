@@ -1,0 +1,166 @@
+/*
+    Name: PL W1 Retention By Main Editor Feature Usage
+    Query ID: 42247
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-26T18:18:05.067Z
+    */
+    
+with base as
+(
+select *
+from
+(
+SELECT
+distinct
+--    date_trunc(date(first_active_dt),day) as cohort_date,
+    date_trunc(date(first_active_dt),week) as cohort_week,
+    'week' as period_granularity,
+    current_store_country,
+    is_or_was_sub,
+    is_or_was_paid_sub,
+attribution_user_id,
+
+attribution.winning_lt_defacto_id,
+    date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week) as periods_from,
+ max(date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week)) over (partition by attribution_user_id) as survived
+FROM
+
+    `ltx-dwh-prod-processed.agg.app_attribution_user_date`
+where true
+    and dt >= date_trunc(date_sub(date(current_date()), interval 3 month),week)
+    and dt < date_trunc(current_date() ,week)
+    and date(first_active_dt) >= date_trunc(date_sub(date(current_date()), interval 3 month),week)
+    and app_name='editor'
+ and     date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week)<=1
+--and date(first_active_dt)='2023-04-02'
+--    and date_trunc(date(attribution_timestamp),week)>= '2022-01-01' -- to delete
+--    and date_trunc(date(first_active_dt),week) = '2022-01-01' -- to delete
+--    and app_name = 'facetune2_android_china' -- to delete
+
+--order by attribution_user_id
+)
+where periods_from=0
+--limit 100
+)
+,
+
+fs as 
+(select distinct
+date(date_trunc(meta_received_at,week)) as dt,
+id_for_vendor,
+farm_fingerprint('editor'|| id_for_vendor) as lt_defacto_id,
+case 
+when feature_name in ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette') then 'Effects'
+when feature_name in ('Doodle', 'EffectsBrush') then 'Brush'
+when feature_name in ('Fill', 'Inpaint','RemoveObject') then 'Heal'
+else feature_name end as feature_name ,
+dismiss_action
+from `ltx-dwh-prod-raw`.`analytics`.`ios_editor_feature_visited`
+where
+
+         feature_name in   ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette', 'Doodle', 'EffectsBrush', 'Fill', 'Inpaint', 'Cutout', 'LayerCrop', 'Filter', 'Adjust', 'Frame', 'Target', 'Reshape', 'Blur','Retouch','RemoveObject')
+        and date(meta_received_at)>= date_trunc(date_sub(date(current_date()), interval 3 month),week)
+)
+
+
+select cohort_week,
+count(distinct base.winning_lt_defacto_id) as cohort_users,
+count(distinct case when survived=1  then base.winning_lt_defacto_id end) as retained,
+count(distinct case when survived=0  then base.winning_lt_defacto_id end) as churned,
+count(distinct case when survived=1  then base.winning_lt_defacto_id end)/count(distinct base.winning_lt_defacto_id)*100 as w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Cutout') then fs.lt_defacto_id end ) as churned_cutout,
+count(distinct case when survived=1 and fs.feature_name in ('Cutout') then fs.lt_defacto_id end ) as survived_cutout,
+count(distinct case when fs.feature_name in ('Cutout') then fs.lt_defacto_id end ) as cutout_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Cutout') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Cutout') then fs.lt_defacto_id end ))*100 as cutout_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Adjust') then fs.lt_defacto_id end ) as churned_adjust,
+count(distinct case when survived=1 and fs.feature_name in ('Adjust') then fs.lt_defacto_id end ) as survived_adjust,
+count(distinct case when fs.feature_name in ('Adjust') then fs.lt_defacto_id end ) as adjust_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Adjust') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Adjust') then fs.lt_defacto_id end ))*100 as adjust_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('LayerCrop') then fs.lt_defacto_id end ) as churned_crop,
+count(distinct case when survived=1 and fs.feature_name in ('LayerCrop') then fs.lt_defacto_id end ) as survived_crop,
+count(distinct case when fs.feature_name in ('LayerCrop') then fs.lt_defacto_id end ) as crop_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('LayerCrop') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('LayerCrop') then fs.lt_defacto_id end ))*100 as crop_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Filter') then fs.lt_defacto_id end ) as churned_filter,
+count(distinct case when survived=1 and fs.feature_name in ('Filter') then fs.lt_defacto_id end ) as survived_filter,
+count(distinct case when fs.feature_name in ('Filter') then fs.lt_defacto_id end ) as filter_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Filter') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Filter') then fs.lt_defacto_id end ))*100 as filter_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Heal') then fs.lt_defacto_id end ) as churned_heal,
+count(distinct case when survived=1 and fs.feature_name in ('Heal') then fs.lt_defacto_id end ) as survived_heal,
+count(distinct case when fs.feature_name in ('Heal') then fs.lt_defacto_id end ) as heal_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Heal') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Heal') then fs.lt_defacto_id end ))*100 as heal_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Effects') then fs.lt_defacto_id end ) as churned_effects,
+count(distinct case when survived=1 and fs.feature_name in ('Effects') then fs.lt_defacto_id end ) as survived_effects,
+count(distinct case when fs.feature_name in ('Effects') then fs.lt_defacto_id end ) as effects_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Effects') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Effects') then fs.lt_defacto_id end ))*100 as effects_w1_retention,
+
+
+count(distinct case when survived=0 and fs.feature_name in ('Retouch') then fs.lt_defacto_id end ) as churned_retouch,
+count(distinct case when survived=1 and fs.feature_name in ('Retouch') then fs.lt_defacto_id end ) as survived_retouch,
+count(distinct case when fs.feature_name in ('Retouch') then fs.lt_defacto_id end ) as retouch_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Retouch') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Retouch') then fs.lt_defacto_id end ))*100 as retouch_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Reshape') then fs.lt_defacto_id end ) as churned_Reshape,
+count(distinct case when survived=1 and fs.feature_name in ('Reshape') then fs.lt_defacto_id end ) as survived_Reshape,
+count(distinct case when fs.feature_name in ('Reshape') then fs.lt_defacto_id end ) as Reshape_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Reshape') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Reshape') then fs.lt_defacto_id end ))*100 as Reshape_w1_retention,
+
+--accepts 
+count(distinct case when survived=0 and fs.feature_name in ('Cutout') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_churned_cutout,
+count(distinct case when survived=1 and fs.feature_name in ('Cutout') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_survived_cutout,
+count(distinct case when fs.feature_name in ('Cutout') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_cutout_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Cutout') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Cutout') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ))*100 as accepted_cutout_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Adjust') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_churned_adjust,
+count(distinct case when survived=1 and fs.feature_name in ('Adjust') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_survived_adjust,
+count(distinct case when fs.feature_name in ('Adjust') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_adjust_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Adjust') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Adjust') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ))*100 as accepted_adjust_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('LayerCrop') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_churned_crop,
+count(distinct case when survived=1 and fs.feature_name in ('LayerCrop') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_survived_crop,
+count(distinct case when fs.feature_name in ('LayerCrop') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_crop_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('LayerCrop') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('LayerCrop') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ))*100 as accepted_crop_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Filter') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_churned_filter,
+count(distinct case when survived=1 and fs.feature_name in ('Filter') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_survived_filter,
+count(distinct case when fs.feature_name in ('Filter') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_filter_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Filter') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Filter') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ))*100 as accepted_filter_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Heal') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_churned_heal,
+count(distinct case when survived=1 and fs.feature_name in ('Heal') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_survived_heal,
+count(distinct case when fs.feature_name in ('Heal') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_heal_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Heal') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Heal') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ))*100 as accepted_heal_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Effects') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_churned_effects,
+count(distinct case when survived=1 and fs.feature_name in ('Effects') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_survived_effects,
+count(distinct case when fs.feature_name in ('Effects') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_effects_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Effects') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Effects') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ))*100 as accepted_effects_w1_retention,
+
+
+count(distinct case when survived=0 and fs.feature_name in ('Retouch') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_churned_retouch,
+count(distinct case when survived=1 and fs.feature_name in ('Retouch') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_survived_retouch,
+count(distinct case when fs.feature_name in ('Retouch') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_retouch_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Retouch') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Retouch') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ))*100 as accepted_retouch_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('Reshape') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_churned_Reshape,
+count(distinct case when survived=1 and fs.feature_name in ('Reshape') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_survived_Reshape,
+count(distinct case when fs.feature_name in ('Reshape') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ) as accepted_Reshape_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('Reshape') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('Reshape') and fs.dismiss_action='ENFeatureExitStateAccepted' then fs.lt_defacto_id end ))*100 as accepted_Reshape_w1_retention,
+
+
+
+from
+base
+ left join fs
+        on fs.lt_defacto_id = base.winning_lt_defacto_id
+        and fs.dt=base.cohort_week
+
+        
+        where  (cohort_week) < date_trunc(date_sub(date(current_date()), interval 1 week),week)
+
+group by 1

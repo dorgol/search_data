@@ -1,0 +1,229 @@
+/*
+    Name: [FT-1067] Beauty Feed - Day 7 Entry Point Journey Retention - num of actions
+    Query ID: 40706
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-29T07:59:14.501Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(s.id_for_vendor is not null) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and case 
+            when '{{segments}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+and date(experiment_started_meta) <= current_date - 8
+    -- and variant like 'Variant%'
+),
+
+
+
+first_entrance as (
+    select
+        experiment,
+        variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_meta,
+        entry_point,
+        use,
+    from (
+       select distinct
+            experiment,
+            variant,
+            segmentation,
+            id_for_vendor,
+            experiment_started_meta,
+            'beauty' as entry_point,
+            (case when n.device_timestamp is not null then n.device_timestamp else '2099-01-01' end) as use,
+        from users u
+        left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` n  ---Clicked on Presets in Navigation
+            on true
+            and n.app_name = 'facetune2'
+            and n.platform_device_id = u.id_for_vendor
+            and cast(n.app_version_code as int64) >= {{since_version}}
+            and date(n.meta_received_at) >= '2023-02-19'
+            and date(meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and n.screen_name = 'home_screen'
+            and n.button_identifier = 'beautyFeed'
+        union all
+        select distinct
+            experiment,
+            variant,
+            segmentation,
+            id_for_vendor,
+            experiment_started_meta,
+            'beauty' as entry_point,
+            (case when device_timestamp is not null then device_timestamp else '2099-01-01' end) as use,
+        from users u
+        left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_dismissed` q ---Clicked on Presets in Beauty Quickstart
+            on true
+            and q.app_name = '{{app_name}}'
+            and q.platform_device_id = u.id_for_vendor
+            and cast(q.app_version_code as int64) >= {{since_version}}
+            and date(q.meta_received_at) >= '2023-02-19'
+            and date(meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and q.screen_name = 'beauty_quickstart'
+            and q.destination = 'beauty_feed'
+        union all
+        select distinct
+            experiment,
+            variant,
+            segmentation,
+            id_for_vendor,
+            experiment_started_meta,
+            'beauty' as entry_point,
+            (case when m.device_timestamp is not null then m.device_timestamp else '2099-01-01' end) as use,
+        from users u
+        left join `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented` m
+            on true
+            and m.app_name = '{{app_name}}'
+            and m.platform_device_id = u.id_for_vendor
+            and cast(m.app_version_code as int64) >= {{since_version}}
+            and date(m.meta_received_at) >= '2023-02-19'
+            and date(m.meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and m.message_name = 'beautyFeedWhatsNew'
+        left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` d
+            on true
+            and d.app_name = '{{app_name}}'
+            and d.platform_device_id = m.platform_device_id
+            and cast(d.app_version_code as int64) >= {{since_version}}
+            and date(d.meta_received_at) >= '2023-02-19'
+            and date(d.meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and d.flow_id = m.flow_id
+            and d.reason = 'accepted'
+    )
+    union all
+    select
+        experiment,
+        variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_meta,
+        case when contains_beauty then 'editor with feed' else 'editor' end as entry_point,
+        use,
+    from (
+        select
+            experiment,
+            variant,
+            segmentation,
+            id_for_vendor,
+            experiment_started_meta,
+            'editor' as entry_point,
+            editing_session_id,
+            string_agg(feature_name) like '%BeautyPresets%' as contains_beauty,
+            min(case when device_timestamp is not null then device_timestamp else '2099-01-01' end) as use,
+        from users u
+        left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` w ---Started Any Feature in Editor
+            on true
+            and w.app_name = 'facetune2'
+            and w.platform_device_id = u.id_for_vendor
+            and cast(w.app_version_code as int64) >= {{since_version}}
+            and date(w.meta_received_at) >= '2023-02-19'
+            and date(meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and source not like 'beauty%'
+        group by 1,2,3,4,5,6,7
+    )
+)
+    
+, ranked as (
+    select 
+        experiment,
+        variant,
+        '{{segments}}' as segments,
+        '{{subscriber}}' as sub_type,
+        id_for_vendor,
+        experiment_started_meta,
+        entry_point || ' -> ' || case when lead(use) over (partition by id_for_vendor order by use asc) = '2099-01-01' then 'nothing else' else lead(entry_point) over (partition by id_for_vendor order by use asc) end as entry_point,
+        use,
+        row_number() over (partition by id_for_vendor order by use asc) as rn,
+    from first_entrance
+    where true
+    qualify rn = 1
+    -- and use != '2099-01-01'  
+),
+
+retention as (
+    select
+        experiment,
+        variant,
+        '{{segments}}' as segments,
+        '{{subscriber}}' as sub_type,
+        case when use = '2099-01-01' then 'did nothing' else entry_point end as entry_point,
+        id_for_vendor,
+        u.experiment_started_meta, 
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 7, false) as week_0_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 14, false) as week_1_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 21, false) as week_2_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 28, false) as week_3_user,
+        max(date_diff(dt, date(experiment_started_meta), day) between 1 and 7) as retained_week_0,
+        max(date_diff(dt, date(experiment_started_meta), day) between 8 and 14) as retained_week_1,
+        max(date_diff(dt, date(experiment_started_meta), day) between 15 and 21) as retained_week_2,
+        max(date_diff(dt, date(experiment_started_meta), day) between 22 and 28) as retained_week_3,
+    from ranked u 
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device_date` d
+        on u.id_for_vendor = d.platform_device_id
+        and d.dt >= date(experiment_started_meta)
+        and d.dt >= '2023-02-19'
+        and d.app_name = 'facetune2'
+    group by 1,2,3,4,5,6,7,8,9
+)
+
+
+select
+    experiment,
+    variant,
+    segments,
+    sub_type,
+    case when entry_point = 'did nothing' then 'did nothing'
+        when entry_point like '%nothing%' then 'one action'
+        else 'Two or more actions' end as actions,
+    count(distinct case when week_0_user then id_for_vendor end) as users_week_0,
+    count(distinct case when week_1_user then id_for_vendor end) as users_week_1,
+    count(distinct case when week_2_user then id_for_vendor end) as users_week_2,
+    count(distinct case when week_3_user then id_for_vendor end) as users_week_3,
+    count(distinct case when retained_week_0 and week_0_user then id_for_vendor end) as retained_week_0,
+    count(distinct case when retained_week_1 and week_1_user then id_for_vendor end) as retained_week_1,
+    count(distinct case when retained_week_2 and week_2_user then id_for_vendor end) as retained_week_2,
+    count(distinct case when retained_week_3 and week_3_user then id_for_vendor end) as retained_week_3,
+    100*count(distinct case when retained_week_0 and week_0_user then id_for_vendor end)/nullif(count(distinct case when week_0_user then id_for_vendor end),0) as pct_retained_week_0,
+    100*count(distinct case when retained_week_1 and week_1_user then id_for_vendor end)/nullif(count(distinct case when week_1_user then id_for_vendor end),0) as pct_retained_week_1,
+    100*count(distinct case when retained_week_2 and week_2_user then id_for_vendor end)/nullif(count(distinct case when week_2_user then id_for_vendor end),0) as pct_retained_week_2,
+    100*count(distinct case when retained_week_3 and week_3_user then id_for_vendor end)/nullif(count(distinct case when week_3_user then id_for_vendor end),0) as pct_retained_week_3,
+from retention
+where true
+group by 1,2,3,4,5
+having users_week_0 > 100
+order by 1,2,3,4,5

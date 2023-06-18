@@ -1,0 +1,20 @@
+/*
+    Name: VL All - Spend x ROAS v2
+    Query ID: 41950
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-16T16:17:26.678Z
+    */
+    select distinct
+        date_trunc(date(rm.attribution_date), {{period}}) as period,
+        --application,
+        --payments.month0_late_or_renewal as split,
+        sum(total_adjusted_revenue_until_day_x) as rev,
+        sum(dm_spend) as dm_spend,
+        safe_divide(sum(total_adjusted_revenue_until_day_x),sum(dm_spend))*100 as wk0_roas
+    from `ltx-dwh-prod-processed.agg.marketing_revenue_metrics_by_date_cs` rm
+    where rm.vertical in ('Videoleap')
+        and purchase_platform = 'ios'
+        and days_from_attribution_date = 0
+        and date(rm.attribution_date) >= '2022-10-01'
+        and date_trunc(date(rm.attribution_date), {{period}}) != date_trunc(date(current_date()), {{period}})
+    group by 1

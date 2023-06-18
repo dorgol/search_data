@@ -1,0 +1,38 @@
+/*
+    Name: Screenshot Block Tracker - 2
+    Query ID: 42029
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-19T09:19:30.583Z
+    */
+    select distinct 
+        s.id_for_vendor,
+        timestamp_trunc(s.meta_received_at, hour) as time
+    
+
+from  
+    `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_screen_capture_and_play` s
+    
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+    on s.id_for_vendor = mp.platform_device_id and timestamp_trunc(s.meta_received_at, hour) = timestamp_trunc(mp.meta_received_at, hour)
+    and message_type = 'popup'
+    and message_name = 'screen_capture'
+    and message_source = 'screen_capture'
+    and message_id = '7F899B64-D0EF-4521-AC58-F3B746F6A3D7'
+    and mp.app_name = 'videoleap'
+/*left join (select distinct
+                timestamp_trunc(meta_received_at, hour) as time,
+                platform_device_id 
+            from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed`    
+                    --on timestamp_trunc(md.meta_received_at, hour) = timestamp_trunc(mp.meta_received_at, hour) and md.platform_device_id = mp.platform_device_id
+            where message_destination = 'subscription'
+                and reason = 'button_tapped'
+                and meta_received_at >= '2023-01-01'
+                and app_name = 'videoleap') md on time = timestamp_trunc(mp.meta_received_at, hour) and md.platform_device_id = mp.platform_device_id*/
+
+/*left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_flow_started` f
+    on f.platform_device_id = mp.platform_device_id and timestamp_trunc(f.meta_received_at, hour) = timestamp_trunc(mp.meta_received_at, hour)
+    and source = 'screen_capture_block'
+    and f.app_name = 'videoleap'*/
+    
+  
+order by 1

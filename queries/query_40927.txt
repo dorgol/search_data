@@ -1,0 +1,73 @@
+/*
+    Name: Bundles experiment - popup reactions
+    Query ID: 40927
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-09T11:14:58.148Z
+    */
+    with experiment_users as (
+    select distinct
+        id_for_vendor,
+        segmentation, 
+        variant,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and experiment = "Bundles (Production)"
+        -- and display_type like "mini_editor_displayed_%" 
+        and display_type = "activated_for_device"
+        and case when '{{segmentation}}' = 'All Users' then segmentation = "01 All Users"
+                 when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+) 
+
+, bundles_popup as (
+    select distinct
+        mp.platform_device_id,
+        mp.device_timestamp,
+        mp.event_id as presented_event,
+        md.event_id as dismissed_event,
+        md.reason       -- "cancel" / "continue"
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` as mp
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` as md
+        on mp.flow_id = md.flow_id
+        and md.app_name = "videoleap"
+        and date(md.meta_received_at) >= "2023-04-02"
+    where true
+        and mp.app_name = "videoleap"
+        and mp.message_name = "template_purchase_bundles"
+        and date(mp.meta_received_at) >= "2023-04-02"
+        and mp.app_version_code <> "4001"
+)
+
+, baseline_popup as (
+    select distinct
+        p.id_for_vendor,
+        p.device_timestamp,
+        p.event_id as presented_event,
+        d.event_id as dismissed_event,
+        d.button_name       -- "not_now"/ "unlock editor"
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_popup_presented` as p
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_popup_dismissed` as d
+        using (presentation_id)
+    where popup_title like "%mini_to_full%"
+)
+
+select
+    ex.variant,
+    count(distinct ex.id_for_vendor) as num_users,
+    -- count(distinct pop1.platform_device_id) as num_users_saw_bundles_popup,
+    -- count(distinct pop2.id_for_vendor) as num_users_saw_baseline_popup,
+    -- count(distinct case when pop1.reason = "continue" then ex.id_for_vendor end) as num_users_continue_bundles,
+    -- count(distinct case when pop2.button_name = "unlock_editor" then ex.id_for_vendor end) as num_users_continue_baseline
+    count(distinct coalesce(pop1.platform_device_id, pop2.id_for_vendor)) as num_users_saw_popup,
+    count(distinct case when pop1.reason = "continue" or pop2.button_name = "unlock_editor" then coalesce(pop1.platform_device_id, pop2.id_for_vendor) end) as num_users_continue_popup,
+    count(distinct case when pop1.reason = "continue" or pop2.button_name = "unlock_editor" then coalesce(pop1.platform_device_id, pop2.id_for_vendor) end) / count(distinct coalesce(pop1.platform_device_id, pop2.id_for_vendor)) * 100 as pct_continue
+from experiment_users as ex
+left join bundles_popup as pop1
+    on pop1.platform_device_id = ex.id_for_vendor
+    and pop1.device_timestamp > ex.experiment_started_device
+left join baseline_popup as pop2
+    on pop2.id_for_vendor = ex.id_for_vendor
+    and pop2.device_timestamp > ex.experiment_started_device
+group by 1  

@@ -1,0 +1,81 @@
+/*
+    Name: VL iOS - Feed Metrics by Entry Point
+    Query ID: 41894
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-25T15:45:08.160Z
+    */
+    with feed_screens as (
+    select distinct
+    case when lower(fp.screen_name) like '%category.recommended%' or ac.screen_name like '%for_you%' then 'Main Feed'
+                 when fp.screen_name like "%assets_first%" then "Assets First"
+                 when lower(fp.screen_name) like '%discover.recommended%' then 'Discover Main Feed'
+                 when lower(fp.screen_name) like '%discover.%' then 'Discover Categories'
+                 when fp.screen_name like '%category.%' then 'Main Categories'
+                 --when fp.feed_type = 'my_profile' then 'My Profile'
+                 when fp.screen_name in ('purchased') then 'My Profile - Purchased'
+                 when fp.screen_name in ('templates', 'liked') and fp.feed_type = 'profile' then 'Profile'
+                 when fp.screen_name = 'post_details' or ac.screen_name = 'remakes' then 'Remake Screen'
+                 when fp.screen_name is null then "unknown"
+                 else fp.screen_name end as screen_name,
+    count(distinct fp.platform_device_id) as feed_screen_presented,
+    count(distinct ac.platform_device_id) as use_template_clicked,
+    count(distinct ex.id_for_vendor) as remake_exported,
+from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented` as fp
+    on d.platform_device_id = fp.platform_device_id
+    and date(d.dt) = date(fp.meta_received_at)
+    and case when '{{day0}}' = 'day0' then (d.first_active_dt is null or date(d.first_active_dt) = date(fp.meta_received_at))
+             when '{{day0}}' = 'non day0' then date(d.first_active_dt) < date(fp.meta_received_at)
+             else true end
+    and fp.meta_source = "videoleap" 
+    and fp.platform = "ios"
+             
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac
+    on ac.flow_id = fp.flow_id -- correct join??
+    and action in ("use_template", "purchase_template")
+    and ac.meta_source = "videoleap" 
+    and ac.platform = "ios"
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as st
+    on st.action_identifier = ac.action_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+    on st.open_project_id = exs.open_project_id
+    and exs.parent_template_id is not null
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+    on exs.export_id = ex.export_id
+    
+where  d.app_name = "videoleap"
+    and date(d.dt) >= date_sub(current_date(), interval {{last x days}} day)
+    and date_trunc(current_date(), day) > date_trunc(date(d.dt), day) -- not today
+group by 1
+having use_template_clicked > 1)
+
+, active as (
+    select
+        count(distinct platform_device_id) as active_users
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    where d.app_name = "videoleap"
+    and date(d.dt) >= date_sub(current_date(), interval {{last x days}} day)
+    and date_trunc(current_date(), day) > date_trunc(date(d.dt), day) -- not today
+    and case when '{{day0}}' = 'day0' then (d.first_active_dt is null or date(d.first_active_dt) = date(d.dt))
+             when '{{day0}}' = 'non day0' then date(d.first_active_dt) < date(d.dt)
+             else true end)
+             
+             
+select
+    active_users,
+    screen_name,
+    feed_screen_presented,
+    use_template_clicked,
+    remake_exported,
+    
+    safe_divide(feed_screen_presented, active_users)*100 as presented_pct,
+    safe_divide(use_template_clicked, active_users)*100 as clicked_pct,
+    safe_divide(remake_exported, active_users)*100 as exported_pct,
+    
+    safe_divide(use_template_clicked, feed_screen_presented)*100 as clicked_from_presented_pct,
+    safe_divide(remake_exported, feed_screen_presented)*100 as exported_from_presented_pct,
+    
+from
+active
+cross join feed_screens
+order by presented_pct desc

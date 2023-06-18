@@ -1,0 +1,20 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 transactions - ios_transactions - raw
+    Query ID: 41959
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-16T18:21:38.215Z
+    */
+    SELECT t.purchase_date,
+    t.product_id, 
+    t.original_transaction_id,
+    t.actual_proceeds_usd
+--FROM `ltx-dwh-prod-processed.subscriptions.unified_transactions` t
+from `ltx-dwh-prod-processed.subscriptions.ios_transactions` t
+WHERE true
+and application= '{{app_name}}'
+and DATE(t.purchase_date) >= '{{start_date}}'
+and date(t.original_purchase_date) >= '{{start_date}}'
+and product_id like '%Facetune2.FeedTemplate%'
+and actual_proceeds_usd > 0
+and not is_sandbox
+order by 1

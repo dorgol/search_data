@@ -1,0 +1,82 @@
+/*
+    Name: Felix -  Months Until Subscription (Onboarding - Correction 2)
+    Query ID: 41349
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-26T08:16:22.700Z
+    */
+    declare start_date timestamp default '2022-06-01';
+declare month_limit default 5;
+
+with launches as (
+
+    select distinct
+        ad.lt_defacto_id,
+        date(date_trunc(first_launch, day)) as first_launch_date,
+        date(date_trunc(first_launch, month)) as first_launch_month
+
+    from 
+       `ltx-dwh-prod-processed`.`agg`.`app_device` ad
+    
+    where first_launch >= start_date
+        and app_name = 'videoleap'
+),
+
+subscriptions as (
+
+    select distinct 
+        device.lt_defacto_id,
+        lt_subscription_id,
+        date(date_trunc(original_purchase_date, day)) as original_purchase_date,
+        date(date_trunc(original_purchase_date, month)) as original_purchase_month
+    from 
+        `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` 
+    where --original_purchase_date >= '2022-01-01'--start_date
+        license_applications = 'videoleap'
+
+),
+
+cohorts as (
+
+select 
+    first_launch_month,
+    original_purchase_month,
+    case when date_diff(original_purchase_date, first_launch_date, month) is null then month_limit else date_diff(original_purchase_date, first_launch_date, month) end as diff,
+    count(distinct lt_defacto_id) as count_users
+from launches 
+left join subscriptions using (lt_defacto_id)
+
+group by 1,2,3
+order by 1,3 desc
+
+),
+
+cumulative_cohort as (
+
+select 
+    first_launch_month,
+    diff,
+    count_users,
+    sum(count_users) over (
+    partition by first_launch_month
+    order by diff desc
+    ) as inc_cohort,
+from 
+    cohorts
+where diff between 0 and month_limit
+order by 1,2 asc
+
+)
+
+select 
+first_Launch_month,
+diff,
+inc_cohort as cohort_size,
+sum(count_users) as user_count,
+(sum(count_users)/inc_cohort)*100 as inc_conversion_rate
+from cumulative_cohort
+where diff <= 4
+group by 1,2,3
+order by 1,2 asc
+
+
+

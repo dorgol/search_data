@@ -1,0 +1,119 @@
+/*
+    Name: [FT-1057] Makeup LAM (Combined) - Retained in Makeup after 7d (started LAM) as Free - High Level Metrics (not working)
+    Query ID: 40447
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-20T09:59:42.068Z
+    */
+    with 
+users as (
+    select
+        u.*
+    from (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.country,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.display_type,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = '{{app}}'
+        and (
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Var%') or
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Var%')
+        )
+        and timestamp_diff(current_timestamp(), experiment_started_meta, day) >= 7
+    ) u
+    where true
+    and display_type = '{{display_type}}'
+),
+
+saw_popup as (
+    select
+        u.*
+    from (
+        select
+            u.*,
+            min(fs.device_timestamp) over (partition by u.id_for_vendor, segmentation, variant) first_makeup_entrance
+        from users u
+        join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+            on fs.meta_received_at >= '2022-12-21'
+            and feature_name = 'Makeup'
+            and is_subscriber = false
+            and fs.meta_received_at >= experiment_started_meta
+            and fs.id_for_vendor = u.id_for_vendor
+        -- join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+        --     on true
+        --     and app_name = 'facetune2'
+        --     and message_name = 'LAM first billboard mixAndMatchLimitedAccessMonetizationDec2022'
+        --     and mp.meta_received_at >= '2022-12-21'
+        --     and mp.meta_received_at >= experiment_started_meta
+        --     and mp.platform_device_id = u.id_for_vendor
+    ) u
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+        on fs.meta_received_at >= '2022-12-21'
+        and feature_name = 'Makeup'
+        and is_subscriber = false 
+        and fs.meta_received_at >= experiment_started_meta
+        and timestamp_diff(fs.meta_received_at, first_makeup_entrance, day) >= 7
+        and fs.id_for_vendor = u.id_for_vendor
+),
+        
+subs as (
+    select
+        u.id_for_vendor,
+        s.revenue_so_far,
+        is_sol as sol_sub,
+        subscription_source,
+        first_subscription_duration as subscription_duration,
+        first_known_cancellation_date,
+        current_is_in_trial_period as is_in_trial_period,
+        had_trial,
+    from saw_popup u 
+    join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on true
+        and app_name = '{{app}}'
+        and s.original_purchase_date >= u.experiment_started_meta
+        and u.id_for_vendor = s.platform_device_id
+)
+
+select 
+    u.segmentation,
+    case when variant = 'Variant1' then 'Variant 1' else variant end as variant,
+    display_type,
+    count(distinct u.id_for_vendor)/max(total_activated_users)*100 display_rate,
+    count(distinct u.id_for_vendor) as num_devices,
+    
+    count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as cvr,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as sol_cvr,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is false then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as non_sol_cvr,
+    
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_cvr,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 and sol_sub is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_sol_cvr,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 and sol_sub is false then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_non_sol_cvr,
+    count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is false and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is false then u.id_for_vendor end),0)*100 as trial_to_paid_cvr,
+    
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1y' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_yearly_subs,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1m' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_monthly_subs,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = 'l' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_otp_subs,
+    
+    count(distinct case when s.id_for_vendor is not null and first_known_cancellation_date is not null then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as cancellation_rate,
+    count(distinct case when s.id_for_vendor is not null and first_known_cancellation_date is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as paid_cancellation_rate,
+    
+from saw_popup u
+left join subs s
+    on s.id_for_vendor = u.id_for_vendor
+where true
+group by 1,2,3
+order by 1,2,3

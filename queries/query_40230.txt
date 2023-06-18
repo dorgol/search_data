@@ -1,0 +1,94 @@
+/*
+    Name: SMBs Story - Subscription Tiers - Extreme Users - Remake Export TEST
+    Query ID: 40230
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-10T15:08:47.120Z
+    */
+    with users_1 as (
+  select distinct
+    d.platform_device_id,
+    d.first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+    and date(d.dt) >= '{{start date}}'
+)
+
+
+, users as (
+    select  
+         u.platform_device_id,
+         u.first_active_dt,
+         case when origin_page_response like '%business%' then 'I promote a business'
+             else 'other users' end as response,
+    from users_1 u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+    
+
+, remake_exports as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        ex.export_id
+        
+    from users u 
+    
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as ts
+        on u.platform_device_id = ts.id_for_vendor
+        
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ex.open_project_id = ts.open_project_id
+
+    where date(ex.meta_received_at) >= date('{{start date}}')
+        and response = 'I promote a business'
+    )
+
+, remake_exports_final as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        count(distinct u.export_id) as remake_exports
+        
+    from remake_exports u
+    group by 1,2
+    )
+
+
+
+, final as (
+    select
+        response,
+        platform_device_id,
+        case when remake_exports > 200 then 201 else remake_exports end as remake_exports
+    from remake_exports_final
+    )
+
+-------------------------------------
+-------------------------------------
+    
+, ranking as (
+    select
+        *,
+        row_number () over (order by remake_exports desc) as rank
+    from final
+    where remake_exports > 5
+    order by rank asc
+    )
+
+    select
+        rank,
+        remake_exports
+    from ranking
+
+

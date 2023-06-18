@@ -1,0 +1,28 @@
+/*
+    Name: VL iOS - num clips distribution in auto-edit sessions (Validation)
+    Query ID: 42290
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-28T22:12:47.610Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        number_of_clips_used
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+)
+
+select
+    feed_id,
+    count(distinct post_id) as num_seen_posts,
+    min(number_of_clips_used) as min_number_of_clips_used,
+    max(number_of_clips_used) as max_number_of_clips_used,
+    avg(number_of_clips_used) as avg_number_of_clips_used,
+    count(distinct number_of_clips_used) as num_different_clip_nums,
+from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` as f
+left join posts as p
+    using (post_id)
+where dt >= date_sub(current_date(), interval {{last x days}} day)
+and platform = "ios"
+and feed_type like "assets_first%"
+group by 1
+limit 100

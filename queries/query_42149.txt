@@ -1,0 +1,23 @@
+/*
+    Name: VL Feed - posts durations
+    Query ID: 42149
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-23T10:40:42.838Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        date(created_at) as dt,
+        duration / 1000 as duration
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where app_name = "videoleap"
+    qualify (row_number() over (partition by post_id order by server_timestamp desc) = 1)
+)
+
+select 
+    date_trunc(dt, week) as dt,
+    avg(duration) as avg_duration_in_seconds,
+    countif(duration = 0) / count(distinct post_id) * 100 as pct_0_duration_posts
+from posts
+where dt >= "2022-10-01"
+group by 1

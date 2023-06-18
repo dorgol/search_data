@@ -1,0 +1,115 @@
+/*
+    Name: PL ios Feature usage within day3 Non Scenes User
+    Query ID: 41606
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-03T15:56:11.251Z
+    */
+    create temp table scenes_users as
+(select distinct
+dev.first_active_dt,
+fs.platform_device_id
+FROM `ltx-dwh-prod-processed.agg.app_device_date`  as dev
+ inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as fs
+ on fs.app_name= '{{ app_name }}'
+ and fs.feature_name='ai_scenes'
+ and date(fs.meta_received_at)=dev.first_active_dt
+ and fs.platform_device_id=dev.platform_device_id
+ WHERE 
+ --dt = "2023-05-03" 
+ --and 
+dev.app_name= '{{ app_name }}'
+ 
+ --'editor'
+ 
+ and first_active_dt >="2023-04-01"
+ and first_active_dt=dt
+ )
+
+;
+
+create temp table
+base as
+(
+
+SELECT 
+dev.first_active_dt,
+dev.platform_device_id,
+case when su.platform_device_id is not null then 'Scenes User'
+    else 'Non Scenes User' end as category,
+date_add(dev.first_active_dt,interval 2 day) as day3
+
+ FROM `ltx-dwh-prod-processed.agg.app_device_date`  dev
+ left join scenes_users as su
+ on dev.first_active_dt=su.first_active_dt
+ and dev.platform_device_id=su.platform_device_id
+ 
+ WHERE 
+ --dt = "2023-05-03" 
+ --and 
+ app_name= '{{ app_name }}'
+ --'editor'
+ 
+ and dev.first_active_dt >="2023-04-01"
+and date_diff( dt, dev.first_active_dt, day)>=0
+and date_diff( dt, dev.first_active_dt, day)<3
+and date_diff(current_date(), dev.first_active_dt, day) >2
+and su.platform_device_id is  null
+
+)
+
+;
+select *,
+safe_divide(cars,users)*100 as ai_cars_pct,
+safe_divide(transform,users)*100 as ai_transform_pct,
+safe_divide(motion,users)*100 as motion_pct,
+safe_divide(tti_sti,users)*100 as tti_sti_pct,
+safe_divide(ai_enhance,users)*100 as ai_enhance_pct,
+safe_divide(instant_edits,users)*100 as instant_edits_pct,
+safe_divide(main_editor,users)*100 as main_editor_pct,
+--safe_divide(qa_editor,users)*100 as qa_editor_pct,
+safe_divide(avatar,users)*100 as avatar_pct,
+
+
+from
+(
+select 
+base.first_active_dt,
+base.category,
+count(distinct base.platform_device_id)  as users,
+count(distinct case when fs.feature_name ='ai_cars' then base.platform_device_id end ) as cars,
+count(distinct case when fs.feature_name ='ai_transform' then base.platform_device_id end ) as transform,
+count(distinct case when fs.feature_name ='motion' then base.platform_device_id end ) as motion,
+count(distinct case when fs.feature_name in ('text to image','sketch to image') then base.platform_device_id end ) as tti_sti,
+count(distinct case when (fs.feature_name in ('ai_enhance') or iefs.instant_edit_name='AIEnhance') then base.platform_device_id end ) as ai_enhance,
+count(distinct case when (iefs.instant_edit_name!='AIEnhance') then base.platform_device_id end ) as instant_edits,
+count(distinct  edfs.id_for_vendor  ) as main_editor,
+--count(distinct  qfs.id_for_vendor ) as qa_editor,
+count(distinct  ai_av.platform_device_id  ) as avatar,
+from base 
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+on fs.app_name='editor'
+and base.platform_device_id=fs.platform_device_id
+and date(fs.meta_received_at)>=base.first_active_dt
+and date(fs.meta_received_at)<= base.day3
+and fs.feature_name in ('ai_cars','ai_transform','motion','text to image','sketch to image','ai_enhance')
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_flow_started` as iefs
+    on base.platform_device_id = iefs.id_for_vendor
+    and date(iefs.meta_received_at)>=base.first_active_dt
+and date(iefs.meta_received_at)<= base.day3
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_editor_flow_started` as edfs
+    on base.platform_device_id = edfs.id_for_vendor
+    and date(edfs.meta_received_at)>=base.first_active_dt
+and date(edfs.meta_received_at)<= base.day3
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` as ai_av
+    on base.platform_device_id = ai_av.platform_device_id
+    and date(ai_av.meta_received_at)>=base.first_active_dt
+    and date(ai_av.meta_received_at)<= base.day3
+    and ai_av.app_name='editor'
+    and ai_av.screen_name in (
+    --'ai_avatar_photo_selection_start','couples_ai_avatar_photo_summary_1','pets_ai_avatar_photo_selection_start',
+    'ai_avatar_welcome'
+   -- ,'dnd_ai_avatar_photo_selection_start'
+    )
+
+ group by 1,2
+ )

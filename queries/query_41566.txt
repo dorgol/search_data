@@ -1,0 +1,36 @@
+/*
+    Name: VL iOS - Period Active Users - Total & Spend
+    Query ID: 41566
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-03T13:17:53.497Z
+    */
+    with dau as (
+    select
+        date_trunc(f.dt, {{period}}) as period,
+        dm_spend,
+        count(distinct lt_defacto_id) as active_users,
+        count(distinct case when date_trunc(date(first_launch), {{period}}) = date_trunc(date(dt), {{period}}) 
+                        then lt_defacto_id end) as new_users,
+        count(distinct case when date_trunc(date(first_launch), {{period}}) < date_trunc(date(dt), {{period}}) 
+                        then lt_defacto_id end) as existing_users
+                        
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date` f
+    inner join (select 
+                    date_trunc(date(rm.attribution_date), {{period}}) as period,
+                    sum(dm_spend) as dm_spend 
+               from `ltx-dwh-prod-processed.agg.marketing_revenue_metrics_by_date` rm
+               where rm.vertical in ('Videoleap') and days_from_attribution_date = 0
+               group by 1) rm
+            on rm.period = date_trunc(f.dt, {{period}})
+    where date_trunc(dt, {{period}}) >= '2022-01-01'
+        and date_trunc(current_date(), {{period}}) != date_trunc(dt, {{period}})
+        and f.app_name = 'videoleap'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+    group by 1,2
+)
+
+select *, safe_divide(new_users, active_users)*100 as new_pct
+from dau

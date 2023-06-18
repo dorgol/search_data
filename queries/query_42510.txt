@@ -1,0 +1,151 @@
+/*
+    Name: VL iOS- Landing Screen Experiment - Hub ltem Interactions by User Type
+    Query ID: 42510
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-06-05T14:09:35.580Z
+    */
+    with experiment_users as (
+    select distinct
+        id_for_vendor,
+        lt_defacto_id,
+        segmentation,
+        case when variant like '%Baseline' then 'Baseline'
+                     when variant like '%Variant1' then 'Variant1'
+                     when variant like '%Variant2' then 'Variant2' end as variant,
+        experiment_started_device,
+        experiment_started_meta,
+        experiment
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and lower(experiment) like lower('vl_landing_screen_experiment_05_2023_local')
+        and case when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                 when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                 when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                 when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+                 else true end
+        and case 
+                when '{{countries}}' = 'Global' then true 
+                when '{{countries}}' = 'Rest of the World' then country not in ('US','CN')
+                when '{{countries}}' = 'All' then true
+                else country = '{{countries}}' end
+) 
+
+, user_types as (
+    select distinct
+        id_for_vendor,
+        lt_defacto_id,
+        segmentation,
+        variant,
+        experiment_started_device,
+        experiment_started_meta,
+        case when origin_page_response is null then 'No answer'
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%content%' then 'Im a content creator'
+                when origin_page_response like '%fun%' then 'I edit for fun'
+                when origin_page_response like '%Other%' then 'Other'  else origin_page_response end as user_type
+    from experiment_users ex
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on pq.platform_device_id = ex.id_for_vendor
+        and pq.app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by pq.platform_device_id order by pq.meta_received_at desc) = 1
+    
+    )
+
+, hub_flow_started as (
+    select distinct
+        device_timestamp,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_hub_flow_started`
+    where app_name = "videoleap"
+        --and meta_received_at >= experiment_started_device
+        --and button_identifier in ("home_plus_button", "create_button")
+)
+
+, hub_view_presented as (
+    select distinct
+        device_timestamp,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_hub_view_presented`
+    where app_name = "videoleap"
+        --and meta_received_at >= experiment_started_device
+)
+
+, hub_item_interacted as (
+    select distinct
+        device_timestamp,
+        platform_device_id,
+        concat(section_name,'.', item_name) as item
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_hub_item_interacted`
+    where app_name = "videoleap"
+        --and meta_received_at >= experiment_started_device
+    
+    union all
+     
+     select distinct
+        device_timestamp,
+        platform_device_id,
+        concat(screen_name,'.', action) as item
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started`
+    where app_name = "videoleap" and action = 'use_template' and screen_name like '%landing%'
+    
+    union all
+     
+     select distinct
+        device_timestamp,
+        platform_device_id,
+        concat('bottom_bar','.', button_identifier) as item
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed`
+    where app_name = "videoleap" and button_location = 'home_bottom_bar'
+    
+    
+    )
+
+, interaction as (
+    select
+        user_type,
+        item,
+        count(distinct h3.platform_device_id) as hub_item_interacted_users,
+
+    from user_types as ex
+    inner join hub_view_presented as h2
+        on h2.platform_device_id = ex.id_for_vendor
+        and h2.device_timestamp >= experiment_started_device
+    inner join hub_item_interacted as h3
+        on h3.platform_device_id = h2.platform_device_id
+        and h3.device_timestamp >= experiment_started_device
+
+    group by 1,2
+),
+
+hub_presented as (
+    select 
+        user_type, 
+        count(distinct platform_device_id) as hub_presented_users
+    from user_types as ex
+    inner join hub_view_presented as h2
+        on h2.platform_device_id = ex.id_for_vendor
+        and h2.device_timestamp >= experiment_started_device
+    group by 1),
+
+total as (
+    select
+        i.user_type,
+        item,
+        hub_item_interacted_users,
+        hub_presented_users
+    from interaction i
+    left join hub_presented h
+        on h.user_type = i.user_type)
+
+select 
+    *,
+    hub_item_interacted_users / hub_presented_users * 100 as interacted_pct
+from total
+where (hub_item_interacted_users / hub_presented_users * 100) > 2
+order by interacted_pct desc

@@ -1,0 +1,65 @@
+/*
+    Name: VLA - subscription tiers experiment - CVR/PCVR by product
+    Query ID: 42131
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-31T09:37:56.566Z
+    */
+    with raw_data as (
+    select distinct
+        ex.experiment,
+        ex.variant,
+        ex.installation_id,
+        ex.experiment_started_device,
+        case when s.subscription.product_id = "v2_vl_gp_vip_sub_1m_p3_t7_ip0x.0" then "Pro+"
+             when s.subscription.product_id = "v2_vl_gp_vip_sub_1m_p3_t0_ip0x" then "Pro+ and CX"
+             when s.subscription.product_id = "v2_vl_gp_vip_sub_1m_p1_t0_ip0x.0" then "monthly"
+             when s.subscription.product_id = "v2_vl_gp_vip_sub_1y_p0_t7_ip0x.0" then "yearly with trial"
+             when s.subscription.product_id = "v2_vl_gp_vip_sub_1y_p1_t0_ip0x.0" then "yearly without trial"
+        else s.subscription.product_id end as product_id,
+        -- s.subscription.product_id,
+        s.original_purchase_date,
+        s.payments.revenue_so_far_alloc_cs as revenue_so_far,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`purchase_to_verified_devices` as ptd
+        on ptd.installation_id = ex.installation_id
+        and ptd.original_purchase_date > ex.experiment_started_device
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation_cross_sell` as s
+        on ptd.lt_subscription_id = s.lt_subscription_id
+        and s.subscription.product_category = "subscription"
+        and s.vertical = "Videoleap"
+    where true
+        and ex.application = "videoleap_android"
+        and ex.experiment = "business_subscription_tiers"
+)
+
+, total_users as (
+    select
+        variant,
+        -- case when assignment_day_from_install = 0 or assignment_day_from_install is null then "day0" else "non day0" end as day0,
+        count(distinct installation_id) as num_devices
+    from raw_data
+    group by 1
+)
+
+select
+    num_subs / num_devices * 100 as CVR,
+    num_paid_subs / num_devices * 100 as PCVR,
+    num_subs_by_product / num_devices * 100 as product_CVR,
+    num_paid_subs_by_product / num_devices * 100 as product_PCVR,
+    *, 
+from (
+    select distinct
+        t.variant,
+        r.product_id,
+        t.num_devices,
+        count(distinct case when r.original_purchase_date is not null then installation_id end) over (partition by variant) as num_subs,
+        count(distinct case when r.original_purchase_date is not null then installation_id end) over (partition by variant, product_id) as num_subs_by_product,
+        count(distinct case when r.original_purchase_date is not null and r.revenue_so_far > 0 then installation_id end) over (partition by variant) as num_paid_subs,
+        count(distinct case when r.original_purchase_date is not null and r.revenue_so_far > 0 then installation_id end) over (partition by variant, product_id) as num_paid_subs_by_product,
+    from raw_data as r
+    left join total_users as t
+        using(variant)
+    where original_purchase_date is not null
+)
+where num_subs_by_product > 20
+order by 1

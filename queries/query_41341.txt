@@ -1,0 +1,20 @@
+/*
+    Name: videoleap_object_added
+    Query ID: 41341
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-25T11:01:23.026Z
+    */
+    select 
+        object_class_name,
+        timestamp_trunc(u.meta_received_at,day) as dt,
+        count(distinct u.open_project_id) as num_projects
+        --count(distinct case when d.is_subscriber is true then u.id_for_vendor end) as num_vip_users,
+        --count(distinct case when d.is_subscriber is false then u.id_for_vendor end) as num_free_users,
+        --count(distinct case when d.is_subscriber is true then u.open_project_id end) as num_vip_projects,
+        --count(distinct case when d.is_subscriber is false then u.open_project_id end) as num_free_projects,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_object_added` u
+    where date(u.meta_received_at) >=date_sub(current_date(), interval 60 day)
+        and date(u.meta_received_at) < current_date()
+    and u.object_class_name in ('Text', 'EVDFiltersLayerInputModel','EVDAdjustInputModel','SelectiveAdjust','LensFlarePreset','Defocus','Prism','Kaleidoscope','ColorSplash','Vignette',
+         'EVDFilmGrainInputModel','FishEye','EVDOffsetInputModel','EVDShakeInputModel','EVDCrystalInputModel','EVDRaysInputModel','EVDStrobeInputModel')
+    group by 1,2

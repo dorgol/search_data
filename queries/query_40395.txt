@@ -1,0 +1,64 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1074] PN Provisional Access V2 - Data Validation - Auth Popup Timing
+    Query ID: 40395
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-16T15:43:43.215Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        country
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%[FT-1074] PN Provisional Access V2%')
+    and display_type = '{{display}}'
+),
+
+users_and_pn as (
+    select distinct
+        segmentation,
+        variant,
+        display_type,
+        u.id_for_vendor,
+        first_value(permission_status) over (partition by segmentation, variant, u.id_for_vendor order by a.meta_received_at desc) as pn_status,
+        count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_users,
+        count(distinct a.id_for_vendor) over (partition by segmentation, variant) total_users_auth
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_authorization_status` a
+         on u.id_for_vendor = a.id_for_vendor
+         and a.meta_received_at >= experiment_started_meta_by_type
+         and a.meta_received_at >= '2023-03-15'
+         and a.permission = 'push_notifications'
+)
+
+
+select 
+    segmentation,
+    variant,
+    display_type,
+    max(total_users) as all_users,
+    max(total_users_auth) as all_users_auth,
+    count(distinct case when pn_status = 'provisional' then id_for_vendor end)/max(total_users)*100 as pct_provisional,
+    count(distinct case when pn_status = 'authorized' then id_for_vendor end)/max(total_users)*100 as pct_authorized,
+    count(distinct case when pn_status = 'denied' then id_for_vendor end)/max(total_users)*100 as pct_denied,
+    count(distinct case when pn_status = 'not_determined' then id_for_vendor end)/max(total_users)*100 as pct_not_determined,
+    count(distinct case when pn_status is null then id_for_vendor end)/max(total_users)*100 as pct_no_status,
+    count(distinct case when pn_status in ('provisional','authorized','denied','not_determined') or pn_status is null then id_for_vendor end)/max(total_users)*100 as pct_total_sum
+from users_and_pn
+group by 1,2,3
+order by 1,2

@@ -1,0 +1,119 @@
+/*
+    Name: VL iOS - StoryBlocks - Monthly Summary
+    Query ID: 42420
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-06-07T07:59:12.923Z
+    */
+    with exports as (
+    select distinct
+        exs.meta_received_at,
+        exs.id_for_vendor,
+        exs.open_project_id,
+        ex.export_id
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+        on exs.export_id = ex.export_id
+    where date(exs.meta_received_at) >= date_sub(current_date(), interval 6 month)
+        --and exs.parent_template_id is null -- only originals
+    )
+
+, audio_objects_per_project as (
+    select distinct
+        date(p.meta_received_at) as dt,
+        p.open_project_id,
+        p.id_for_vendor,
+        export_id,
+        JSON_EXTRACT_SCALAR(outline, "$.source_type") as source_type,
+        JSON_EXTRACT_SCALAR(outline, "$.object_type") as object_type,
+        JSON_EXTRACT_SCALAR(outline, "$.object_identifier") as object_id,
+        source_localized_title,
+        ifnull(au.provider, "other") as provider,
+    from exports p
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_session_analytics_reported` as sar
+        on p.open_project_id = sar.open_project_id
+        and date(sar.meta_received_at) = date(p.meta_received_at)
+        and sar.reason like '%export button pressed'
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_session_outline_json` as soj
+        on soj.session_analytics_ID = sar.session_analytics_ID
+    , unnest(json_extract_array(soj.outline_json)) as outline
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_audio_added` as au
+        on JSON_EXTRACT_SCALAR(outline, "$.object_identifier") = au.imported_identifier
+        and au.open_project_id = p.open_project_id
+    where true
+    and JSON_EXTRACT_SCALAR(outline, "$.source_type") = 'EVDSourceTypeAudio'
+    and soj.open_project_id not in ('5BC69A92-5AD8-4B03-B695-5833F44369B4','1A293A77-5278-4A60-879B-A74D47F6980C','A31E10E3-8EEF-4159-ACCA-CAC3EFB8A4D7') --demo projects
+)
+
+, export_users as (
+    select
+        date_trunc(dt, month) as dt,
+        "Exported audio" as action,
+        count(distinct id_for_vendor) as exported_users,
+        count(distinct open_project_id) as exported_projects,
+        count(distinct source_localized_title) as exported_assets,
+    from audio_objects_per_project
+    where true
+        and provider = "storyblocks"
+    group by 1, 2
+)
+
+, shared_to_feed as (
+    select
+        date_trunc(date(fp.meta_received_at), month) as dt,
+        count(distinct fp.open_project_id) as shared_projects
+    from audio_objects_per_project ap
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` fp
+        on fp.export_id = ap.export_id
+    where provider = "storyblocks"
+    group by 1)
+
+, export_remakes as (
+    select
+        date_trunc(ex.dt, month) as dt,
+        count(distinct ex.open_project_id) as exported_projects_remakes,
+        count(distinct ex.id_for_vendor) as exported_users_remakes,
+        count(distinct source_localized_title) as exported_assets_remakes,
+    from audio_objects_per_project ap
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` fp
+        on fp.export_id = ap.export_id
+    inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on fp.post_id = pc.post_id
+    inner join (select distinct ex.export_id, exs.id_for_vendor, exs.open_project_id, exs.parent_template_id, date(ex.meta_received_at) dt
+                from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+                    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+                        on exs.export_id = ex.export_id
+                where date(exs.meta_received_at) >= date_sub(current_date(), interval 6 month)) ex
+        on lower(ex.parent_template_id) = pc.template_id
+    where provider = "storyblocks"
+    group by 1)
+    
+, assets as (
+    select
+        date_trunc(date(meta_received_at), month) as dt,
+        "Added audio" as action,
+        count(distinct id_for_vendor) as added_users,
+        count(distinct open_project_id) as added_projects,
+        count(distinct source_localized_title) as added_assets
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_audio_added` as au
+    where date(meta_received_at) >= date_sub(current_date(), interval 18 month)
+        and provider = "storyblocks"
+    group by 1,2
+)
+
+select
+    e.dt,
+    e.exported_users,
+    e.exported_projects,
+    e.exported_assets,
+    a.added_users,
+    a.added_projects,
+    a.added_assets,
+    x.exported_users_remakes,
+    x.exported_projects_remakes,
+    x.exported_assets_remakes,
+    f.shared_projects
+from export_users e
+left join assets a on e.dt = a.dt 
+left join export_remakes x on e.dt = x.dt 
+left join shared_to_feed f on e.dt = f.dt
+order by 1 asc

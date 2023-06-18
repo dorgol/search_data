@@ -1,0 +1,57 @@
+/*
+    Name: VL iOS - advanced filtering experiment - usage funnel
+    Query ID: 42346
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-30T15:02:52.317Z
+    */
+    with experiment_users as (
+    select distinct
+        experiment,
+        case when variant like "%Baseline" then "Baseline" 
+             when variant like "%Variant1" then "Variant1"
+             when variant like "%Variant2" then "Variant2" end as variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_device
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant`
+    where application = "videoleap"
+      and experiment = "feed_advanced_filtering_experiment_05_2023"
+      and display_type like "display%"
+      and segmentation = '{{segmentation}}'
+)
+
+
+select
+    *, 
+    num_users_clicked_filters / num_devices * 100 as pct_users_clicked_filters,
+    num_users_opened_filters_screen / num_devices * 100 as pct_users_opened_filters_screen,
+    num_users_clicked_on_filter / num_devices * 100 as pct_users_clicked_on_filter,
+    num_users_clicked_apply / num_devices * 100 as pct_users_clicked_apply,
+from (
+    select
+      ex.variant,
+      ex.segmentation,
+      count(distinct ex.id_for_vendor) as num_devices,
+      count(distinct bp.platform_device_id) as num_users_clicked_filters,
+      count(distinct sp.platform_device_id) as num_users_opened_filters_screen,
+      count(distinct case when bp1.button_identifier <> "filters_apply" then bp1.platform_device_id end) as num_users_clicked_on_filter,
+      count(distinct case when bp1.button_identifier = "filters_apply" then bp1.platform_device_id end) as num_users_clicked_apply,
+    from experiment_users as ex
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` as bp
+      on bp.app_name = "videoleap"
+      and bp.platform_device_id = ex.id_for_vendor
+      and bp.device_timestamp > ex.experiment_started_device
+      and bp.button_identifier = "filters_open"
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` as sp
+      on sp.app_name = "videoleap"
+      and sp.platform_device_id = ex.id_for_vendor
+      and sp.device_timestamp > ex.experiment_started_device
+      and sp.screen_name = "advanced_filtering"
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` as bp1
+      on bp1.app_name = "videoleap"
+      and bp1.platform_device_id = ex.id_for_vendor
+      and bp1.device_timestamp > ex.experiment_started_device
+      and bp1.screen_name = "advanced_filtering"
+    where ex.variant not like "%Baseline"
+    group by 1,2
+)

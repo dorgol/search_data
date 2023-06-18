@@ -1,0 +1,14 @@
+/*
+    Name: VL iOS: OS versions devices
+    Query ID: 40843
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-03T11:44:45.051Z
+    */
+    select distinct
+    os_version,
+    count(distinct id_for_vendor) over (partition by os_version) as devices,
+    100*count(distinct id_for_vendor) over (partition by os_version)/count(distinct id_for_vendor) over () as pct_devices,
+from `ltx-dwh-prod-processed`.`devices`.`unified_devices_global`
+where application = 'videoleap'
+and date(last_received_at) >= date_sub(current_date(), interval 30 day)
+order by 2 desc

@@ -1,0 +1,55 @@
+/*
+    Name: VLA country validity investigation
+    Query ID: 40396
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-16T16:05:00.921Z
+    */
+    with countries_per_device as (
+    select
+        installation_id,
+        count(distinct play_store_country) as num_related_countries
+    from `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_device_info_log`
+    where date(meta_received_at) >= date_sub(current_date(), interval 3 month)
+    group by 1
+    having count(distinct play_store_country) > 0       -- remove devices without any country
+)
+
+, last_store_country_per_device as (
+    select
+        *
+    from (
+        select distinct
+            d.installation_id,
+            dil.play_store_country,
+            row_number() over (partition by installation_id order by meta_received_at desc) as rn
+        from countries_per_device as d
+        left join `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_device_info_log` as dil
+            using(installation_id)
+    )
+    where rn = 1
+)
+
+, last_network_country_per_device as (
+    select
+        *
+    from (
+        select distinct
+            dil.installation_id,
+            dil.network_country,
+            row_number() over (partition by installation_id order by meta_received_at desc) as rn
+        from `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_device_info_log` as dil
+    )
+    where rn = 1
+)
+
+select
+    count(distinct case when play_store_country <> network_country then installation_id end) / count(distinct installation_id) * 100 as pct_devices_with_no_matching_countries
+from (
+    select
+        st.installation_id,
+        st.play_store_country,
+        net.network_country
+    from last_store_country_per_device as st
+    left join last_network_country_per_device as net
+        using (installation_id)
+)

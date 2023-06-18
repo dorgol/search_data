@@ -1,0 +1,116 @@
+/*
+    Name: Beauty Presets - Facetune2: % Exports with feature by number of features in export
+    Query ID: 40296
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-13T13:20:51.436Z
+    */
+    with 
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        else true end
+    and  d.application = '{{app_name}}'
+    and lower(d.experiment) like lower('%{{experiment}}%') 
+    and display_type = '{{display}}'
+    and variant = '{{variant}}'
+),
+
+feature_ended as (
+    select
+        segmentation,
+        variant,
+        fe.platform_device_id,
+        event_id,
+        device_timestamp,
+        feature_name,
+        reason,
+        experiment_started_meta,
+        editing_session_id,
+        feature_usage_id
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on app_name = '{{app_name}}'
+        and meta_received_at >= '{{start_date}}'
+        and cast(app_version_code as int64) >= {{since_version}}
+        and (reason = 'accepted' or (feature_name = 'BeautyPresets' and reason = 'edit'))
+        and fe.platform_device_id = u.id_for_vendor
+        and fe.meta_received_at >= u.experiment_started_meta
+        
+),
+
+exports as (
+select distinct
+    segmentation,
+    variant,
+    feature_name,
+    editing_session_id,
+    platform_device_id,
+    event_id,
+    count(distinct feature_name) over (partition by segmentation, variant, platform_device_id, editing_session_id) as num_features_in_export,
+    count(distinct event_id) over (partition by segmentation, variant) as total_exports
+from (
+select 
+        segmentation,
+        variant,
+        fe.feature_name,
+        fe.experiment_started_meta,
+        fe.editing_session_id,
+        ex.platform_device_id,
+        ex.event_id,
+        ex.device_timestamp,
+from feature_ended fe
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+    on ex.app_name = '{{app_name}}'
+    and meta_received_at >= '{{start_date}}'
+    and cast(app_version_code as int64) >= {{since_version}}
+    and fe.platform_device_id = ex.platform_device_id
+    and case when (fe.feature_name = 'BeautyPresets' and fe.reason = 'edit') then ends_with(fe.feature_usage_id, ex.editing_session_id) else fe.editing_session_id = ex.editing_session_id end
+    and ex.device_timestamp > fe.device_timestamp
+
+union all
+
+select 
+    u.segmentation,
+    u.variant,
+    'BeautyPresets' as feature_name,
+    u.experiment_started_meta,
+    ex.editing_session_id,
+    ex.platform_device_id,
+    ex.event_id,
+    ex.device_timestamp,
+from users u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+    on ex.app_name = '{{app_name}}'
+    and date(meta_received_at) >= '{{start_date}}'
+    and cast(app_version_code as int64) >= {{since_version}}
+    and u.id_for_vendor = ex.platform_device_id
+    and ex.meta_received_at >= u.experiment_started_meta
+    and ex.export_source like 'beauty%'
+)
+)
+
+select
+    segmentation,
+    variant,
+    feature_name,
+    num_features_in_export,
+    total_exports,
+    count(distinct event_id) num_exports,
+    100* count(distinct event_id) / total_exports as pct_exports
+from exports
+where true
+group by 1,2,3,4,5
+order by 3,4

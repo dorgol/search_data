@@ -1,0 +1,43 @@
+/*
+    Name: VL iOS - Exported projects num layers distribution
+    Query ID: 40132
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-07T13:19:49.659Z
+    */
+    with projects as (
+    select distinct
+         o.open_project_id,
+         max(array_length(json_extract_array(outline_JSON))) as num_layers
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_outline_json` as o
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_session_analytics_reported` as sar   
+        on sar.session_analytics_ID = o.session_analytics_ID
+        and sar.reason like '%export button pressed'
+        and date(sar.meta_received_at) = date_sub(current_date(), interval {{last x days}} day)
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_ended` as te
+        on te.open_project_id = sar.open_project_id
+    where date(o.meta_received_at) = date_sub(current_date(), interval {{last x days}} day)
+        and case when '{{project type}}' = "originals" then te.open_project_id is null
+                 when '{{project type}}' = "remakes" then te.open_project_id is not null
+                 else true end
+    group by 1
+)
+
+, agg as (
+    select
+        num_layers,
+        count(distinct open_project_id) as num_projects
+    from projects
+    group by 1
+)
+
+select
+    *
+from (
+    select distinct
+        num_layers,
+        num_projects,
+        sum(num_projects) over (order by num_layers desc) as accumulative,
+        sum(num_projects) over (order by num_layers desc) / sum (num_projects) over () * 100 as accumulative_pct
+    from agg
+)
+where num_layers < 120

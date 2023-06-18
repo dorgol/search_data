@@ -1,0 +1,59 @@
+/*
+    Name: Photoleap - Jpg Export Experiment Exports By Q2 Response
+    Query ID: 41117
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-18T10:03:29.754Z
+    */
+    
+create temp table devices_and_variant as (
+    select distinct
+        dav.* except (display_type)
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` as dav
+    where dav.experiment = '{{ experiment }}'
+        --and dav.segmentation like '%{{ segments }}%'
+            and   case 
+                when '{{segments}}' = 'All Users' then dav.segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then dav.segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then dav.segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'All Users Without Existing Segmentation' then dav.segmentation in ('01 All Users','02 New Users','03 Existing Users' ) end
+                and display_type='activated_for_device'
+            and variant='Variant 1'
+);
+
+
+with 
+responses as 
+(
+select
+dav.*,
+case when iss.origin_page_response is null then 'skipped' else trim(iss.origin_page_response,'[]"') end as origin_page_response,
+from devices_and_variant as dav
+left join `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_page_transition` iss
+        on iss.platform_device_id = dav.id_for_vendor
+        and iss.origin_page_index=1 
+        --and destination_page_index 
+        and iss.app_name='editor'
+        and (trim(iss.origin_page_response,'[]"') !='design or make art' or trim(iss.origin_page_response,'[]"') is  null)
+
+)
+
+
+
+(
+select
+dav.origin_page_response,
+exp.format,
+count(distinct exp.id_for_vendor) as users,
+count(distinct exp.export_id) as exports,
+safe_divide(count(distinct exp.export_id), count(distinct exp.id_for_vendor)) as exports_user
+
+
+from responses as dav
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_media_exported` as exp
+on dav.id_for_vendor=exp.id_for_vendor
+and exp.meta_received_at>dav.experiment_started_meta
+where exp.format is not null
+group by 1,2
+
+--limit 100
+)

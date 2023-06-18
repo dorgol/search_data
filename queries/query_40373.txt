@@ -1,0 +1,26 @@
+/*
+    Name: 20230117 - FT2 iOS - [FT-1060] Involuntary Churn Prevention - PN Sends (Not Segmented)
+    Query ID: 40373
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-16T08:18:24.625Z
+    */
+    with
+campaign_users as (
+  select
+    s.external_user_id,
+    max(case when o.external_user_id is not null then true else false end) as did_open
+  from `ltx-dwh-prod-raw.analytics.backend_braze_push_send` s
+  left join `ltx-dwh-prod-raw`.`analytics`.`backend_braze_push_open` o
+    on o.canvas_name = 'ft_ios_churn_billing-error_conv_both_180123_ft-product_expe_invoulantary_after_experiment'
+    and s.external_user_id = o.external_user_id
+  where true 
+  and s.canvas_name = 'ft_ios_churn_billing-error_conv_both_180123_ft-product_expe_invoulantary_after_experiment'
+  group by 1
+)
+
+select
+    count(distinct cu.external_user_id) num_sent_pns,
+    count(distinct case when did_open then cu.external_user_id end) num_opened_pns,
+    count(distinct case when did_open then cu.external_user_id end)/count(distinct cu.external_user_id)*100 pct_opened_pns
+from campaign_users cu 
+where true

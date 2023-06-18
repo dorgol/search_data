@@ -1,0 +1,19 @@
+/*
+    Name: PL Heal Success
+    Query ID: 41142
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-19T11:55:00.424Z
+    */
+    select 
+date_trunc(meta_received_at, day) as dt,
+json_extract_scalar(process_details,"$.succeeded") as success,
+--count(distinct process_id),
+count(distinct event_id) as freq,
+count(distinct open_project_id) as projects,
+count(distinct platform_device_id) as users
+--process_details
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_process_ended`
+where app_name='editor'
+and meta_received_at>='2023-04-01'
+and process_name='remove_object_request'
+group by 1,2

@@ -1,0 +1,47 @@
+/*
+    Name: VL - User List - 1 - Lapsed Purchase
+    Query ID: 41589
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-05T13:41:21.991Z
+    */
+    
+with template_purchases as (
+    select 
+        lt_id, 
+        i.first_installation_id, 
+        a.meta_received_at,
+        date_diff(current_date(), date(meta_received_at), day) as date_diff,
+        action_id
+        
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` a
+    inner join (select distinct lt_id, first_installation_id
+                from `ltx-dwh-prod-raw.analytics_global.ltx_global_app_device_info_log`
+                where app_name = 'videoleap') i using(lt_id)
+    where a.action = 'purchase_template'
+        and a.reason = 'succeeded'
+        and a.meta_source = 'videoleap'
+        and meta_platform = 'ios'
+        and date(meta_received_at) >= date_sub(current_date(), interval 60 day)
+        and i.first_installation_id is not null
+        
+),
+
+agg as (
+    select
+        lt_id,
+        first_installation_id,
+        count(distinct case when date_diff >= 30 then action_id end) as count_relevant_projects,
+        count(distinct action_id) count_all_projects
+    from template_purchases
+    group by 1,2
+)
+
+select 
+    lt_id,
+    first_installation_id
+from 
+    agg
+where 
+     count_relevant_projects  = 1 
+     and count_all_projects = 1
+limit 2000     

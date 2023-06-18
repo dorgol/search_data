@@ -1,0 +1,65 @@
+/*
+    Name: (Joe) VL Android - all users - cvr (new vs existing)
+    Query ID: 40983
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-11T11:13:31.597Z
+    */
+    with installs as (
+    select 
+        d.installation_id,
+        date(dt) as dt,
+        case when date(dt) = date(first_launch) then 'new' else 'existing' end as segment,
+        date(first_launch) as first_launch
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    where true
+        and date(dt) >= '2023-03-01'
+        and app_name = 'videoleap_android'
+        and date_diff(date(current_date), date(dt), day) >7 -- out of trial period
+    )
+
+
+, subscriptions as (
+    select distinct 
+        i.installation_id,
+        dt,
+        segment,
+        date(ss.original_purchase_date) as original_purchase_date,
+        revenue_so_far,
+        is_in_trial_period,
+        had_trial
+    from installs i
+    left join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_state` ss
+        on ss.installation_id = i.installation_id
+        and date(ss.original_purchase_date) >= first_launch
+        and application ='videoleap_android'
+        --and date(ss.original_purchase_date) >= '2023-03-01'
+        and date(ss.original_purchase_date) = dt
+        --and days_until_subscription = 0
+        --and revenue_so_far >0
+        --and is_in_trial_period = false --only those out of trial period)
+        )
+
+, final as 
+    (select
+        dt,
+        segment,
+        count(distinct installation_id) as users,
+
+        count(distinct case when date(original_purchase_date) is not null then installation_id end) as subs,
+        
+        count(distinct case when revenue_so_far >0 and is_in_trial_period = false then installation_id end) as paid_subs,
+                                 
+        count(distinct case when had_trial is true and is_in_trial_period = false and revenue_so_far > 0 then installation_id end) as trial_paid_users,
+        count(distinct case when had_trial is true and is_in_trial_period is false then installation_id end) as trial_users
+    from subscriptions
+    group by 1,2
+    )
+
+select
+    *,
+    safe_divide(subs, users)*100     as cvr,
+    safe_divide(paid_subs, users)*100     as paid_cvr,
+    safe_divide(trial_paid_users, trial_users)*100     as trial_to_paid
+from final
+--where users > 100
+    

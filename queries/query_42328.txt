@@ -1,0 +1,51 @@
+/*
+    Name: VL iOS - Mini to Full Analysis - pCVR
+    Query ID: 42328
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-06-06T17:50:11.432Z
+    */
+    
+with users as (
+    select distinct
+        date_trunc(date(f.first_launch), week) as cohort_period,
+        case when f.last_platform_user_id = 'unknown' then f.platform_device_id else f.last_platform_user_id end as user_id,
+        s.lt_subscription_id is not null as is_subscriber,
+        floor(timestamp_diff(s.original_purchase_date,f.first_launch,hour)/24) as time_to_sub,
+        s.payments.revenue_so_far_alloc_cs as revenue_so_far
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` f
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_popup_presented` b
+        on f.platform_device_id = b.id_for_vendor
+        and b.popup_title like "%mini_to_full%"
+        and date(b.meta_received_at) between date(f.first_launch) and date_add(date(f.first_launch), interval 7 day)
+        --and date(b.meta_received_at) = date(f.first_launch)
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`subscription_to_defacto` d
+        on f.platform_device_id = d.id_for_vendor
+        and d.application = 'videoleap'
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation_cross_sell` s
+        on d.lt_subscription_id = s.lt_subscription_id
+        and subscription.subscription_duration = '1y'
+        and subscription.had_trial
+        and subscription.current_is_in_trial_period = false
+    where true
+    and date_trunc(date(f.first_launch), day) >= '2023-03-01'
+    and date_trunc(date(f.first_launch), day) < date_sub(current_date(), interval 7 day)
+    and f.app_name = 'videoleap'
+
+)
+
+
+select
+    cohort_period,
+    count(distinct user_id) as cohort_users,
+    count(distinct case when time_to_sub = 0 then user_id end) post_trial_subs,
+    count(distinct case when time_to_sub = 0 and revenue_so_far > 0 then user_id end) paid_post_trial_subs,
+    count(distinct case when time_to_sub = 0 and revenue_so_far > 0 then user_id end)/ nullif(count(distinct case when time_to_sub = 0 then user_id end),0)*100 as trial_to_paid_rate,
+    count(distinct case when time_to_sub = 0 and revenue_so_far > 0 then user_id end)/count(distinct user_id)*100 as paid_cvr
+from users
+group by 1
+--having post_trial_subs >= 500
+order by 1 desc
+    
+    
+    
+    

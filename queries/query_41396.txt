@@ -1,0 +1,37 @@
+/*
+    Name: VL iOS - Projects shared multiple times (last 30 days)
+    Query ID: 41396
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-27T08:29:23.592Z
+    */
+    with published_posts_per_project as (
+    select
+        open_project_id || ifnull(parent_template_id, "") as open_project_id,
+        parent_template_id is null as is_original,
+        count(distinct post_id) as num_posts,
+        max(post_id) as example
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_post_upload_ended`
+    where post_id is not null
+        and date(meta_received_at) >= date_sub(current_date(), interval 30 day)
+        and meta_source = "videoleap" and platform = "ios"
+        and open_project_id is not null
+    group by 1,2
+)
+
+select
+    num_posts,
+    projects,
+    total_projects,
+    projects / total_projects * 100 as pct_projects,
+    sum(projects) over (order by num_posts desc) / total_projects * 100 as accumulatove_pct_projects
+from (
+    select distinct
+        num_posts,
+        count(distinct open_project_id) over () as total_projects,
+        count(distinct open_project_id) over (partition by num_posts) as projects,
+    from published_posts_per_project
+    where case when '{{project type}}' = 'originals' then is_original
+               when '{{project type}}' = 'remakes' then not is_original
+               else true end
+)
+-- where num_posts < 50

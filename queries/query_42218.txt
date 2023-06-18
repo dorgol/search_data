@@ -1,0 +1,49 @@
+/*
+    Name: Felix - VL iOS - Categories Analysis
+    Query ID: 42218
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-25T13:15:02.481Z
+    */
+    with feed_info as (
+    select distinct
+        ii.application,
+        ii.platform,
+        ii.dt,
+        ii.lt_id,
+        ii.platform_device_id,
+        ii.meta_received_at,
+        ii.feed_id,
+        ii.session_id,
+        ii.feed_type,
+        ii.app_version_code,
+        ii.firstPresentedTime,
+    from `ltx-dwh-prod-processed.app.feed_unnested_items_info` ii
+    where date_trunc(ii.dt, {{period}}) >= date_sub(current_date(), interval 120 day) -- last 120 days
+        and date_trunc(current_date(), {{period}}) != date_trunc(ii.dt, {{period}}) -- not today
+    and case when cast(ii.app_version_code as int64) < 3612 and feed_type like '%discover%' then false else true end
+    )
+
+, total as ( -- by session, what is the feed sequence and each 
+    select distinct
+        fi.platform_device_id,
+        fi.dt,
+        case when lower(fi.feed_type) like '%category.recommended%' or fi.feed_type like '%for_you%' then 'Main Feed'
+             when lower(fi.feed_type) like '%discover.recommended%' then 'Discover Main Feed'
+             when lower(fi.feed_type) like '%discover.%' then 'Discover Categories'
+             when fi.feed_type like '%categor%' then 'Main Categories'
+             when fi.feed_type like '%templates%' or fi.feed_type like '%liked%' or fi.feed_type like '%purchased%' then 'Profile'
+             when fi.feed_type = 'post_details' or fi.feed_type = 'remakes' then 'Remake screen'
+             else fi.feed_type end as feed_type,
+    from feed_info fi
+    where fi.application = 'videoleap' and fi.platform = 'ios'
+     )
+   
+select
+    date_trunc(dt,{{period}}) as dt_period,
+    feed_type,
+    count(distinct platform_device_id) as feed_users
+from total
+where feed_type in ('Main Categories','Discover Categories')
+group by 1,2
+order by dt_period, feed_users desc
+   

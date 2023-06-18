@@ -1,0 +1,31 @@
+/*
+    Name: FT iOS - Video - No Faces Detected - Export Rate
+    Query ID: 40243
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-12T09:33:28.392Z
+    */
+    with 
+face_counts as (
+    select
+        process_id,
+        platform_device_id as id_for_vendor,
+        meta_received_at,
+        json_extract(process_details, '$.isFaceInVideo') has_faces,
+        lead(meta_received_at) over (partition by platform_device_id order by meta_received_at asc) next_face_detection_ts
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_ended`
+    where true
+    and app_name = 'facetune2'
+    and meta_received_at >= '2023-02-26'
+    and process_name = 'face detection'
+)
+
+select
+    count(distinct process_id) num_uploads,
+    count(distinct ve.ftv_editing_session_id) num_exports,
+    count(distinct ve.ftv_editing_session_id)/count(distinct process_id)*100 export_rate
+from face_counts fc
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported` ve
+    on true
+    and ve.meta_received_at between fc.meta_received_at and next_face_detection_ts
+    and ve.id_for_vendor = fc.id_for_vendor
+where fc.has_faces = 'false'

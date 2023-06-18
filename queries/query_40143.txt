@@ -1,0 +1,41 @@
+/*
+    Name: VL iOS - Feed - Post Performance - Impressions (over time) - efficiency test
+    Query ID: 40143
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-07T16:30:11.070Z
+    */
+    select
+    date_trunc(date(ii.meta_received_at), {{time granularity}}) as dt,
+
+    count(distinct ii.action_id)                                       as impressions,
+    count(distinct ii.platform_device_id)                              as impression_users,
+    count(distinct ii.post_id)                                         as posts_seen,
+    count(distinct ii.action_id) / count(distinct ii.post_id)             as impressions_per_post,
+    count(distinct ii.platform_device_id) / count(distinct ii.post_id)    as users_per_post,
+    
+    count(distinct case when pc.parent_template_id is null then ii.action_id end)                                       as original_impressions,
+    count(distinct case when pc.parent_template_id is null then ii.platform_device_id end)                              as original_impression_users,
+    count(distinct case when pc.parent_template_id is null then ii.post_id end)                                         as original_posts_seen,
+    count(distinct case when pc.parent_template_id is null then ii.action_id end) / count(distinct case when pc.parent_template_id is null then ii.post_id end)             as original_impressions_per_post,
+    count(distinct case when pc.parent_template_id is null then ii.platform_device_id end) / count(distinct case when pc.parent_template_id is null then ii.post_id end)    as original_users_per_post,
+    
+    count(distinct case when pc.parent_template_id is not null then ii.action_id end)                                       as remake_impressions,
+    count(distinct case when pc.parent_template_id is not null then ii.platform_device_id end)                              as remake_impression_users,
+    count(distinct case when pc.parent_template_id is not null then ii.post_id end)                                         as remake_posts_seen,
+    count(distinct case when pc.parent_template_id is not null then ii.action_id end) / count(distinct case when pc.parent_template_id is not null then ii.post_id end)             as remake_impressions_per_post,
+    count(distinct case when pc.parent_template_id is not null then ii.platform_device_id end) / count(distinct case when pc.parent_template_id is not null then ii.post_id end)    as remake_users_per_post
+    
+    
+    
+    
+    
+    
+from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` ii
+        left join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and actions = 'become_ready' -- impressions
+        and case when '{{post type}}' = 'Original' then pc.parent_template_id is null
+            when '{{post type}}' = 'Remake' then pc.parent_template_id is not null
+            else true end
+group by 1

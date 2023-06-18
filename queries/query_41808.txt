@@ -1,0 +1,50 @@
+/*
+    Name: HOME SCREEN ANALYSIS - PL Editor Flow Starts
+    Query ID: 41808
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-12T10:38:09.777Z
+    */
+    select date_trunc(d.dt,{{Time granularity}}) as dt,
+case when substr(ed_efs.source,15) in ('MainPlusButton', 'BottomBarPlusButton', 'Feed', 'WhatsNew', 'SeeAll', 'AIScenes', 'TextToImageButton', 'BlankCanvasButton') then substr(ed_efs.source,15)
+                else 'Other' end as source,
+count(distinct ed_efs.flow_id) as flow_starts,
+count(distinct ed_efs.id_for_vendor) as users_starting_editing_flow,
+count(distinct ed_ed.flow_id) as edit_starts,
+count(distinct ed_ed.id_for_vendor) as users_starting_editing,
+safe_divide(count(distinct ed_ed.id_for_vendor), count(distinct ed_efs.id_for_vendor)),
+count(distinct exp.flow_id) as exported_flows,
+count(distinct exp.id_for_vendor) as users_exporting,
+safe_divide(count(distinct exp.id_for_vendor), count(distinct ed_efs.id_for_vendor))*100 as pct_editors_exporting,
+safe_divide(count(distinct exp.flow_id), count(distinct ed_efs.flow_id))*100 as pct_edits_exported,
+
+
+from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+
+ left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_editor_flow_started` as ed_efs
+    on d.platform_device_id = ed_efs.id_for_vendor
+    and d.dt = date(ed_efs.meta_received_at)
+    and ed_efs.screen_name = 'Main'
+ left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_editor_editing_started` as ed_ed
+    on d.platform_device_id = ed_ed.id_for_vendor
+    and d.dt = date(ed_ed.meta_received_at)
+    and ed_efs.flow_id=ed_ed.flow_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_editor_exported` as exp
+    on d.platform_device_id = exp.id_for_vendor
+    and d.dt = date(exp.meta_received_at)
+    and ed_efs.flow_id=exp.flow_id    
+ where dt >= "2022-07-01"
+    and dt < date_trunc(current_date, {{Time granularity}})
+    and d.app_name = "editor"
+    and d.platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then d.dt = d.first_active_dt
+    when '{{Day}}' = "week0" then date_diff(d.dt, d.first_active_dt, day) <= 7
+        when '{{Day}}' = "non day0" then d.dt > d.first_active_dt
+        else true end
+    and case when '{{ Subs }}'='Subscribed' then ed_efs.is_subscriber is true
+            when '{{ Subs }}'='Free' then ed_efs.is_subscriber is false
+            when '{{ Subs }}'='All' then true end
+        
+  group by 1,2
+--)
+

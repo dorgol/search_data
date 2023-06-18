@@ -1,0 +1,15 @@
+/*
+    Name: Facetune: Total Feed Template Purchase Attempts - In App
+    Query ID: 42443
+    Created By: Nicky Kamins
+    Last Updated At: 2023-06-04T15:47:23.148Z
+    */
+    select
+    product_id,
+    result,
+    count(distinct process_id)
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_store_purchase_process_ended`
+where app_name = 'facetune2'
+and meta_received_at >= '2023-05-16'
+and product_id like 'com.lightricks.Facetune2_C_V1.T%_Facetune2.FeedTemplate.1'
+group by 1,2

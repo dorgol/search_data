@@ -1,0 +1,23 @@
+/*
+    Name: VL iOS - Acquisition x Spend (long term)
+    Query ID: 41565
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-03T08:32:52.728Z
+    */
+    select distinct
+        date_trunc(date(t.attribution_timestamp), {{period}}) as period,
+        --application,
+        --payments.month0_late_or_renewal as split,
+        count(distinct attribution_user_id) as new_users,
+        dm_spend,
+    from `ltx-dwh-prod-processed`.`ulei`.`ulei_att_user_groups_and_devices` t
+    inner join (select 
+                    date_trunc(date(rm.attribution_date), {{period}}) as period,
+                    sum(dm_spend) as dm_spend 
+               from `ltx-dwh-prod-processed.agg.marketing_revenue_metrics_by_date` rm
+               where rm.vertical in ('Videoleap') and days_from_attribution_date = 0
+               group by 1) rm
+            on rm.period = date_trunc(date(t.attribution_timestamp), {{period}})
+    where date_trunc(date(t.attribution_timestamp), {{period}}) >= '2022-10-01' and date_trunc(date(t.attribution_timestamp), {{period}}) != date_trunc(date(current_date()), {{period}})
+    and t.application in ('videoleap')
+    group by 1,3

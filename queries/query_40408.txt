@@ -1,0 +1,53 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1076] Your photo showcase - Experiment Start and Questionnaire
+    Query ID: 40408
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-19T00:32:30.099Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1076] Your photo showcase')
+    and display_type = '{{display_type}}'
+)
+
+-- 1 minute buffer drops issue from 9 to 5%
+select
+    segmentation,
+    variant,
+    count(distinct u.id_for_vendor) num_users,
+    count(distinct case when qp.platform_device_id is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_started_questionnaire,
+    count(distinct case when qp.platform_device_id is not null and qp.meta_received_at >= timestamp_sub(experiment_started_meta,interval 1 minute) then u.id_for_vendor end)/
+        count(distinct case when qp.platform_device_id is not null then u.id_for_vendor end)*100 pct_started_questionnaire_after_exp_start,
+    count(distinct case when qp.platform_device_id is not null and qp.meta_received_at < timestamp_sub(experiment_started_meta,interval 1 minute) then u.id_for_vendor end)/
+    count(distinct case when qp.platform_device_id is not null then u.id_for_vendor end)*100 pct_started_questionnaire_before_exp_start,
+    -- *************************
+    count(distinct case when qp.platform_device_id is not null then u.id_for_vendor end) num_started_questionnaire,
+    count(distinct case when qp.platform_device_id is not null and qp.meta_received_at > experiment_started_meta then u.id_for_vendor end) num_started_questionnaire_after_exp_start,
+    count(distinct case when qp.platform_device_id is not null and qp.meta_received_at <= experiment_started_meta then u.id_for_vendor end) num_started_questionnaire_before_exp_start,
+from users u
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` qp
+    on qp.app_name = 'facetune2' 
+    and qp.platform_device_id = u.id_for_vendor
+    and qp.meta_received_at >= '2023-03-15'
+group by 1,2
+order by 1,2

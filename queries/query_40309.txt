@@ -1,0 +1,185 @@
+/*
+    Name: [FT-1067] Beauty Feed - Home Tab Flow Usage Funnel - without what's new
+    Query ID: 40309
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-14T08:38:08.374Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'activated_for_device'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        and case 
+            when '{{variant}}' = 'Variant1' then d.variant = 'Variant1' 
+            when '{{variant}}' = 'Variant2' then d.variant = 'Variant2' 
+            when '{{variant}}' = 'Variant3' then d.variant = 'Variant3'
+            when '{{variant}}' = 'All' then true
+        end  
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+),
+
+reached_feed_in_home_tab_bottom_nav as (
+select
+    u.experiment,
+    u.variant,
+    u.segmentation,
+    u.experiment_started_meta,
+    n.platform_device_id,
+from users u
+join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` n
+    on true
+    and n.app_name = '{{app_name}}'
+    and n.platform_device_id = u.id_for_vendor
+    and cast(n.app_version_code as int64) >= {{since_version}}
+    and date(n.meta_received_at) >= '2023-02-19'
+    and n.meta_received_at > u.experiment_started_meta
+    and n.screen_name = 'home_screen'
+    and n.button_identifier = 'beautyFeed'
+),
+
+
+reached_feed_in_home_tab as (
+select
+    experiment,
+    variant,
+    segmentation,
+    experiment_started_meta,
+    n.platform_device_id as nav_platform_device_id,
+    platform_device_id
+from reached_feed_in_home_tab_bottom_nav n
+),
+
+
+funnel as (
+
+
+    select
+        '01b - Reached Feed in Home Tab Flow - from Bottom Nav' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct n.nav_platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    group by 1,2  
+    
+    union all
+    
+    select
+        '02 - Tried Preset in Home Tab Flow' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct f.platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` f
+        on true
+        and f.app_name = '{{app_name}}'
+        and f.platform_device_id = n.platform_device_id
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '2023-02-19'
+        and f.meta_received_at > n.experiment_started_meta
+        and f.source = 'beauty_feed_in_home_tab'
+        and f.feature_name = 'BeautyPresets'
+    group by 1,2   
+    
+    union all
+
+    select
+        '03 - Exported/Continued to Edit From Feed - Home tab flow' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct case when ex.platform_device_id is not null or w.platform_device_id is not null then n.platform_device_id end) num_users
+    from reached_feed_in_home_tab n
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = n.platform_device_id
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > n.experiment_started_meta
+        and ex.export_source like 'beauty_feed_in_home_tab%'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = n.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > n.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.feature_usage_id like 'beauty_feed_in_home_tab%'
+        and w.reason in ('edit')
+    group by 1,2   
+    
+        union all
+        
+    select
+        '03a - Exported From Feed - Home tab flow' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct ex.platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = n.platform_device_id
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > n.experiment_started_meta
+        and ex.export_source like 'beauty_feed_in_home_tab%'
+    group by 1,2   
+    
+    union all
+    
+    select
+        '03b - Continued to Edit From Feed - Home tab flow' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct w.platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = n.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > n.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.feature_usage_id like 'beauty_feed_in_home_tab%'
+        and w.reason in ('edit')
+    group by 1,2 
+
+    )
+
+
+
+select
+    *
+from funnel
+where stage in ({{stages}})

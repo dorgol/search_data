@@ -1,0 +1,321 @@
+/*
+    Name: Photoleap - login sol funnel experiment Overall
+    Query ID: 40793
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-25T13:09:25.808Z
+    */
+    
+create temp table first_launch as (
+    select distinct
+        dav.* except (display_type)
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` as dav
+    where dav.experiment = '{{ experiment }}'
+        --and dav.segmentation like '%{{ segments }}%'
+            and   case 
+                when '{{segments}}' = 'All Users' then dav.segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then dav.segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then dav.segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'All Users Without Existing Segmentation' then dav.segmentation in ('01 All Users','02 New Users','03 Existing Users' ) end
+                and display_type='activated_for_device'
+              --  limit 100
+          --  and variant='Variant 1'
+);
+
+select
+variant,
+sum(case when label='01. first_launch' then num_users end) as first_launched,
+sum(case when label='03. started_questionnaire' then num_users end) as started_questionnaire,
+sum(case when label='05. saw_login' then num_users end) as presented_login_screen,
+sum(case when label='05a. login_success' then num_users end) as login_success,
+sum(case when label='06. saw_subscribe_on_launch' then num_users end) as saw_sol_screen,
+sum(case when label='07. sol conversion' then num_users end) as sol_conversion,
+sum(case when label='08. paid sol conversion' then num_users end) as sol_paid_conversion,
+
+
+safe_divide(sum(case when label='03. started_questionnaire' then num_users end),sum(case when label='01. first_launch' then num_users end))*100 as started_questionaire_pct,
+safe_divide(sum(case when label='05. saw_login' then num_users end),sum(case when label='01. first_launch' then num_users end))*100 as saw_login_screen_pct,
+safe_divide(sum(case when label='05a. login_success' then num_users end),sum(case when label='01. first_launch' then num_users end))*100 as login_success_pct,
+safe_divide(sum(case when label='06. saw_subscribe_on_launch' then num_users end),sum(case when label='01. first_launch' then num_users end))*100 as saw_sol_screen_pct,
+safe_divide(sum(case when label='07. sol conversion' then num_users end),sum(case when label='01. first_launch' then num_users end))*100 as sol_cvr_pct,
+safe_divide(sum(case when label='08. paid sol conversion'  then num_users end),sum(case when label='01. first_launch' then num_users end))*100 as sol_paid_cvr_pct,
+
+from (
+
+select
+    *
+from (
+    select
+        '01. ' || 'first_launch' as label,
+        date_trunc(experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct l.lt_defacto_id) as num_users,
+        variant
+    from first_launch l
+    
+    group by 1,2,4
+    union all
+    
+    
+    select
+        '02. ' || 'intro presented' as label,
+        date_trunc(experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct lt_defacto_id) as num_users,
+        variant
+    from first_launch l
+    join  `ltx-dwh-prod-raw.analytics.ios_editor_intro_sequence_started` as iss
+        on farm_fingerprint('editor'|| iss.id_for_vendor) = l.lt_defacto_id
+        and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 180 day)
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(iss.meta_received_at) = date(l.experiment_started_meta)
+   -- where true
+   -- and identifier = 'privacy_policy_notification'
+    group by 1,2,4
+
+    union all
+    
+    select
+        '03. ' || 'started_questionnaire' as label,
+        date_trunc(experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct l.lt_defacto_id) as num_users,
+        variant
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_presented` iss
+        on farm_fingerprint('editor'|| iss.platform_device_id) = l.lt_defacto_id
+        and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 180 day)
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(iss.meta_received_at) = date(l.experiment_started_meta)
+        and iss.app_name='editor'
+        group by 1,2,4
+    
+    union all
+    
+    select
+        '04. ' || 'questionnaire_p' || destination_page_index as label,
+        date_trunc(experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct l.lt_defacto_id) as num_users,
+        variant
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_page_transition` iss
+        on farm_fingerprint('editor'|| iss.platform_device_id) = l.lt_defacto_id
+        and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 180 day)
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(iss.meta_received_at) = date(l.experiment_started_meta)
+        and destination_page_index <> 0
+        and destination_page_index <> 4
+        and iss.app_name='editor'
+    group by 1,2,4
+    
+    union all
+    
+     select
+        '04. ' || 'questionnaire_p3' as label,
+        date_trunc(experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct l.lt_defacto_id) as num_users,
+        variant
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_dismissed` iss
+        on farm_fingerprint('editor'|| iss.platform_device_id) = l.lt_defacto_id
+        and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 180 day)
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(iss.meta_received_at) = date(l.experiment_started_meta)
+        --and destination_page_index <> 0
+        --and destination_page_index <> 4
+        and iss.app_name='editor'
+    group by 1,2,4
+    
+    union all
+    
+    select
+        '05. ' || 'saw_login' as label,
+        date_trunc(experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct  l.lt_defacto_id ) as num_users,
+        variant
+    from first_launch l
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_login_screen_presented` lpg
+        on lpg.app_name = 'editor' 
+        and farm_fingerprint('editor'|| lpg.platform_device_id)  = l.lt_defacto_id
+        and date_trunc(date(lpg.meta_received_at), day) >= date_sub(current_date(), interval 180 day)
+        and date_trunc(current_date(), day) != date_trunc(date(lpg.meta_received_at), day)
+        and date(lpg.meta_received_at) = date(l.experiment_started_meta)
+        and lpg.reason='intro'
+    group by 1,2,4
+    union all
+    
+    select
+        '05a. ' || 'login_success' as label,
+        date_trunc(experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct  l.lt_defacto_id ) as num_users,
+        variant
+    from first_launch l
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_login_screen_presented` lpg
+        on lpg.app_name = 'editor' 
+        and farm_fingerprint('editor'|| lpg.platform_device_id)  = l.lt_defacto_id
+        and date_trunc(date(lpg.meta_received_at), day) >= date_sub(current_date(), interval 180 day)
+        and date_trunc(current_date(), day) != date_trunc(date(lpg.meta_received_at), day)
+        and date(lpg.meta_received_at) = date(l.experiment_started_meta)
+        and lpg.reason='intro'
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_login_screen_dismissed` as ld
+        on ld.app_name='editor'
+        and ld.reason='successful_login'
+        and ld.flow_id=lpg.flow_id
+    group by 1,2,4
+    union all
+    
+    select
+        '06. ' || 'saw_subscribe_on_launch'as label,
+            -- when se.source = 'homescreen_importSubscriptionAlert' then 'saw_homescreen_import_sub_screen'
+         date_trunc(experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct l.lt_defacto_id) as num_users,
+        variant
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_editor_subscription_presented` se
+        on farm_fingerprint('editor'|| se.id_for_vendor) = l.lt_defacto_id
+        and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 180 day)
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(se.meta_received_at) = date(l.experiment_started_meta)
+        and se.source in ('SubscriptionPageSourceOnboardingPromotion') --,'homescreen_importSubscriptionAlert')  
+    group by 1,2,4
+    
+     union all
+    
+    select
+        '07. ' || 'sol conversion'as label,
+            -- when se.source = 'homescreen_importSubscriptionAlert' then 'saw_homescreen_import_sub_screen'
+         date_trunc(l.experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct l.lt_defacto_id ) as num_users,
+        l.variant
+    from first_launch l
+    join `ltx-dwh-prod-processed.ab_test.raw_final_subs_and_variant` as dav
+    on dav.experiment = '{{ experiment }}'
+    and dav.application='editor'
+    and dav.sol_sub = true
+    and    case 
+                when '{{segments}}' = 'All Users' then dav.segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then dav.segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then dav.segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'All Users Without Existing Segmentation' then dav.segmentation in ('01 All Users','02 New Users','03 Existing Users' ) end
+    
+         and dav.lt_defacto_id = l.lt_defacto_id
+        
+         
+    group by 1,2,4
+    
+     union all
+    
+    select
+        '08. ' || 'paid sol conversion'as label,
+            -- when se.source = 'homescreen_importSubscriptionAlert' then 'saw_homescreen_import_sub_screen'
+         date_trunc(l.experiment_started_meta,{{period}}) as first_session_date,
+        count(distinct l.lt_defacto_id ) as num_users,
+        l.variant
+    from first_launch l
+    join `ltx-dwh-prod-processed.ab_test.raw_final_subs_and_variant` as dav
+    on dav.experiment = '{{ experiment }}'
+    and dav.application='editor'
+    and dav.sol_sub = true
+    and dav.revenue_so_far>0
+    and    case 
+                when '{{segments}}' = 'All Users' then dav.segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then dav.segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then dav.segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'All Users Without Existing Segmentation' then dav.segmentation in ('01 All Users','02 New Users','03 Existing Users' ) end
+    
+         and dav.lt_defacto_id = l.lt_defacto_id
+        
+         
+    group by 1,2,4
+ /*       
+    union all
+    
+    select
+        '09. ' || 'reached_home_screen' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_content_screen_presented`  il
+        on farm_fingerprint('editor'|| il.platform_device_id) = l.lt_defacto_id
+     
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(il.meta_received_at) = l.first_session_date
+        and il.app_name='editor'
+        and il.screen_name='home_screen_carousel'
+        and il.platform='ios'
+    -- union all
+    
+    -- select
+    --     'quick_start_appeared' as label,
+    --     count(distinct l.lt_defacto_id) as num_users,
+    -- from first_launch l
+    -- join `ltx-dwh-prod-raw.analytics.ios_facetune2_quickstart_screen_appeared` il
+    --     on farm_fingerprint('facetune2'|| il.id_for_vendor) = l.lt_defacto_id
+   
+    --     and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+    --     and date(il.meta_received_at) = l.first_session_date
+        
+    union all
+    
+    select
+        '11. ' || 'feature_started' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_started` fs
+        on farm_fingerprint('facetune2'|| fs.id_for_vendor) = l.lt_defacto_id
+   
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+        
+    union all
+    
+    select
+        '12. ' || 'subfeature_started' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_sub_feature_started` fs
+        on farm_fingerprint('facetune2'|| fs.id_for_vendor) = l.lt_defacto_id
+     
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+    
+    union all
+    
+    select
+        '13. ' || 'feature_accept_attempted' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_button_pressed` fs
+        on farm_fingerprint('facetune2'|| fs.id_for_vendor) = l.lt_defacto_id
+       
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+        and destination in ( 'blocking_subscription_screen','main_photo_editor_screen')
+        and button_identifier = 'accept'
+        
+    union all
+    
+    select
+        '14. ' || 'feature_accepted' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_ended` fs
+        on farm_fingerprint('facetune2'|| fs.id_for_vendor) = l.lt_defacto_id
+        and fs.accepted
+     
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+        
+    union all
+    
+    select
+        '15. ' || 'exported_image' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_exported` ex
+        on farm_fingerprint('facetune2'|| ex.id_for_vendor) = l.lt_defacto_id
+      
+      
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(ex.meta_received_at) = l.first_session_date
+
+*/
+))
+where true
+group by 1
+--and case when 'All' in ({{sections}}) then true else label in ({{sections}}) end

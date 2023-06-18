@@ -1,0 +1,14 @@
+/*
+    Name: Facetune: Video Exporter Breakdown Sub/Free
+    Query ID: 40438
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-19T13:55:18.099Z
+    */
+    
+    select
+        is_subscriber,
+        count(distinct id_for_vendor) as users,
+        count(distinct event_id) as exports
+    from `ltx-dwh-prod-raw.analytics.ios_facetune2_hydra_video_exported`
+    where meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+    group by 1

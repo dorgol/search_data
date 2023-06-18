@@ -1,0 +1,85 @@
+/*
+    Name: 20230316 - FT2 iOS - [FT-1078] Voluntary AR Off churn prevention - Expiring Subscriptions w/ ARO - Over Time
+    Query ID: 40426
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-19T12:42:55.219Z
+    */
+    with
+users as (
+    select distinct
+        d.attribution_user_id,
+        a.lt_defacto_id,
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user` d
+    left join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` a
+        on a.application = 'facetune2'
+        and d.attribution_user_id = a.attribution_user_id
+    where true
+    and d.app_name = 'facetune2'
+),
+exp_users as
+(
+    select distinct
+        attribution_user_id,
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    join users u 
+        on true
+        and u.lt_defacto_id = d.lt_defacto_id
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1078] Voluntary AR Off churn prevention')
+    and display_type = 'activated_for_device'
+),
+combined as (
+    select
+        eu.*,
+    from exp_users eu
+    left join users u
+        on true
+        and u.attribution_user_id = eu.attribution_user_id
+),
+subscriptions as (
+    select distinct
+        segmentation,
+        variant,
+        u.attribution_user_id,
+        lt_subscription_id,
+        experiment_started_meta,
+        s.subscription.current_is_in_trial_period,
+        s.subscription.subscription_duration,
+        s.payments.last_expiration_date,
+        timestamp_diff(s.payments.last_expiration_date, current_timestamp(), day) days_until_expiration,
+        case when date_diff(date(s.original_purchase_date), date(experiment_started_meta), day) >= 0 then true else false end as is_after_exp_start,
+        s.original_purchase_date
+    from combined u
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation` s
+        on s.application = 'facetune2'
+        and s.attribution.attribution_user_id = u.attribution_user_id
+        and s.subscription.current_is_active
+        and s.subscription.current_is_auto_renew_status_on = false
+)
+
+select
+    segmentation,
+    variant,
+    timestamp_trunc(last_expiration_date, day) expiration_day,
+    count(distinct case when days_until_expiration >= 0 then lt_subscription_id end) num_expiring_subs,
+    count(distinct case when days_until_expiration >= 0 and subscription_duration = '1y' then lt_subscription_id end) num_expiring_yearly_subs,
+    count(distinct case when days_until_expiration between 0 and 30 and subscription_duration = '1y' and current_is_in_trial_period = false then lt_subscription_id end) num_expiring_yearly_subs_within_30,
+    count(distinct case when days_until_expiration between 0 and 3 and subscription_duration = '1y' and current_is_in_trial_period = true then lt_subscription_id end) num_expiring_trial_subs_within_3,
+    count(distinct case when days_until_expiration between 0 and 7 and subscription_duration = '1m' then lt_subscription_id end) num_expiring_monthly_subs_within_7,
+from subscriptions t
+group by 1,2,3
+order by 1,2,3

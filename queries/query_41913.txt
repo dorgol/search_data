@@ -1,0 +1,48 @@
+/*
+    Name: VL - Number of Clips Used Over Time
+    Query ID: 41913
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-16T13:58:30.713Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        template_id,
+        parent_template_id,
+        root_template_id,
+        number_of_clips_used,
+        app_name,
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where app_name = "videoleap"
+        --and requirements_flat like '%aiTransform%'
+)
+
+, stats as (
+    select
+        p.post_id,
+        number_of_clips_used,
+        dt,
+        distinct_total_impressions,
+        total_clicks,
+        distinct_export_started_feed,
+        distinct_export_rate_feed
+    from posts p
+    inner join `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily` rd
+        on rd.post_id = p.post_id
+        and dt >= '2023-03-01' and dt != current_date()
+        )
+
+
+select
+    dt,
+    case when number_of_clips_used < 4 then '1-3'
+        when number_of_clips_used < 11 then '4-10'
+        when number_of_clips_used < 21 then '10-20' 
+        else '20+' end as number_of_clips,
+    sum(distinct_total_impressions) as impressions,
+    sum(total_clicks) as clicks,
+    sum(distinct_export_started_feed) as exports,
+    safe_divide(sum(distinct_export_started_feed),sum(distinct_total_impressions))*100 as export_rate,
+from stats
+group by 1,2
+order by 1,2

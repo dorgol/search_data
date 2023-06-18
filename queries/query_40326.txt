@@ -1,0 +1,418 @@
+/*
+    Name: [FT-1067] Beauty Feed - Flow Usage Comparison
+    Query ID: 40326
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-14T11:52:47.671Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'activated_for_device'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and d.segmentation in ('02 New Users' ,'03 Existing Users' )
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+),
+
+reached_feed_in_home_tab_bottom_nav as (
+select
+    u.experiment,
+    u.variant,
+    u.segmentation,
+    u.experiment_started_meta,
+    n.platform_device_id,
+from users u
+join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` n
+    on true
+    and n.app_name = '{{app_name}}'
+    and n.platform_device_id = u.id_for_vendor
+    and cast(n.app_version_code as int64) >= {{since_version}}
+    and date(n.meta_received_at) >= '2023-02-19'
+    and n.meta_received_at > u.experiment_started_meta
+    and n.screen_name = 'home_screen'
+    and n.button_identifier = 'beautyFeed'
+),
+
+reached_feed_in_home_tab_wn as (
+select
+    u.experiment,
+    u.variant,
+    u.segmentation,
+    u.experiment_started_meta,
+    d.platform_device_id,
+from users u
+join `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented` m
+    on true
+    and m.app_name = '{{app_name}}'
+    and m.platform_device_id = u.id_for_vendor
+    and cast(m.app_version_code as int64) >= {{since_version}}
+    and date(m.meta_received_at) >= '2023-02-19'
+    and m.meta_received_at > u.experiment_started_meta
+    and m.message_name = 'beautyFeedWhatsNew'
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` d
+    on true
+    and d.app_name = '{{app_name}}'
+    and d.platform_device_id = m.platform_device_id
+    and cast(d.app_version_code as int64) >= {{since_version}}
+    and date(d.meta_received_at) >= '2023-02-19'
+    and d.meta_received_at > u.experiment_started_meta
+    and d.flow_id = m.flow_id
+    and d.reason = 'accepted'
+),
+
+reached_feed_in_home_tab as (
+select
+    experiment,
+    variant,
+    segmentation,
+    experiment_started_meta,
+    w.platform_device_id as wn_platform_device_id,
+    n.platform_device_id as nav_platform_device_id,
+    platform_device_id
+from reached_feed_in_home_tab_bottom_nav n
+full outer join reached_feed_in_home_tab_wn w
+    using(experiment,variant,segmentation, experiment_started_meta, platform_device_id) 
+),
+
+reached_feed_in_qs_flow as (
+select
+    u.experiment,
+    u.variant,
+    u.segmentation,
+    u.experiment_started_meta,
+    q.platform_device_id,
+from users u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_dismissed` q
+    on true
+    and q.app_name = '{{app_name}}'
+    and q.platform_device_id = u.id_for_vendor
+    and cast(q.app_version_code as int64) >= {{since_version}}
+    and date(q.meta_received_at) >= '2023-02-19'
+    and q.meta_received_at > u.experiment_started_meta
+    and q.screen_name = 'beauty_quickstart'
+    and q.destination = 'beauty_feed'
+),
+
+reached_feed_in_editor as (
+select
+    u.experiment,
+    u.variant,
+    u.segmentation,
+    u.experiment_started_meta,
+    w.platform_device_id,
+    w.session_id,
+    w.editing_session_id,
+    w.feature_usage_id
+from users u
+join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` w
+on true
+    and w.app_name = '{{app_name}}'
+    and w.platform_device_id = u.id_for_vendor
+    and cast(w.app_version_code as int64) >= {{since_version}}
+    and date(w.meta_received_at) >= '2023-02-19'
+    and w.meta_received_at > u.experiment_started_meta
+    and w.feature_name = 'BeautyPresets'
+    and source = 'main_toolbar'
+),
+
+
+
+funnel as (
+
+
+     select
+        '01 - Reached Feed in Home Tab Flow' as stage,
+        variant,
+        segmentation,
+        count(distinct platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    group by 1,2,3
+    
+    union all
+    
+    select
+        '01a - Reached Feed in Home Tab Flow - from Whats New' as stage,
+        variant,
+        segmentation,
+    count(distinct n.wn_platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    group by 1,2,3
+    
+    union all
+    
+    select
+        '01b - Reached Feed in Home Tab Flow - from Bottom Nav' as stage,
+        variant,
+        segmentation,
+        count(distinct n.nav_platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    group by 1,2  ,3
+    
+    union all
+    
+    select
+        '02 - Tried Preset in Home Tab Flow' as stage,
+        variant,
+        segmentation,
+        count(distinct f.platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` f
+        on true
+        and f.app_name = '{{app_name}}'
+        and f.platform_device_id = n.platform_device_id
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '2023-02-19'
+        and f.meta_received_at > n.experiment_started_meta
+        and f.source = 'beauty_feed_in_home_tab'
+        and f.feature_name = 'BeautyPresets'
+    group by 1,2   ,3
+    
+    union all
+
+    select
+        '03 - Exported/Continued to Edit From Feed - Home tab flow' as stage,
+        variant,
+        segmentation,
+        count(distinct case when ex.platform_device_id is not null or w.platform_device_id is not null then n.platform_device_id end) num_users
+    from reached_feed_in_home_tab n
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = n.platform_device_id
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > n.experiment_started_meta
+        and ex.export_source like 'beauty_feed_in_home_tab%'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = n.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > n.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.feature_usage_id like 'beauty_feed_in_home_tab%'
+        and w.reason in ('edit')
+    group by 1,2   ,3
+    
+        union all
+        
+    select
+        '03a - Exported From Feed - Home tab flow' as stage,
+        variant,
+        segmentation,
+        count(distinct ex.platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = n.platform_device_id
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > n.experiment_started_meta
+        and ex.export_source like 'beauty_feed_in_home_tab%'
+    group by 1,2  ,3 
+    
+    union all
+    
+    select
+        '03b - Continued to Edit From Feed - Home tab flow' as stage,
+        variant,
+        segmentation,
+        count(distinct w.platform_device_id) num_users
+    from reached_feed_in_home_tab n
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = n.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > n.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.feature_usage_id like 'beauty_feed_in_home_tab%'
+        and w.reason in ('edit')
+    group by 1,2 ,3
+    
+    union all
+    
+         select
+        '01 - Reached Feed in editor' as stage,
+        variant,
+        segmentation,
+        count(distinct e.platform_device_id) num_users
+    from reached_feed_in_editor e
+    group by 1,2 ,3 
+    
+    union all
+    
+    select
+        '02 - Tried Preset in editor' as stage,
+        variant,
+        segmentation,
+        count(distinct f.platform_device_id) num_users
+    from reached_feed_in_editor e
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_sub_feature_started` f
+        on true
+        and f.app_name = '{{app_name}}'
+        and f.platform_device_id = e.platform_device_id
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '2023-02-19'
+        and f.meta_received_at > e.experiment_started_meta
+        and f.root_feature_name = 'BeautyPresets'
+        and f.feature_usage_id = e.feature_usage_id
+    group by 1,2   ,3
+    
+    union all
+        
+    select
+        '03 - Accepted Presets Feature In Feed' as stage,
+        variant,
+        segmentation,
+        count(distinct w.platform_device_id) num_users
+    from reached_feed_in_editor e
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = e.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > e.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.reason in ('accepted')
+        and w.feature_usage_id = e.feature_usage_id
+    group by 1,2   ,3
+    
+    union all
+    
+     select
+        '01 - Reached Feed in Quickstart Flow' as stage,
+        variant,
+        segmentation,
+        count(distinct q.platform_device_id) num_users
+    from reached_feed_in_qs_flow q
+    group by 1,2  ,3
+    
+    union all
+    
+    ---we will need to add filter for external flow id once it exists. Otherwise, when there is another kind of feed present, we will see all.
+    select
+        '02 - Tried Preset in Quickstart Flow' as stage,
+        variant,
+        segmentation,
+        count(distinct f.platform_device_id) num_users
+    from reached_feed_in_qs_flow q
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` f
+        on true
+        and f.app_name = '{{app_name}}'
+        and f.platform_device_id = q.platform_device_id
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '2023-02-19'
+        and f.meta_received_at > q.experiment_started_meta
+        and f.source = 'beauty_quickstart'
+        and f.feature_name = 'BeautyPresets'
+    group by 1,2   ,3
+    
+    union all
+        
+        
+    select
+        '03 - Exported/Continued to Edit From Feed - QS Flow' as stage,
+        variant,
+        segmentation,
+        count(distinct case when ex.platform_device_id is not null or w.platform_device_id is not null then q.platform_device_id end) num_users
+    from reached_feed_in_qs_flow q
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = q.platform_device_id
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > q.experiment_started_meta
+        and ex.export_source like 'beauty_quickstart%'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = q.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > q.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.reason in ('edit')
+        and w.feature_usage_id like 'beauty_quickstart%'
+    group by 1,2   ,3
+    
+        union all
+    
+    select
+        '03a - Exported From Feed - QS flow' as stage,
+        variant,
+        segmentation,
+        count(distinct ex.platform_device_id) num_users
+    from reached_feed_in_qs_flow q
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = q.platform_device_id
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > q.experiment_started_meta
+        and ex.export_source like 'beauty_quickstart%'
+    group by 1,2   ,3
+    
+        union all
+    
+    select
+        '03b - Continued to Edit From Feed - QS flow' as stage,
+        variant,
+        segmentation,
+        count(distinct w.platform_device_id) num_users
+    from reached_feed_in_qs_flow q
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = q.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > q.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.reason in ('edit')
+        and w.feature_usage_id like 'beauty_quickstart%'
+    group by 1,2   ,3
+
+
+
+    )
+
+
+
+select
+    *
+from funnel

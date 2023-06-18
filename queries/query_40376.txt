@@ -1,0 +1,99 @@
+/*
+    Name: [FT-1067] Beauty Feed- experiment retention query
+    Query ID: 40376
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-16T10:11:22.675Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+),
+
+last_foreground as (
+select
+    u.experiment,
+    u.first_day, 
+    u.variant,
+    u.segmentation,
+    u.country,
+    u.id_for_vendor,
+    u.experiment_started_meta,
+    u.display_type,
+    date(f.meta_received_at) as dt,
+    max(f.meta_received_at) as last_foreground_time
+from users u
+join `ltx-dwh-prod-raw.analytics.ios_facetune2_app_foreground` f
+    on f.id_for_vendor = u.id_for_vendor
+where true
+group by 1,2,3,4,5,6,7,8,9
+)
+
+select
+    experiment,
+    variant,
+    segmentation,
+    coalesce(display_type, '') as display_type,
+    --coalesce(country, '') as country,
+    
+    count (distinct case when date_diff(current_date (),date(experiment_started_meta),day) > 1  then id_for_vendor else null end ) as num_devices_calendar_day1,
+    count (distinct case when date_diff(current_date (),date(experiment_started_meta),day) > 6  then id_for_vendor else null end ) as num_devices_calendar_day7,
+    count (distinct case when date_diff(current_date (),date(experiment_started_meta),day) > 13  then id_for_vendor else null end ) as num_devices_calendar_day14,
+    count (distinct case when date_diff(current_date (),date(experiment_started_meta),day) > 20  then id_for_vendor else null end ) as num_devices_calendar_day21,
+    count (distinct case when date_diff(current_date (),date(experiment_started_meta),day) > 27  then id_for_vendor else null end ) as num_devices_calendar_day28,
+    count (distinct case when date_diff(current_date (),date(experiment_started_meta),day) > 34  then id_for_vendor else null end ) as num_devices_calendar_day35,
+
+    count(distinct case when true
+                               and date(last_foreground_time) >= date_add(date(experiment_started_meta), interval 1 day)
+                               and date(last_foreground_time) < date_add(date(experiment_started_meta), interval 2 day)
+                               and date_diff(current_date (),date(experiment_started_meta),day) > 1
+           then id_for_vendor end) n_retained_day1,
+
+    count(distinct case when true
+                                and date(last_foreground_time) >= date_add(date(experiment_started_meta), interval 1 day)
+                                and date(last_foreground_time) < date_add(date(experiment_started_meta), interval 7 day)
+                                and date_diff(current_date (),date(experiment_started_meta),day) > 6
+           then id_for_vendor end) n_retained_week0,
+
+    count(distinct case when true
+                                and date(last_foreground_time) >= date_add(date(experiment_started_meta), interval 7 day)
+                                and date(last_foreground_time) < date_add(date(experiment_started_meta), interval 14 day)
+                                and date_diff(current_date (),date(experiment_started_meta),day) > 13
+           then id_for_vendor end) n_retained_week1,
+           
+    count(distinct case when true
+                                and date(last_foreground_time) >= date_add(date(experiment_started_meta), interval 14 day)
+                                and date(last_foreground_time) < date_add(date(experiment_started_meta), interval 21 day)
+                                and date_diff(current_date (),date(experiment_started_meta),day) > 20
+           then id_for_vendor end) n_retained_week2,
+           
+    count(distinct case when true
+                                and date(last_foreground_time) >= date_add(date(experiment_started_meta), interval 21 day)
+                                and date(last_foreground_time) < date_add(date(experiment_started_meta), interval 28 day)
+                                and date_diff(current_date (),date(experiment_started_meta),day) > 27
+           then id_for_vendor end) n_retained_week3,
+
+    count(distinct case when true
+                                and date(last_foreground_time) >= date_add(date(experiment_started_meta), interval 28 day)
+                                and date(last_foreground_time) < date_add(date(experiment_started_meta), interval 35 day)
+                                and date_diff(current_date (),date(experiment_started_meta),day) > 34
+           then id_for_vendor end) n_retained_week4,
+           
+from last_foreground
+where display_type = 'reached home screen'
+group by 1,2,3,4

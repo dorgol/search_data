@@ -1,0 +1,75 @@
+/*
+    Name: VL iOS - unlimited experiment - initial query
+    Query ID: 41984
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-06-14T11:39:01.485Z
+    */
+    with raw_data as (
+    select distinct
+        ex.experiment,
+        ex.variant,
+        ex.id_for_vendor as platform_device_id,
+        ex.experiment_started_device as experiment_start,
+        ex.segmentation,
+        case when s.subscription.product_id like "%V2.PK.1Y.SA_1M.SA_TRIAL.1W%" then "unlimited 25$"
+             when s.subscription.product_id like "%V2.PP.1Y.SA_1M.SA_TRIAL.1W%" then "unlimited 40$"
+             when s.subscription.product_id like "%V2.PK.1Y.SA_1M.SA" then "monthly with update to 25$"
+             when s.subscription.product_id like "%V2.PP.1Y.SA_1M.SA" then "monthly with update to 40$"
+             when s.subscription.product_id like "%V2.PQ.1Y.SA_1Y.SA_TRIAL.1W%" or s.subscription.product_id like "%V2.PR.1Y.SA_1Y.SA_TRIAL.1W%" or s.subscription.product_id like "%V2.PQ.1Y.SA_1Y.SA" then "yearly"
+             when s.subscription.product_id like "%V2.PQ.1Y.SA_1M.SA%" then "monthly"
+             when s.subscription.product_id like "%V2.PQ.OTP.SA_OTP.SA%" then "OTP"
+             else s.subscription.product_id end as product_id,
+        s.original_purchase_date,
+        s.payments.revenue_so_far_alloc_cs as revenue_so_far,
+        d.current_store_country,
+        d.current_device_country
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`purchase_to_verified_devices` as d1
+        on d1.id_for_vendor = ex.id_for_vendor
+        and d1.original_purchase_date > ex.experiment_started_device
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation_cross_sell` as s
+        on d1.lt_subscription_id = s.lt_subscription_id
+        and s.subscription.product_category = "subscription"
+        and s.application = "videoleap"
+        and s.subscription.product_id not like "%android%"
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.platform_device_id = ex.id_for_vendor
+    where ex.experiment = "Unlimited (Production)"
+        and segmentation = '{{segmentaion}}'
+)
+
+, total_users as (
+    select
+        variant,
+        -- case when assignment_day_from_install = 0 or assignment_day_from_install is null then "day0" else "non day0" end as day0,
+        count(distinct platform_device_id) as num_devices
+    from raw_data
+    group by 1
+)
+
+select
+    num_subs / num_devices * 100 as CVR,
+    num_paid_subs / num_devices * 100 as PCVR,
+    num_subs_by_product / num_devices * 100 as product_CVR,
+    num_paid_subs_by_product / num_devices * 100 as product_PCVR,
+    *, 
+from (
+    select distinct
+        t.variant,
+        r.product_id,
+        t.num_devices,
+        count(distinct case when r.original_purchase_date is not null then platform_device_id end) over (partition by variant) as num_subs,
+        count(distinct case when r.original_purchase_date is not null then platform_device_id end) over (partition by variant, product_id) as num_subs_by_product,
+        count(distinct case when r.original_purchase_date is not null and r.revenue_so_far > 0 then platform_device_id end) over (partition by variant) as num_paid_subs,
+        count(distinct case when r.original_purchase_date is not null and r.revenue_so_far > 0 then platform_device_id end) over (partition by variant, product_id) as num_paid_subs_by_product,
+    from raw_data as r
+    left join total_users as t
+        using(variant)
+    where original_purchase_date is not null
+)
+order by 1
+
+-- com.lightricks.EnlightVideo_V2.PK.1Y.SA_1M.SA_TRIAL.1W - monthly unlimited for 24.99$
+-- com.lightricks.EnlightVideo_V2.PP.1Y.SA_1M.SA_TRIAL.1W - monthly unlimited for 39.99$
+-- com.lightricks.EnlightVideo_V2.PK.1Y.SA_1M.SA - regular monthly for 9.99$ with option to upgrade to 24.99$
+-- com.lightricks.EnlightVideo_V2.PP.1Y.SA_1M.SA - regular monthly for 9.99$with option to upgrade to 39.99

@@ -1,0 +1,30 @@
+/*
+    Name: Auto-edit - export rate per post (WIP)
+    Query ID: 42162
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-30T21:46:05.249Z
+    */
+    -- post's avergae export rate in auto edit is around 50% according to FPRD
+select
+    dt,
+    sum(distinct_export_started_auto_edit) as exports,
+    sum(total_clicks_auto_edit) as clicks,
+    sum(distinct_export_started_auto_edit) / sum(total_clicks_auto_edit) * 100 as export_from_clicks_rate
+from `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily`
+where application = "videoleap"
+    and dt >= "2023-04-01"
+group by 1
+
+-- post's avergae export rate in auto edit is around 4% according to raw computation 
+select
+    date(e.meta_received_at) as dt,
+    count(distinct e.event_id) as clicks,
+    count(distinct ex.export_id) as exports,
+    count(distinct ex.export_id) / count(distinct e.template_editing_flow_id) * 100 as export_from_clicks_rate
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as e
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+    on lower(ex.open_project_id) = lower(e.open_project_id)
+    and lower(ex.parent_template_id) = lower(e.parent_template_id)
+where e.flow_name = "assets_first"
+    and date(e.meta_received_at) >= "2023-04-01"
+group by 1

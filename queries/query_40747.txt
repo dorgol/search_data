@@ -1,0 +1,44 @@
+/*
+    Name: AI Enhance Feature Starts
+    Query ID: 40747
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-19T08:17:46.353Z
+    */
+    
+
+
+(
+--exported_users as (
+  select 
+  --distinct
+    --date(date_trunc(d.dt, {{Time granularity}} )) as time,
+    --count( distinct platform_device_id) as users,
+    date(date_trunc(d.dt, {{Time granularity}} )) as time,
+     case when efs.source='Main' then 'home_screen' else efs.source end as source ,
+    count(distinct efs.id_for_vendor) as users,
+    count(distinct efs.flow_id) as starts
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+  left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_flow_started` as efs
+    on d.platform_device_id = efs.id_for_vendor
+    and d.dt = date(efs.meta_received_at)
+    and efs.instant_edit_name='AIEnhance'
+  /*left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_editing_started` as ees
+  on efs.id_for_vendor=ees.id_for_vendor
+  and efs.flow_id=ees.flow_id
+  left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_exported` as exp
+  on ees.id_for_vendor=exp.id_for_vendor
+  and ees.editing_id=exp.editing_id 
+  */
+  where dt >= "2022-10-01"
+    and dt < date_trunc(current_date, {{Time granularity}})
+    and d.app_name = "editor"
+    and d.platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then d.dt = d.first_active_dt
+    when '{{Day}}' = "week0" then date_diff(d.dt, d.first_active_dt, day) <= 7
+        when '{{Day}}' = "non day0" then d.dt > d.first_active_dt
+        else true end
+        and efs.source is not null
+  group by 1,2
+--)
+)

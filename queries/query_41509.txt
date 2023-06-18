@@ -1,0 +1,41 @@
+/*
+    Name: Facetune Android: M&M Sub Feature Accepts
+    Query ID: 41509
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-02T07:08:27.284Z
+    */
+    with accepts as (
+    SELECT distinct
+        installation_id,
+        image_session_id,
+        feature_usage_id,
+        device_timestamp,
+        replace(sub_features, '"','') as accepted_sub_feature
+    FROM `ltx-dwh-prod-raw.analytics.android_facetune2_feature_ended` e
+      , unnest(json_extract_array(sub_features_accepted)) as sub_features
+    WHERE true
+    and meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+    and feature = 'MIX_AND_MATCH'
+    and accepted
+)
+
+SELECT 
+    s.sub_feature,
+    split(replace(s.sub_feature, 'MIX_AND_MATCH_', ''),'_')[offset(0)] as category,
+    replace(s.sub_feature, 'MIX_AND_MATCH_', '') as asset,
+    count(distinct s.event_id) as trys,
+    count(distinct s.feature_usage_id) as uses,
+    count(distinct s.installation_id) as users,
+    100*count(distinct a.feature_usage_id)/count(distinct s.feature_usage_id) as accept_rate
+FROM `ltx-dwh-prod-raw.analytics.android_facetune2_sub_feature_started` s
+left join accepts a
+    on s.installation_id = a.installation_id
+    and s.image_session_id = a.image_session_id
+    and s.feature_usage_id = a.feature_usage_id
+    and s.sub_feature = a.accepted_sub_feature
+    and s.device_timestamp <= a.device_timestamp
+WHERE true
+and s.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+and s.feature = 'MIX_AND_MATCH'
+and LENGTH(s.sub_feature) - LENGTH(REGEXP_REPLACE(s.sub_feature, '_', '')) = 4
+group by 1

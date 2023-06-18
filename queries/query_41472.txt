@@ -1,0 +1,143 @@
+/*
+    Name: 20230404 - [FT-1088] AI Enhance V2 - Cumulative Revenue Per Device from Assignment
+    Query ID: 41472
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-30T11:43:13.633Z
+    */
+    with devices as (
+    select
+        d.application,
+        d.experiment,   
+        d.variant,
+        d.segmentation,
+        d.display_type,
+        --   d.country,
+        d.first_day,
+        timestamp_diff(current_timestamp (),d.experiment_started_meta,day) as days_since_assignment,
+        count (distinct d.lt_defacto_id) as num_devices_day_x_from_assignment,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` as d
+    where true
+    and timestamp_diff(current_timestamp (),d.experiment_started_meta,day)>=0
+    and case when '{{display type}}' = 'All' then true else display_type = '{{display type}}' end
+    and d.application = '{{app}}'
+    and d.experiment in ('{{experiment}}')
+    and case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and timestamp_diff(experiment_started_meta, first_day, day) >= {{start_day}} --remove users from the x first days of the experiment
+    and date_diff(current_date(), date(experiment_started_meta), day) > {{days to remove}} --remove users assigned on the last days
+    group by 1,2,3,4,5,6,7--,8--,9
+)
+
+, devices_cumulative as (
+    select
+        d.application,
+        d.experiment,
+        d.variant,
+        d.segmentation,
+        d.display_type,
+        --   d.country,
+        d.first_day,
+        day_n,
+        sum (num_devices_day_x_from_assignment) as num_devices_assigned_at_least_x_days_from_assignment
+    from devices as d
+    join
+    (
+        select
+            day_n   
+        from unnest((select generate_array(0,timestamp_diff(current_timestamp(), '{{experiment start date}}', day)+1))) day_n
+    ) as x
+    on d.days_since_assignment >=x.day_n
+    and d.days_since_assignment >= 0
+    group by  1,2,3,4,5,6,7--,8--,9,10
+)
+
+
+, transactions as (
+    select
+        d.application,
+        d.experiment,
+        d.variant,
+        d.segmentation,
+        d.display_type,
+        --   d.country,
+        first_day,
+        timestamp_diff(current_timestamp (),d.experiment_started_meta,day) as days_since_assignment,
+        timestamp_diff(t.purchase_date,d.experiment_started_meta,day) as day_x_from_assignment,
+        sum(coalesce(payments.actual_proceeds,0)) as revenue_day_x_from_assignment
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` as d
+    left join `ltx-dwh-prod-processed.subscriptions.unified_transactions` as t
+      on d.application = t.license_applications
+      and d.lt_defacto_id = t.device.lt_defacto_id
+    where true
+    and t.purchase_date>= d.experiment_started_meta
+    and timestamp_diff(current_timestamp (),d.experiment_started_meta,day) >= 0
+    and case when '{{display type}}' = 'All' then true else display_type = '{{display type}}' end
+    and d.application = '{{app}}'
+    and d.experiment in ('{{experiment}}')
+    and case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and timestamp_diff(experiment_started_meta, first_day, day) >= {{start_day}} --remove users from the x first days of the experiment
+    and date_diff(current_date(), date(experiment_started_meta), day) > {{days to remove}} --remove users assigned on the last days
+    group by 1,2,3,4,5,6,7,8--,9--,10
+)
+
+
+, revenue as (
+    select
+        t.application,
+        t.experiment,
+        t.variant,
+        t.segmentation,
+        t.display_type,
+        --   t.country,
+        --   t.days_since_assignment,
+        day_n,
+        sum(revenue_day_x_from_assignment)  as revenue_until_day_x_from_assignment
+    from transactions as t
+    join
+    (
+        select
+        day_n
+        from unnest((select generate_array(0,timestamp_diff(current_timestamp(), '{{experiment start date}}', day)+1))) day_n
+    ) as x
+    on t.days_since_assignment >=x.day_n
+    and t.days_since_assignment >= 0
+    and t.day_x_from_assignment <= x.day_n
+    group by 1,2,3,4,5,6--,7--,8,9
+)
+
+
+
+select
+    d.application,
+    d.experiment,
+    d.variant,
+    d.segmentation,
+    d.display_type,
+    --   d.country,
+    --   d.days_since_assignment,
+    d.day_n,
+    num_devices_assigned_at_least_x_days_from_assignment,
+    revenue_until_day_x_from_assignment,
+    revenue_until_day_x_from_assignment/num_devices_assigned_at_least_x_days_from_assignment as cum_rev_per_device
+from devices_cumulative as d
+left join revenue  as r
+    on d.application = r.application
+    and d.experiment = r.experiment
+    and d.variant =r.variant
+    and d.segmentation =r.segmentation
+    and d.display_type = r.display_type
+    --   and d.country =r.country
+    --   and d.days_since_assignment =r.days_since_assignment
+    and d.day_n = r.day_n
+group by 1,2,3,4,5,6,7,8,9--,10--,11
+having num_devices_assigned_at_least_x_days_from_assignment >= 1000
+order by day_n, variant

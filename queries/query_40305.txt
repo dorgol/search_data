@@ -1,0 +1,167 @@
+/*
+    Name: PL DND Avatar Repeat
+    Query ID: 40305
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-16T11:41:34.601Z
+    */
+    
+(with
+base as
+(
+ select
+ platform_device_id,
+ min(meta_received_at) as first_purchase
+  
+ from `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed`
+ where app_name='editor'
+ and platform='ios'
+ and screen_name='dnd_ai_avatar_gender_selection'
+ group by 1)
+
+
+
+select 
+"ios" as platform,
+*,
+repeat_dnd/dnd_purchase*100 as repeat_dnd_purchase,
+asset_purchase/dnd_purchase*100 as asset_purchase_pct,
+subscribed/dnd_purchase*100 as subscribed_pct
+
+
+from
+(
+select 
+count(distinct platform_device_id) as dnd_purchase,
+count(distinct remade_dnd ) as repeat_dnd,
+count(distinct asset_purchase ) as asset_purchase,
+count(distinct subscribed ) as subscribed,
+count(distinct case when remade_dnd is not null and asset_purchase is not null and subscribed is not null then platform_device_id end ) as repeat_asset_and_sub
+
+
+from
+(
+ select
+ distinct base.*,
+ bp.platform_device_id as remade_dnd,
+ asset.platform_device_id as asset_purchase,
+ sub.id_for_vendor as subscribed
+ from base
+ left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` as bp
+on app_name='editor'
+ and platform='ios'
+ and screen_name='dnd_ai_avatar_gender_selection'
+and base.platform_device_id=bp.platform_device_id
+and bp.meta_received_at>base.first_purchase
+left join
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_ended` as asset
+on asset.app_name = 'editor'
+        and asset.product_id like('%YouniverseCoin%')
+        and asset.reason='success'
+        and asset.meta_received_at>base.first_purchase
+        and asset.platform_device_id=base.platform_device_id
+left join `ltx-dwh-prod-raw.analytics.ios_editor_subscription_purchase_succeeded` as sub
+on sub.meta_received_at>base.first_purchase
+and sub.id_for_vendor=base.platform_device_id
+)
+)
+--order by 3
+)
+
+union all
+(
+
+with base as
+(
+        select
+
+client_app_info.first_installation_id,
+min(created_at) as first_purchase
+from `ltx-dwh-prod-raw`.`analytics`.`backend_youniverse_job_generation`
+where lower(ARRAY_TO_STRING(pack_categories, '-')) LIKE '%dnd_paramount_collab%'
+and created_at > '2023-03-09 16:30:00' and status='READY'
+and client_app_info.platform='android'
+group by 1
+)
+
+
+(
+select 
+"android" as platform,
+*,
+repeat_dnd/dnd_purchase*100 as repeat_dnd_purchase,
+asset_purchase/dnd_purchase*100 as asset_purchase_pct,
+subscribed/dnd_purchase*100 as subscribed_pct
+
+
+from
+(
+
+select
+count(distinct first_installation_id) as dnd_purchase,
+count(distinct repeats) as repeat_dnd,
+count(distinct asset_purchase) as asset_purchase,
+count(distinct subsc) as subscribed,
+count(distinct case when repeats is not null and asset_purchase is not null and subsc is not null then first_installation_id end ) as repeat_asset_and_sub
+from
+(
+select base.*,
+rpeat.client_app_info.first_installation_id as repeats,
+rpeat.created_at,
+asset.installation_id as asset_purchase,
+sub.installation_id  as subsc
+from base
+left join
+`ltx-dwh-prod-raw`.`analytics`.`backend_youniverse_job_generation` as rpeat
+on lower(ARRAY_TO_STRING(rpeat.pack_categories, '-')) LIKE '%dnd_paramount_collab%'
+and rpeat.created_at > base.first_purchase and rpeat.status='READY'
+and rpeat.client_app_info.platform='android'
+and base.first_installation_id=rpeat.client_app_info.first_installation_id
+left join 
+(select 
+distinct
+ended.meta_received_at as dt,
+--pre.reason,
+--count(distinct ended.installation_id) as users
+ended.installation_id,
+
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_subscription_screen_presented` as pre
+left join `ltx-dwh-prod-raw.analytics_global.ltx_global_subscription_purchase_ended` as ended
+on pre.flow_id=ended.flow_id
+and ((ended.app_name='editor_android') or (ended.app_name='editor'
+and ended.platform='android'))
+and ended.reason='success'
+and pre.installation_id=ended.installation_id
+where ((pre.app_name='editor_android') or (pre.app_name='editor'
+and pre.platform='android'))
+and pre.meta_received_at>='2023-03-01'
+and pre.screen_type!='default_subscription'
+and ended.first_installation_id=ended.installation_id) as asset
+on asset.dt>base.first_purchase
+and asset.installation_id=base.first_installation_id
+
+left join 
+(select 
+distinct
+ended.meta_received_at as dt,
+--pre.reason,
+--count(distinct ended.installation_id) as users
+ended.installation_id,
+
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_subscription_screen_presented` as pre
+left join `ltx-dwh-prod-raw.analytics_global.ltx_global_subscription_purchase_ended` as ended
+on pre.flow_id=ended.flow_id
+and ((ended.app_name='editor_android') or (ended.app_name='editor'
+and ended.platform='android'))
+and ended.reason='success'
+and pre.installation_id=ended.installation_id
+where ((pre.app_name='editor_android') or (pre.app_name='editor'
+and pre.platform='android'))
+and pre.meta_received_at>='2023-03-01'
+and pre.screen_type='default_subscription'
+and ended.first_installation_id=ended.installation_id) as sub
+on sub.dt>base.first_purchase
+and sub.installation_id=base.first_installation_id
+--order by 4,5
+)
+)
+))

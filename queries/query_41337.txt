@@ -1,0 +1,17 @@
+/*
+    Name: VL iOS -Login by source
+    Query ID: 41337
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-25T11:05:23.676Z
+    */
+    select
+    date_trunc(date(su.meta_received_at), week) as dt,
+    s.source as type1,
+    count(distinct su.id_for_vendor) as num_users
+from `ltx-dwh-stg-raw`.`analytics`.`ios_videoleap_login_succeeded` as su
+join `ltx-dwh-stg-raw`.`analytics`.`ios_videoleap_login_initiated` as s
+    on s.login_id = su.login_id
+    and date(s.meta_received_at) >= "2022-01-01"
+where true
+    and date(su.meta_received_at) >= "2022-01-01"
+group by 1,2

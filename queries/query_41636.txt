@@ -1,0 +1,23 @@
+/*
+    Name: FT iOS - All Message Click Rate
+    Query ID: 41636
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-04T13:55:17.953Z
+    */
+    select
+    message_name,
+    count(distinct mp.event_id) num_times_presented,
+    count(distinct case when md.reason = 'accepted' then mp.event_id end)/count(distinct mp.event_id)*100 pct_accepted,
+    count(distinct case when (md.reason = 'rejected' or md.reason = 'background_tapped') then mp.event_id end)/count(distinct mp.event_id)*100 pct_rejected,
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` md
+    on true
+    and md.meta_received_at >= '{{since_date}}' 
+    and md.app_name = 'facetune2'
+    and md.flow_id = mp.flow_id
+where true
+and mp.meta_received_at >= '{{since_date}}'
+and mp.app_name = 'facetune2'
+-- and message_id like '%TrialReminder%'
+group by 1
+order by 2 desc

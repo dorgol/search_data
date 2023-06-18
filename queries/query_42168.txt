@@ -1,0 +1,57 @@
+/*
+    Name: VL iOS - Second Free Trial (ULEI)
+    Query ID: 42168
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-24T06:50:51.655Z
+    */
+    -- Aim: Understand reach. 
+-- 
+
+declare start_date date default '2023-01-01';
+ 
+ 
+-- Shows for all users who have recevied a free trial but have never paid for a subscription, 
+with data as (
+
+    select 
+        date_trunc(s.original_purchase_date, month) as first_active_month,
+        date_trunc(date(last_expiration_date_or_renewal_date), month) as expiration_month,
+        u.lt_subscription_id,
+        attribution_user_id as user_id,
+        s.subscription.had_trial
+        
+    from 
+        `ltx-dwh-prod-processed`.`ulei`.`ulei_att_user_groups_and_subs` u
+    inner join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions` s
+        on u.lt_subscription_id = s.lt_subscription_id
+    where  
+        application = 'videoleap' -- videoleap_android
+        and subscription.had_trial = true -- had trial before
+        and date(last_expiration_date_or_renewal_date) >= date_sub(current_date(), interval 12 month)
+        and payments.revenue_so_far = 0
+        and date(last_expiration_date_or_renewal_date) <= current_date()
+        
+)
+
+-- SHows the count of these users per month, but only for the users who were active in the month that their subscription expired.
+
+select 
+    expiration_month,
+    count(distinct lt_subscription_id) as eligible_users_for_trial,
+    count(distinct lt_subscription_id)*0.0453 as converted,
+    count(distinct lt_subscription_id)*0.0453*30 as rev_generated
+from data
+inner join 
+    (select distinct 
+        attribution_user_id as user_id, 
+        date_trunc(date(dt), month) active_month
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date`
+    where app_name = 'videoleap'
+        and platform = 'ios'
+        and date(dt) >= date_sub(current_date(), interval 12 month)) as ud on expiration_month = active_month and ud.user_id = data.user_id
+group by 1
+order by 1
+            
+            
+            
+            

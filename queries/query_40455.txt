@@ -1,0 +1,72 @@
+/*
+    Name: [FT-1057] Makeup LAM (Combined) - Whats New Seen
+    Query ID: 40455
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-22T04:29:52.130Z
+    */
+    with 
+users as (
+    select
+        u.*,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_displayed_users
+    from (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.country,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.display_type,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = '{{app}}'
+        and (
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Var%') or
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Var%')
+        )
+    ) u
+    where true
+    and display_type = '{{display_type}}'
+)
+
+select
+    segmentation,
+    variant,
+    count(distinct u.id_for_vendor) num_users,
+    count(distinct case when pr.id_for_vendor is not null then u.id_for_vendor end) num_saw_whats_new,
+    count(distinct case when pr.id_for_vendor is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_saw_whats_new,
+    -- count(distinct case when mp.platform_device_id is not null then u.id_for_vendor end) num_saw_whats_new,
+    -- count(distinct case when mp.platform_device_id is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_saw_whats_new,
+    -- count(distinct case when reason = 'accepted' then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_accepted_whats_new
+from users u
+-- left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+--     on true 
+--     and mp.app_name = 'facetune2'
+--     and mp.meta_received_at >= '2022-12-21'
+--     and mp.meta_received_at >= experiment_started_meta
+--     and u.id_for_vendor = mp.platform_device_id
+--     and message_name ='MixAndMatchWhatsNew'
+-- left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` md
+--     on true
+--     and md.app_name = 'facetune2'
+--     and md.meta_received_at >= '2022-12-21'
+--     and md.meta_received_at >= experiment_started_meta
+--     and md.flow_id = mp.flow_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_popup_resolved` pr
+    on true
+    and pr.meta_received_at >= experiment_started_meta
+    and pr.meta_received_at >= '2022-12-21'
+    and identifier = 'MixAndMatchWhatsNew'
+    and pr.id_for_vendor = u.id_for_vendor
+group by 1,2
+order by 1,2

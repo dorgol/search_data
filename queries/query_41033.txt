@@ -1,0 +1,59 @@
+/*
+    Name: Felix - Installations by Country (Onboarding) - 2
+    Query ID: 41033
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-17T15:13:01.768Z
+    */
+    with installations as (
+    select 
+        current_device_country, 
+        date_trunc(install_time, month) as install_month,
+        count(distinct lt_defacto_id) as count_installs
+    from `ltx-dwh-prod-processed.agg.app_device`
+where current_device_country is not null
+and install_time is not null
+group by 1,2
+order by 1,2 asc    
+
+),
+
+top_countries as (
+    select 
+        current_device_country, 
+        count(distinct lt_defacto_id) as count_install
+    from `ltx-dwh-prod-processed.agg.app_device`
+where current_device_country is not null
+and install_time is not null
+group by 1
+order by 2 desc 
+limit 20
+
+)
+
+
+select
+    installations.current_device_country,
+    install_month,
+    count_installs as monthly_installs,
+    sum(count_installs) over (
+        partition by installations.current_device_country
+        order by install_month asc--, current_device_country ASC
+    ) as cumulative_installations
+from installations
+inner join top_countries on
+    top_countries.current_device_country = installations.current_device_country
+order by installations.current_device_country asc, install_month asc;
+
+
+
+/*select 
+    install_month,
+    current_device_country,
+    sum(_count) over (
+    partition by install_month, current_device_country
+    order by install_month, current_device_country asc) as cumulative_installations
+from installations
+group by 1,2
+order by 1,2 */
+
+    

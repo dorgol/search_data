@@ -1,0 +1,41 @@
+/*
+    Name: Facetune Android: New User Exports in First 28 Days
+    Query ID: 41319
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-24T13:40:52.590Z
+    */
+    with usage as (
+    select distinct
+        timestamp_trunc(attribution_timestamp, week) as period,
+        attribution_user_id as user_id,
+        sum(cntd_exports) as exports_in_period,
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` f
+    where f.app_name = 'facetune2_android'
+    -- and date(attribution_timestamp) != dt
+    and dt <= date_add(date(attribution_timestamp), interval 28 day)
+    and date(attribution_timestamp) >= date_trunc(date_sub(current_date(), interval 90 day),week)
+    and date(attribution_timestamp) <= date_trunc(date_sub(current_date(), interval 28 day),week)
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+    group by 1,2
+)
+
+
+select
+    *,
+    100*sum(users) over (partition by period order by monthlyly_uses desc)/total_period_users as cum_pct_of_users,
+from(
+    select distinct
+        period,
+        exports_in_period as monthlyly_uses,
+        count(distinct user_id) over (partition by period, exports_in_period) as users,
+        count(distinct user_id) over (partition by period) as total_period_users,
+        100*count(distinct user_id) over (partition by period, exports_in_period)/count(distinct user_id) over (partition by period) as pct_of_period_users,
+    from usage
+    where true
+)
+qualify cum_pct_of_users >= 1
+and monthlyly_uses > 0
+order by 1 asc, 2 asc

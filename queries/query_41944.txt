@@ -1,0 +1,242 @@
+/*
+    Name: VL iOS - Interest Based Funnel V3 - Stats by Topic
+    Query ID: 41944
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-16T13:51:27.856Z
+    */
+    with experiment_users as (
+    select distinct
+        id_for_vendor,
+        segmentation,
+        case when variant like '%Baseline' then 'Baseline'
+                     when variant like '%Variant1' then 'Variant1'
+                     when variant like '%Variant2' then 'Variant2' end as variant,
+        experiment_started_device,
+        experiment_started_meta,
+        experiment
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and lower(experiment) like lower('vl_smb_feed_categories_3_2023')
+        and case when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                 when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                 when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                 when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+                 else true end
+) 
+
+, user_types as (
+    select distinct
+        experiment,
+        id_for_vendor,
+        segmentation,
+        variant,
+        experiment_started_device,
+        experiment_started_meta,
+        case when origin_page_response is null then 'No Answer' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as user_type
+    from experiment_users ex
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on pq.platform_device_id = ex.id_for_vendor
+        and pq.app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by pq.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+    
+, topics as (
+    select distinct
+        experiment,
+        ut.id_for_vendor,
+        segmentation,
+        variant,
+        experiment_started_device,
+        experiment_started_meta,
+        user_type,
+        case when origin_page_response is null then 'No Answer' else origin_page_response end as topic
+    from user_types ut
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on pq.platform_device_id = ut.id_for_vendor
+        and pq.app_name = 'videoleap'
+        --and origin_page_index = 0
+        and origin_page_name = 'What interests you?'
+    where true
+    and case when pq.origin_page_response is null then 1 else (LENGTH(pq.origin_page_response) - LENGTH(REPLACE(pq.origin_page_response,',','')))+1 end = 1
+    and case when '{{user type}}' = 'All' then true else user_type = '{{user type}}' end
+    qualify row_number() over (partition by pq.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+    
+   
+, totals as (
+    select
+        --variant,
+        segmentation,
+        topic,
+        count(distinct id_for_vendor) as total_users,
+        count (distinct case when timestamp_diff(current_timestamp (), experiment_started_meta,day) > 0  then id_for_vendor else null end ) as num_devices_day0
+    from topics
+    group by 1,2)
+
+, remake_exports as (
+    select
+        --u.variant,
+        u.segmentation,
+        u.topic,
+        count(distinct ex.id_for_vendor) as exporters,
+        count(distinct ex.export_id) as exports,
+        count(distinct case when exs.parent_template_id is not null then ex.id_for_vendor end) as remakes_exporters,
+        count(distinct case when exs.parent_template_id is null then ex.id_for_vendor end) as originals_exporters,
+        count(distinct case when exs.parent_template_id is not null then ex.export_id end) as remake_exports,
+        count(distinct case when exs.parent_template_id is null then ex.export_id end) as original_exports,
+    from topics as u
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+        on u.id_for_vendor = exs.id_for_vendor
+        and u.experiment_started_device < exs.device_timestamp
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+        on exs.export_id = ex.export_id
+    group by 1,2
+)
+
+, template_purchases as (
+    select
+        --u.variant,
+        u.segmentation,
+        u.topic,
+        count(distinct ex.platform_device_id) as template_purchasers,
+    from topics as u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as exs
+        on u.id_for_vendor = exs.platform_device_id
+        and u.experiment_started_device < exs.device_timestamp
+        and action in ("purchase_template")
+        and exs.meta_source = 'videoleap' and exs.meta_platform = 'ios'
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` as ex
+        on exs.action_id = ex.action_id
+        and reason = 'succeeded'
+    group by 1,2
+)
+
+, subs as (
+    select
+       --u.variant,
+       u.segmentation,
+       u.topic,
+       
+       count(distinct case when s.subscription.product_category = 'subscription' then s.lt_subscription_id end) as num_subs,
+       
+       count(distinct case when s.subscription.product_category = 'subscription' and s.payments.revenue_so_far > 0 then s.lt_subscription_id else null end) as num_paid_subs,
+       
+       count(distinct case when timestamp_diff(s.original_purchase_date,u.experiment_started_meta,day)<=0  and timestamp_diff(current_timestamp(),u.experiment_started_meta,day) > 0
+            then s.lt_subscription_id else null end) as num_subs_day0,
+
+            
+       count(distinct case when timestamp_diff(s.original_purchase_date,u.experiment_started_meta,day)<=0 and timestamp_diff(current_timestamp(),u.experiment_started_meta,day) > 0
+              and s.payments.revenue_so_far > 0 then s.lt_subscription_id else null end) as num_paid_subs_day0
+    from topics as u
+    --join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_otid_variant` v
+    --    on v.id_for_vendor = u.id_for_vendor
+    --    and v.experiment = u.experiment
+    --join `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions` t
+    --    on v.lt_subscription_id = t.lt_subscription_id
+    --    and t.purchase_date <= current_timestamp()
+    --left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` s
+    --    on v.lt_subscription_id = s.lt_subscription_id
+    
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` s
+        on u.id_for_vendor = s.device.platform_device_id
+        and s.license_applications = 'videoleap'
+        and original_purchase_date >= experiment_started_meta
+        
+    group by 1,2
+        )
+        
+, revs as (
+    select
+       --u.variant,
+       u.segmentation,
+       u.topic,
+       
+       sum(s.payments.revenue_so_far) as revs,
+      
+    from topics as u
+
+    --join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_otid_variant` v
+    --    on v.id_for_vendor = u.id_for_vendor
+    --    and v.experiment = u.experiment
+    --    and v.segmentation = u.segmentation
+    --join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` s
+    --    on v.lt_subscription_id = s.lt_subscription_id
+        
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` s
+        on u.id_for_vendor = s.device.platform_device_id
+        and s.license_applications = 'videoleap'
+        and original_purchase_date >= experiment_started_meta
+        
+    group by 1,2
+        )
+
+select
+    --t.variant,
+    t.segmentation,
+    t.topic,
+    
+    total_users,
+    
+    exporters,
+    remakes_exporters,
+    originals_exporters,
+    
+    exports,
+    remake_exports,
+    original_exports,
+    
+    template_purchasers,
+    
+    safe_divide(exporters, total_users)*100 as exporter_pct,
+    safe_divide(remakes_exporters, total_users)*100 as remake_exporter_pct,
+    safe_divide(originals_exporters, total_users)*100 as og_exporter_pct,
+    
+    safe_divide(template_purchasers, total_users)*100 as purchase_pct,
+    
+    safe_divide(exports, total_users) as exports_per_user,
+    safe_divide(remake_exports, total_users) as remake_exports_per_user,
+    safe_divide(original_exports, total_users) as og_exports_per_user,
+    
+    num_subs,
+    num_paid_subs,
+    
+    safe_divide(num_subs, total_users)*100 as cvr,
+    safe_divide(num_paid_subs, total_users)*100 as paid_cvr,
+    
+    safe_divide(num_subs_day0, num_devices_day0)*100 as day0_cvr,
+    safe_divide(num_paid_subs_day0, num_devices_day0)*100 as day0_paid_cvr,
+    
+    revs,
+    safe_divide(revs, total_users) as rpd
+    
+from totals t
+left join remake_exports rex
+    --on rex.variant = t.variant
+    on
+     rex.segmentation = t.segmentation
+    and rex.topic = t.topic
+left join template_purchases pu
+    --on pu.variant = t.variant
+    on
+     pu.segmentation = t.segmentation
+    and pu.topic = t.topic
+left join subs s
+    --on s.variant = t.variant
+    on
+     s.segmentation = t.segmentation
+    and s.topic = t.topic
+left join revs r
+    --on r.variant = t.variant
+    on
+     r.segmentation = t.segmentation
+    and r.topic = t.topic
+where total_users > 10
+

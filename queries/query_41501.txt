@@ -1,0 +1,74 @@
+/*
+    Name: 20230404 - [FT-1088] AI Enhance V2 - Slider Value Distribution
+    Query ID: 41501
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-02T13:05:05.567Z
+    */
+    with 
+
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('[FT-1088] AI Enhance V2')
+    and display_type = 'entered_photo_editor'
+    -- and variant = 'Variant 1'
+)
+
+
+select
+    segmentation,
+    variant,
+    reason,
+    case 
+        when round(vals.slider_val,2) between 0 and 0.1 then '0.0-0.1'
+        when round(vals.slider_val,2) between 0.11 and 0.2 then '0.11-0.2'
+        when round(vals.slider_val,2) between 0.21 and 0.3 then '0.21-0.3'
+        when round(vals.slider_val,2) between 0.31 and 0.4 then '0.31-0.4'
+        when round(vals.slider_val,2) between 0.41 and 0.5 then '0.41-0.5'
+        when round(vals.slider_val,2) between 0.51 and 0.6 then '0.51-0.6'
+        when round(vals.slider_val,2) between 0.61 and 0.7 then '0.61-0.7'
+        when round(vals.slider_val,2) between 0.71 and 0.8 then '0.71-0.8'
+        when round(vals.slider_val,2) between 0.81 and 0.9 then '0.81-0.9'
+        when round(vals.slider_val,2) between 0.91 and 1 then '0.91-1'
+    end as slider_val_bucket,
+    count(distinct event_id) num_ended,
+    count(distinct event_id)/ max(total_num_ended)*100 pct_total_uses
+from (
+    select
+        segmentation,
+        case when variant = 'Variant1' then 'Variant 1' else variant end as variant,
+        feature_usage_id,
+        sub_feature_state,
+        reason,
+        is_subscriber,
+        u.id_for_vendor,
+        fe.event_id,
+        count(distinct fe.event_id) over (partition by segmentation, variant, reason) total_num_ended
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.app_name = 'facetune2'
+        and fe.meta_received_at >= '2022-12-21'
+        and fe.meta_received_at >= experiment_started_meta
+        and fe.platform_device_id = u.id_for_vendor
+        and feature_name = 'aiEnhance'
+    where json_extract(sub_feature_state, '$.inputModels') like '%sliderValue%'
+), unnest(`ltx-dwh-playground.bi.parseSubfeatureStateKeyedByFace`(json_extract(sub_feature_state, '$.inputModels'))) vals
+where variant != 'Overrides'
+group by 1,2,3,4
+order by 1,2,4

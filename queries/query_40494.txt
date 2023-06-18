@@ -1,0 +1,75 @@
+/*
+    Name: 20221221 -  [FT-1057] Makeup LAM (Combined) - Makeup Retention Rates by Days Since First Makeup Usage
+    Query ID: 40494
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-21T10:24:01.483Z
+    */
+    with 
+users as (
+    select
+        *
+    from (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.country,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.display_type,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = 'facetune2'
+        and (
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Var%') or
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Var%')
+        )
+    )
+    where true
+    and display_type = 'activated_for_device'
+)
+
+select
+    segmentation,
+    variant,
+    days_since_exp_start,
+    max(total_makeup_users) total_makeup_users,
+    count(distinct id_for_vendor) num_users_used,
+    count(distinct id_for_vendor)/max(total_makeup_users)*100 pct_total_makeup_users_used,
+from (
+    select distinct 
+        segmentation,
+        variant,
+        id_for_vendor,
+        timestamp_diff(meta_received_at, experiment_started_meta, day) days_since_exp_start,
+        total_makeup_users
+    from (
+        select distinct 
+            segmentation,
+            variant,
+            fs.id_for_vendor,
+            event_id,
+            device_timestamp,
+            experiment_started_meta,
+            meta_received_at,
+            min(fs.device_timestamp) over (partition by fs.id_for_vendor, segmentation, variant) first_time_used_in_experiment,
+            count(distinct fs.id_for_vendor) over (partition by segmentation, variant) total_makeup_users
+        from users u
+        join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+            on fs.meta_received_at >= '2022-12-21'
+            and fs.id_for_vendor = u.id_for_vendor
+            and fs.meta_received_at >= experiment_started_meta
+            and feature_name = 'Makeup'
+    )
+)
+group by 1,2,3
+order by 1,2,3

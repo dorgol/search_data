@@ -1,0 +1,60 @@
+/*
+    Name: Vl iOS - advanced filtering - Export rate of filtered screens
+    Query ID: 42353
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-30T13:59:35.095Z
+    */
+    with experiment_users as (
+    select distinct
+        experiment,
+        variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_device
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant`
+    where application = "videoleap"
+      and experiment = "feed_advanced_filtering_experiment_05_2023"
+      and display_type like "display%"
+      and segmentation = '{{segmentation}}'
+)
+
+, raw_data as (
+  select distinct
+    exp.variant,
+    date(sp.meta_received_at) as dt,
+    sp.filter_parameters,
+    sp.platform_device_id,
+    sp.screen_name,
+    sp.feed_screen_id as filtered_screen,
+    ac.feed_screen_id as filtered_screen_with_click,
+    ac.action_id as click_action_id,
+    ex.export_id
+  from experiment_users as exp
+  join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` as sp
+    on exp.id_for_vendor = sp.platform_device_id
+    and sp.device_timestamp > exp.experiment_started_device
+    and sp.filter_parameters is not null
+  left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_user_action_started` as ac
+    on sp.feed_screen_id = ac.feed_screen_id
+    and ac.action = "use_template"
+left join `ltx-dwh-prod-raw.analytics.ios_videoleap_template_editing_started` as te
+    on ac.action_id = te.action_identifier
+left join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_export_started` as ex
+    on te.open_project_id = ex.open_project_id
+  where true
+)
+
+select
+    *,
+    num_screens_clicked / num_filtered_screens_seen * 100 as pct_screens_clicked,
+    num_screens_exported / num_filtered_screens_seen * 100 as pct_screens_exported,
+from (
+    select
+        variant,
+        count(distinct filtered_screen) as num_filtered_screens_seen,
+        count(distinct filtered_screen_with_click) as num_screens_clicked,
+        count(distinct case when export_id is not null then filtered_screen end) as num_screens_exported,
+    from raw_data
+    group by 1
+    having count(distinct filtered_screen) > 1000
+)

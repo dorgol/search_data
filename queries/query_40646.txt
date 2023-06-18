@@ -1,0 +1,101 @@
+/*
+    Name: VL iOS - RecSys in categories experiment - usage by screen
+    Query ID: 40646
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-23T07:36:33.774Z
+    */
+    with experiment_users as (
+    select distinct
+        experiment,
+        variant,
+        segmentation,
+        id_for_vendor as platform_device_id,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = "videoleap"
+        and experiment = "feed_ios_recommendation_categories_02_20"
+        and display_type like "displayed%"
+        and case when '{{segmentation}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segmentation}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segmentation}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                end
+        and variant <> "Overrides"
+)
+
+, data as (
+    select
+        ex.variant,
+        case when f.screen_name like "%recommended%" then "1. Main feed"
+        else "2. Categories" end as screen_name,
+        "opened_screen" as action,
+        count(distinct f.platform_device_id) as num_users,
+        count(distinct f.event_id) as num_actions
+    from experiment_users as ex
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented` as f
+        on f.platform_device_id = ex.platform_device_id
+        and f.device_timestamp > ex.experiment_started_device
+    where f.screen_name like "%category%"
+        and f.meta_source = "videoleap" and f.platform = "ios"
+    group by 1,2,3
+    having count(distinct f.platform_device_id) > 100
+    
+    union all 
+    
+    select
+        ex.variant,
+        case when ac.screen_name like "%recommended%" then "1. Main feed"
+        else "2. Categories" end as screen_name,
+        "use_template" as action,
+        count(distinct ac.platform_device_id) as num_users,
+        count(distinct ac.action_id) as num_actions,
+    from experiment_users as ex
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac
+        on ac.platform_device_id = ex.platform_device_id
+        and ac.device_timestamp > ex.experiment_started_device
+    where ac.action = "use_template"
+        and ac.screen_name like "%category%"
+        and ac.meta_source = "videoleap" 
+        and ac.platform = "ios"
+    group by 1,2,3
+    having count(distinct ac.platform_device_id) > 10
+    
+    union all 
+    
+    select
+        ex1.variant,
+        case when ac.screen_name like "%recommended%" then "1. Main feed"
+        else "2. Categories" end as screen_name,
+        "export" as action,
+        count(distinct ex.id_for_vendor) as num_users,
+        count(distinct ex.export_id) as num_actions,
+    from experiment_users as ex1
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ex.id_for_vendor = ex1.platform_device_id
+        and ex.device_timestamp > ex1.experiment_started_device
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as te
+        on te.open_project_id = ex.open_project_id
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac
+        on te.action_identifier = ac.action_id
+    where true
+        and ac.screen_name like "%category%"
+    group by 1,2,3
+    having count(distinct ac.platform_device_id) > 5
+)
+
+select 
+    *,
+    num_users_clicked_use_template / num_users_opened * 100 as pct_users_clicked_use_template,
+    num_users_exported_remake / num_users_opened * 100 as pct_users_exported_remake
+from (
+    select
+        screen_name,
+        variant,
+        sum(case when action = "opened_screen" then num_users end) as num_users_opened,
+        sum(case when action = "use_template" then num_users end) as num_users_clicked_use_template,
+        sum(case when action = "export" then num_users end) as num_users_exported_remake,
+        sum(case when action = "opened_screen" then num_actions end) as num_opens,
+        sum(case when action = "use_template" then num_actions end) as num_use_template_clicks,
+        sum(case when action = "export" then num_actions end) as num_exports_from_remakes,
+    from data
+    group by 1,2
+    )

@@ -1,0 +1,64 @@
+/*
+    Name: [FT-1084] Face Detector Small Faces - Face Size Distribution
+    Query ID: 40862
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-10T17:26:46.134Z
+    */
+    with users as (
+    select
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = 'facetune2'
+    and display_type = 'reached video editor'
+    and experiment = '[FT-1084] Face Detector Small Faces 1.1'
+    and segmentation in ('02 New Users', '03 Existing Users')
+)
+ 
+, face_sizes as (
+    select
+        segmentation,
+        variant,
+        process_id,
+        json_extract_array(process_details, '$.normalized_face_sizes') face_size,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_ended` p
+        on u.id_for_vendor = p.platform_device_id
+        and p.app_name = 'facetune2'
+        and p.meta_received_at >= '2023-04-02'
+        and p.meta_received_at >= experiment_started_meta_by_type
+        and p.process_name = 'face detection'
+        and json_extract(p.process_details, '$.isFaceInVideo') = 'true'
+    where true
+)
+
+select
+    segmentation || ' ' || variant as segment_variant,
+    face_size,
+    num_appearances,
+    pct_total_appearances,
+    sum(pct_total_appearances) over (partition by segmentation, variant order by face_size desc) cumul_sum_pct_total
+from (
+    select
+        segmentation,
+        variant,
+        face_size,
+        count(distinct process_id) num_appearances,
+        count(distinct process_id)/max(total_num_appearances)*100 pct_total_appearances
+    from (
+        select
+            segmentation,
+            variant,
+            round(safe_cast(face_size as bignumeric), 3) face_size,
+            count(distinct process_id) over (partition by segmentation, variant) total_num_appearances,
+            process_id
+        from face_sizes, unnest(face_size) face_size
+    )
+    where face_size > 0
+    group by 1,2,3
+)
+where true
+qualify pct_total_appearances >= 0.5
+order by 1, 2 asc

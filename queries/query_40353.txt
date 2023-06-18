@@ -1,0 +1,59 @@
+/*
+    Name: 20230117 - FT2 iOS - [FT-1060] Involuntary Churn Prevention - 30d pre-experiment Activity - Validation
+    Query ID: 40353
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-15T14:31:12.271Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1060] Involuntary Churn Prevention')
+    and display_type = 'displayed'
+),
+
+activity_30d_before_experiment as (
+    select
+        d.attribution_user_id,
+        id_for_vendor,
+        segmentation,
+        variant,
+        max(case when date_diff(date(experiment_started_meta), dt, day) between 1 and 29 then true else false end) was_active_within_30d_of_exp_start
+    from users u
+    left join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` a
+        on a.application = 'facetune2'
+        and u.lt_defacto_id = a.lt_defacto_id
+    left join `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` d
+        on d.app_name = 'facetune2'
+        and d.attribution_user_id = a.attribution_user_id
+    where true
+    group by 1,2,3,4
+  
+)
+
+select
+    segmentation,
+    case when variant = 'baseline' then 'Baseline' else variant end as variant,
+    count(distinct id_for_vendor) num_exp_users,
+    count(distinct attribution_user_id) num_user_groups,
+    count(distinct case when was_active_within_30d_of_exp_start then id_for_vendor end) num_active_exp_users,
+    count(distinct case when was_active_within_30d_of_exp_start then attribution_user_id end) num_active_user_groups
+from activity_30d_before_experiment
+group by 1,2
+order by 1,2

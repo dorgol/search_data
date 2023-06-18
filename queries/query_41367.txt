@@ -1,0 +1,73 @@
+/*
+    Name: Felix - New Sub Offer (2023-04-26)
+    Query ID: 41367
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-28T13:50:18.046Z
+    */
+    declare start_date timestamp default '2022-05-01';
+
+with offer_presented as (
+
+    select distinct
+        date_trunc(date(meta_received_at), month) as event_timestamp_month,
+        date_trunc(date(meta_received_at), week) as event_timestamp_week,
+        date_trunc(date(meta_received_at), day) as event_timestamp_day,
+        id_for_vendor,
+        presentation_id
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_offer_presented`
+    where meta_received_at >= start_date
+
+    
+),
+
+purchase_initiated as (
+
+    select distinct
+        date_trunc(date(meta_received_at), month) as event_timestamp_month,
+        date_trunc(date(meta_received_at), week) as event_timestamp_week,
+        date_trunc(date(meta_received_at), day) as event_timestamp_day,
+        id_for_vendor,
+        subscription_presentation_id as presentation_id
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_purchase_initiated`    
+),
+
+purchase_succeeded as (
+
+    select distinct
+        date_trunc(date(meta_received_at), month) as event_timestamp_month,
+        date_trunc(date(meta_received_at), week) as event_timestamp_week,
+        date_trunc(date(meta_received_at), day) as event_timestamp_day,
+        id_for_vendor,
+        subscription_presentation_id as presentation_id
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_purchase_succeeded`    
+),
+
+combined as (    
+    
+    select distinct
+        offer_presented.*,
+        --case when purchase_initiated.id_for_vendor is null then False else True end as if_initiated,
+        --case when purchase_succeeded.id_for_vendor is null then False else True end as if_succeeded
+        purchase_initiated.id_for_vendor as init_id,
+        purchase_succeeded.id_for_vendor as succ_id
+    from 
+        offer_presented
+    left join 
+        purchase_initiated using(id_for_vendor, event_timestamp_day) -- Unable to also join on Presentation ID?
+    left join 
+        purchase_succeeded using(id_for_vendor, event_timestamp_day) -- Unable to also join on Presentation ID? Number dramatically reduces when join by date 
+    --where purchase_initiated.id_for_vendor is null
+)
+
+select 
+    case when event_timestamp_month <= '2022-07-01' then  'Offer Running'
+    else 'Terminated' end as subscription_offer_stage,
+    -- event_timestamp_month,
+    count(distinct id_for_vendor) as total_offers,
+    count(distinct init_id) as count_init,
+    count(distinct succ_id) as count_succ,
+    (count(distinct init_id)/count(distinct id_for_vendor))*100 as payment_init_rate,
+    (count(distinct succ_id)/count(distinct id_for_vendor))*100 as payment_succ_rate
+from combined
+group by 1
+order by 1 asc

@@ -1,0 +1,27 @@
+/*
+    Name: Creators hashtags- most popular hashtags
+    Query ID: 42519
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-06-06T08:21:38.715Z
+    */
+    with raw_hashtags as (
+    select
+        -- ex.template_description,
+        date(p.meta_received_at) as dt,
+        words,
+        post_id
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_post_upload_ended` as p
+        on ex.export_id = p.export_id
+    left join unnest(split(ex.template_description, " ")) as words
+    where ex.template_description is not null 
+        and words like "#%"
+    and date(ex.meta_received_at) >= '{{start date}}'
+)
+
+select
+    words,
+    count(distinct post_id) as num_posts
+from raw_hashtags
+group by 1
+order by 2 desc

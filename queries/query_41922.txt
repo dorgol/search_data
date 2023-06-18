@@ -1,0 +1,275 @@
+/*
+    Name: FT iOS - TOF Dashboard - Onboarding Funnel - New User Day0 - Global Events
+    Query ID: 41922
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-16T07:42:36.286Z
+    */
+    with first_launch as (
+    select 
+        lt_defacto_id,
+        d.attribution_user_id,
+        first_session_id,
+        first_session_id_ts,
+        date(first_session_id_ts) as first_session_date
+    FROM `ltx-dwh-prod-processed.agg.app_attribution_user` d
+    join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` g
+        on g.attribution_user_id = d.attribution_user_id
+        and g.application = 'facetune2'
+    WHERE true
+    and app_name = 'facetune2'
+    and 
+        case 
+            when '{{date_part}}' = 'day' then date(first_session_id_ts) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(first_session_id_ts) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(first_session_id_ts) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+    and date_trunc(current_date(), day) != date_trunc(date(first_session_id_ts), day)
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Non-China' then current_store_country not in ('CN')
+        when '{{countries}}' = 'Rest of the World (non US and China)' then current_store_country not in ('US','CN')
+        else current_store_country = '{{countries}}' end
+)
+
+select
+    *,
+    100*num_users/max(num_users) over (partition by first_session_date) as pct_of_launched,
+from (
+    select
+        'first_launch' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    group by 1,2
+    
+    union all
+    
+    select
+        permission || '_popup' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_auth_popup_prompted` iss
+        on farm_fingerprint('facetune2'|| iss.platform_device_id) = l.lt_defacto_id
+        and app_name = 'facetune2'
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(iss.meta_received_at) = l.first_session_date
+    group by 1,2
+        
+    union all
+    
+    select
+        'started_questionnaire' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` iss
+        on farm_fingerprint('facetune2'|| iss.platform_device_id) = l.lt_defacto_id
+        and app_name = 'facetune2' 
+        and
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(iss.meta_received_at) = l.first_session_date
+    group by 1,2
+    
+    union all
+    
+    select
+        'questionnaire_p' || destination_page_index as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` iss
+        on farm_fingerprint('facetune2'|| iss.platform_device_id) = l.lt_defacto_id
+        and app_name = 'facetune2'
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(iss.meta_received_at) = l.first_session_date
+        and destination_page_index <> 0
+        and destination_page_index <> 4
+    group by 1,2
+    
+    union all
+    
+    select
+        'saw_login' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct case when lpg.platform_device_id is not null then l.lt_defacto_id end) as num_users,
+    from first_launch l
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_login_screen_presented` lpg
+        on lpg.app_name = 'facetune2' 
+        and farm_fingerprint('facetune2' || lpg.platform_device_id)  = l.lt_defacto_id
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(lpg.meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(lpg.meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(lpg.meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(lpg.meta_received_at), day)
+        and date(lpg.meta_received_at) = l.first_session_date
+    group by 1,2
+    
+    union all
+    
+    select
+        case 
+            when se.reason in ('firstTimeIninitialFlow', 'backstageVIPButton') then 'saw_subscribe_on_launch'
+            -- when se.source = 'homescreen_importSubscriptionAlert' then 'saw_homescreen_import_sub_screen'
+        end as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_view_presented` se
+        on farm_fingerprint('facetune2'|| se.platform_device_id) = l.lt_defacto_id
+        and app_name = 'facetune2'
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(se.meta_received_at) = l.first_session_date
+        and se.reason in ('firstTimeIninitialFlow', 'backstageVIPButton') --,'homescreen_importSubscriptionAlert')  
+    group by 1,2
+        
+    union all
+    
+    -- not updated
+    select
+        'imported_image' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_loaded` il
+        on farm_fingerprint('facetune2'|| il.id_for_vendor) = l.lt_defacto_id
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(il.meta_received_at) = l.first_session_date
+    group by 1,2
+        
+    union all
+    
+    select
+        'feature_started' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on farm_fingerprint('facetune2'|| fs.platform_device_id) = l.lt_defacto_id
+        and app_name = 'facetune2'
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+    group by 1,2
+        
+    union all
+    
+    select
+        'subfeature_started' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_started` fs
+        on farm_fingerprint('facetune2'|| fs.platform_device_id) = l.lt_defacto_id
+        and app_name = 'facetune2'
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+    group by 1,2
+    
+    union all
+    
+    -- not updated
+    select
+        'feature_accept_attempted' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_button_pressed` fs
+        on farm_fingerprint('facetune2'|| fs.id_for_vendor) = l.lt_defacto_id
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+        and destination in ( 'blocking_subscription_screen','main_photo_editor_screen')
+        and button_identifier = 'accept'
+    group by 1,2
+        
+    union all
+    
+    select
+        'feature_accepted' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fs
+        on farm_fingerprint('facetune2'|| fs.platform_device_id) = l.lt_defacto_id
+        and app_name = 'facetune2'
+        and fs.reason = 'accepted'
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+    group by 1,2
+        
+    union all
+    
+    select
+        'exported_image' as label,
+        date_trunc(first_session_date,{{date_part}}) as first_session_date,
+        count(distinct l.attribution_user_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on farm_fingerprint('facetune2'|| ex.platform_device_id) = l.lt_defacto_id
+        and app_name = 'facetune2'
+        and 
+        case 
+            when '{{date_part}}' = 'day' then date(meta_received_at) >= date_sub(current_date(), interval 90 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(ex.meta_received_at) = l.first_session_date
+    group by 1,2
+)
+where true
+and label in ({{sections}})

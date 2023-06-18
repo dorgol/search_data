@@ -1,0 +1,15 @@
+/*
+    Name: Test
+    Query ID: 41124
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-18T14:19:35.103Z
+    */
+    select
+date_trunc(meta_received_at, {{date granularity}}) as dt,
+count(distinct id_for_vendor) as users,
+count(distinct case when is_subscriber is true then id_for_vendor end) as sub_users,
+count(distinct case when is_subscriber is false then id_for_vendor end) as free_users
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_app_foregrounded`
+where date(meta_received_at) >= '{{start date}}'
+    and date(meta_received_at) < date_trunc(current_date(), {{date granularity}})
+group by 1

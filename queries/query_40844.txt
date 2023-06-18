@@ -1,0 +1,17 @@
+/*
+    Name: VL iOS: Active Devices
+    Query ID: 40844
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-20T14:40:17.133Z
+    */
+    select distinct
+    current_device_model,
+    count(distinct case when ud.os_version <= "13.1" then platform_device_id end) over (partition by current_device_model) as devices,
+    100*count(distinct case when ud.os_version <= "13.1" then platform_device_id end) over (partition by current_device_model)/count(distinct platform_device_id) over () as pct_devices,
+from `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+left join `ltx-dwh-prod-processed`.`devices`.`unified_devices_global` as ud
+    on ud.id_for_vendor = d.platform_device_id
+where app_name = 'videoleap'
+    -- and ud.os_version <= "13.1"
+and last_active_dt >= date_sub(current_date(), interval 30 day)
+order by 2 desc

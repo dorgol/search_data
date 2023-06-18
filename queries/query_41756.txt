@@ -1,0 +1,25 @@
+/*
+    Name: FT iOS - Subscription Screen Purchase Rates
+    Query ID: 41756
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-05T09:38:19.530Z
+    */
+    select
+    p.reason as screen_source,
+    count(distinct p.platform_device_id) num_users_presented,
+    count(distinct p.event_id) num_times_presented,
+    count(distinct case when d.reason = 'PurchaseSucceeded' then p.event_id end) num_purchased,
+    count(distinct case when d.reason = 'PurchaseSucceeded' then p.event_id end) /count(distinct p.event_id)*100 as purchase_rate,
+    count(distinct case when d.reason = 'PurchaseSucceeded' then p.platform_device_id end) /count(distinct p.platform_device_id)*100 as pct_of_users_purchased
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_presented` p
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_dismissed` d
+    on d.app_name = 'facetune2'
+    and d.meta_received_at >= '{{since_date}}'
+    and d.flow_id = p.flow_id
+where true
+and p.app_name = 'facetune2'
+and p.meta_received_at >= '{{since_date}}'
+group by 1
+having num_times_presented > 3000
+order by 5 desc
+--contentScreenshotAlert

@@ -1,0 +1,52 @@
+/*
+    Name: VL Android: User Level Eventually Paid CVR Indonesia
+    Query ID: 41230
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-20T16:09:51.182Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(min(first_session_id_ts) over (partition by case when f.last_lt_id = 'unknown' then cast(f.lt_defacto_id as string) else f.last_lt_id end)), {{period}}) as cohort_period,
+        case when f.last_lt_id = 'unknown' then cast(f.lt_defacto_id as string) else f.last_lt_id end as user_id,
+        min(first_session_id_ts) over (partition by case when f.last_lt_id = 'unknown' then cast(f.lt_defacto_id as string) else f.last_lt_id end) as first_session,
+        lt_defacto_id,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` f
+    where true
+    and f.app_name = 'videoleap_android'
+    and f.current_store_country ='ID'
+    qualify date_trunc(date(first_session), {{period}}) >= date_sub(current_date(), interval 30 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(first_session), {{period}})
+
+)
+
+, subs as (
+    select
+        f.cohort_period,
+        f.user_id,
+        floor(timestamp_diff(s.original_purchase_date,first_session,hour)/24) as time_to_sub,
+        s.lt_subscription_id is not null as is_subscriber,
+    from users f
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`subscription_to_defacto` d
+        on f.lt_defacto_id = d.lt_defacto_id
+        and d.application = 'videoleap_android'
+    left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on d.lt_subscription_id = s.lt_subscription_id
+        and date(s.original_purchase_date) >= date(f.first_session)
+        and s.app_name = 'videoleap_android'
+        and s.revenue_so_far > 0
+)
+
+
+select
+    cohort_period,
+    count(distinct user_id) as cohort_users,
+    count(distinct case when time_to_sub = 0 then user_id end) as day0subs,
+    count(distinct case when time_to_sub <= 7 then user_id end) as day7subs,
+    count(distinct case when time_to_sub <= 30 then user_id end) as day30subs,
+    100*count(distinct case when time_to_sub = 0 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 7 then user_id end),0) as day0pcvr,
+    100*count(distinct case when time_to_sub <= 7 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 14 then user_id end),0) as day7pcvr,
+    100*count(distinct case when time_to_sub <= 30 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 37 then user_id end),0) as day30pcvr,
+from subs
+group by 1
+having day0pcvr > 0
+order by 1

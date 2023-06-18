@@ -1,0 +1,46 @@
+/*
+    Name: VL iOS - Top AI Templates
+    Query ID: 41786
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-14T11:17:57.913Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        template_id,
+        parent_template_id,
+        root_template_id,
+        requirements_flat,
+        app_name,
+        created_at,
+        concat("https://res.cloudinary.com/lightricks/video/upload/", preview_media_id, ".mp4") as preview
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`,
+        unnest(requirements) as requirements_flat
+    where app_name = "videoleap"
+        and requirements_flat like '%aiTransform%'
+)
+
+, stats as (
+    select distinct
+        p.post_id,
+        created_at,
+        preview,
+        case when parent_template_id is null then 'original' else 'remake' end as og_remake,
+        rd.distinct_total_impressions,
+        rd.total_clicks,
+        rd.total_clicks_auto_edit,
+        rd.distinct_export_started_feed,
+        rd.distinct_export_started_auto_edit,
+        rd.ctr*100 as click_rate,
+        rd.distinct_export_rate*100 as distinct_export_rate,
+        rd.distinct_export_rate_feed*100 as distinct_export_rate_feed
+    from posts p
+    inner join `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio` rd
+        on rd.post_id = p.post_id
+)
+
+
+select
+*
+from stats
+order by total_clicks desc

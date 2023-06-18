@@ -1,0 +1,43 @@
+/*
+    Name: VL iOS - num clips in posts distribution by feed screen
+    Query ID: 41402
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-28T07:23:02.135Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        number_of_clips_used
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+)
+
+, posts_seen_in_screens as (
+    select distinct
+        case when feed_type is null then "unknown"
+         when feed_type = "for_you" or feed_type like "category.recommemded%" then "main_reccommended"
+         when feed_type like "category%" then "category"
+         when feed_type like "discover%" then "discover"
+         when feed_type like "search%" then "search"
+         when feed_type in ("liked", "liked_feed", "purchased", "purchased_feed", "templates", "templates_feed") then "profile"
+         when feed_type like "landing_screen%" then "landing_screen"
+         when feed_type like "assets_first%" then "auto_edit"
+         else feed_type end as feed_type,
+        post_id,
+        number_of_clips_used as num_clips_in_template,
+    from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` as f
+    left join posts as p
+        using (post_id)
+    where dt >= date_sub(current_date(), interval {{last x days}} day)
+    and platform = "ios"
+)
+
+select distinct
+    feed_type, 
+    num_clips_in_template,
+    count(distinct post_id) over (partition by num_clips_in_template, feed_type) as num_posts,
+    count(distinct post_id) over (partition by num_clips_in_template, feed_type) / count(distinct post_id) over (partition by feed_type) * 100 as pct_posts,
+from posts_seen_in_screens
+where num_clips_in_template <> 0
+    and case when '{{feed screens}}' = "Main only" then feed_type in ("main_reccommended", "auto_edit")
+        else true end        
+qualify (count(distinct post_id) over (partition by num_clips_in_template, feed_type) > 30)

@@ -1,0 +1,54 @@
+/*
+    Name: FT iOS - Avatar Asset Users - Feature Usage
+    Query ID: 42486
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-05T09:56:12.783Z
+    */
+    with 
+user_genders as (
+    select
+        *
+    from (
+        select
+            platform_device_id,
+            case 
+                when contains_substr(asset_gender,'|') then 'couple'
+                else asset_gender
+            end as asset_gender,
+            sum(distinct num_processes)/max(total_processes)*100 pct_total_processes
+        from (
+            select
+                *,
+                sum(num_processes) over (partition by platform_device_id) total_processes
+            from (
+                select
+                    fs.platform_device_id,
+                    case 
+                        when split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(1)] = 'couple' and split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(2)] is not null
+                            then split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(2)] || ' | ' || split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(3)]
+                        else split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(2)]
+                    end as asset_gender,
+                    count(distinct process_id) num_processes
+                from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+                join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_ended` pe
+                    on pe.app_name = 'facetune2'
+                    and pe.process_name like '%ai_a%'
+                    and pe.process_id = fs.source
+                where fs.app_name = 'facetune2'
+                and fs.feature_name like '%ai_a%'
+                group by 1,2
+                having asset_gender is not null
+            )
+        )
+        -- where total_processes >= 4
+        group by 1,2
+    )
+    where pct_total_processes > 50
+)
+
+select
+    asset_gender,
+    count(distinct platform_device_id) total_with_majority
+from user_genders
+group by 1
+order by 2 desc

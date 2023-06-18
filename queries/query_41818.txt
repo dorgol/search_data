@@ -1,0 +1,56 @@
+/*
+    Name: PL AI Rooms Preset Exports Over Time
+    Query ID: 41818
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-18T16:29:05.167Z
+    */
+    
+
+select *,
+sum(exports) over(partition by time) as total_exports
+from
+(
+--exported_users as (
+  select 
+      date(date_trunc(d.dt, {{Time granularity}} )) as time,
+  --distinct
+  --ex_s.preset_name,
+  case when ex_s.preset_name like ('Custom%') then 'Custom' else ex_s.preset_name end as theme,
+
+    count(distinct case when ex_s.export_source in ('ai_rooms','ai_rooms.es','ai_rooms.es_carousel'
+    --,'ai_cars'
+    ) then ex_s.platform_device_id end) as exporters,
+    count(distinct case when ex_s.export_source in ('ai_rooms','ai_rooms.es','ai_rooms.es_carousel'
+    --,'ai_cars'
+    ) then ex_s.process_id end) as exports,
+   -- count(distinct case when ex_s.export_source='ai_scenes' then ex_s.process_id end) over (partition by date(date_trunc(d.dt, {{Time granularity}} ))) 
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+  left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as efs
+    on d.platform_device_id = efs.platform_device_id
+    and d.dt = date(efs.meta_received_at)
+    and efs.app_name='editor'
+    and efs.feature_name in (
+    --'ai_cars'
+    --, 
+    'ai_rooms')
+
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` as ex_s
+    on efs.platform_device_id = ex_s.platform_device_id
+    and date(efs.meta_received_at) = date(ex_s.meta_received_at)
+    and ex_s.app_name='editor'
+    and ex_s.export_source in ('ai_rooms','ai_rooms.es','ai_rooms.es_carousel'
+    --,'ai_cars'
+    )
+  where dt >= "2023-05-09"
+    and dt < date_trunc(current_date, {{Time granularity}})
+    and d.app_name = "editor"
+    and d.platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then d.dt = d.first_active_dt
+    when '{{Day}}' = "week0" then date_diff(d.dt, d.first_active_dt, day) <= 7
+        when '{{Day}}' = "non day0" then d.dt > d.first_active_dt
+        else true end
+    and ex_s.preset_name is not null
+  group by 1,2
+--)
+)

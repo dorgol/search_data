@@ -1,0 +1,14 @@
+/*
+    Name: Asset & Trial Comms Variants over time
+    Query ID: 42322
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-30T10:49:35.181Z
+    */
+    SELECT 
+date(experiment_started_meta) as dt,
+experiment,
+variant,
+count(distinct id_for_vendor)
+ FROM `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` 
+ WHERE DATE(first_day) >= "2023-04-20"  and application = 'videoleap' and experiment = 'Asset & Trial Comm (Production)'
+group by 1,2,3

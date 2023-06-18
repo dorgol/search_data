@@ -1,0 +1,50 @@
+/*
+    Name: PL- AI Transform Word cloud- trending countries full prompts
+    Query ID: 41364
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-22T15:17:19.401Z
+    */
+    
+ select
+ --process_name, 
+ --process_details,
+ --json_extract_array(process_details,'$.Final_text'),
+lower( trim(trim(trim(json_extract_scalar(process_details,"$.Final_text"),','),'.'),' ')) as generated_text,
+ case when '{{ most frequent prompts }}' ='by generations' then  count(distinct process_id)
+    when '{{ most frequent prompts }}' ='by users generating' then  count(distinct platform_device_id) end as freq,   
+ count(distinct process_id) as generations
+,count(distinct fpe.platform_device_id) as users
+ 
+ 
+ --trim(trim(prompt,','),'.') as prompt,
+ --reason,
+ --count(*) as freq
+ 
+ from
+ `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_process_ended` as fpe,
+  UNNEST(split(lower( trim(trim(json_extract_scalar(process_details,"$.Final_text"),','),'.')), " ")) as prompt
+  inner join `ltx-dwh-prod-processed`.`devices`.`unified_devices` as dev 
+  on fpe.platform_device_id=dev.id_for_vendor
+  and dev.application='editor'
+  and dev.country in ({{ country }})
+ where app_name='editor'
+ and process_name in (
+ case when '{{ Feature }}'= 'Transform' then 'ai_transform_generate'
+ when '{{ Feature }}'= 'Cars' then 'ai_cars_generate'
+ when '{{ Feature }}'= 'Scenes' then 'ai_scenes_generate'
+ when '{{ Feature }}'= 'Selfies' then 'ai_selfie_generate'
+ when '{{ Feature }}'= 'Rooms' then 'ai_rooms_generate'
+ when '{{ Feature }}'= 'Anime' then 'ai_anime_generate'
+ when '{{ Feature }}'= 'Tattoos' then 'ai_tattoos_generate'
+ end
+
+ )
+ and meta_received_at >'2023-03-01'
+  and  date(meta_received_at) >= date_add(current_date(),interval -{{ last x days }} day)
+ and reason= 'success'
+ and prompt ='{{ prompt containing }}'
+ --'hair'
+ 
+--group by 1,2
+group by 1
+order by 3 desc

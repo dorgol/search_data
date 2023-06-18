@@ -1,0 +1,85 @@
+/*
+    Name: VL iOS - Storyblocks usage - add and export over time
+    Query ID: 40278
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-13T08:17:10.993Z
+    */
+    with exports as (
+    select distinct
+        exs.meta_received_at,
+        exs.id_for_vendor,
+        exs.open_project_id,
+        ifnull(exs.is_subscriber, false) as  is_subscriber,
+        p.post_id,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+        on exs.export_id = ex.export_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` as p
+        on ex.export_id = p.export_id
+        and export_error is null
+    where date(exs.meta_received_at) >= date_sub(current_date(), interval 18 month)
+        and exs.parent_template_id is null -- only originals
+    )
+
+, audio_objects_per_project as (
+    select distinct
+        date(p.meta_received_at) as dt,
+        p.open_project_id,
+        p.id_for_vendor,
+        p.post_id,
+        p.is_subscriber,
+        JSON_EXTRACT_SCALAR(outline, "$.source_type") as source_type,
+        JSON_EXTRACT_SCALAR(outline, "$.object_type") as object_type,
+        JSON_EXTRACT_SCALAR(outline, "$.object_identifier") as object_id,
+        ifnull(au.provider, "other") as provider,
+    from exports p
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_session_analytics_reported` as sar
+        on p.open_project_id = sar.open_project_id
+        and date(sar.meta_received_at) = date(p.meta_received_at)
+        and sar.reason like '%export button pressed'
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_session_outline_json` as soj
+        on soj.session_analytics_ID = sar.session_analytics_ID
+    , unnest(json_extract_array(soj.outline_json)) as outline
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_audio_added` as au
+        on JSON_EXTRACT_SCALAR(outline, "$.object_identifier") = au.imported_identifier
+        and au.open_project_id = p.open_project_id
+    where true
+    and JSON_EXTRACT_SCALAR(outline, "$.source_type") = 'EVDSourceTypeAudio'
+    and soj.open_project_id not in ('5BC69A92-5AD8-4B03-B695-5833F44369B4','1A293A77-5278-4A60-879B-A74D47F6980C','A31E10E3-8EEF-4159-ACCA-CAC3EFB8A4D7') --demo projects
+)
+
+, combined as (
+    select
+        date_trunc(dt, month) as dt,
+        "Exported audio" as action,
+        is_subscriber,
+        count(distinct id_for_vendor) as num_users,
+    from audio_objects_per_project
+    where true
+        and case when '{{projects}}' = 'only published' then post_id is not null
+                 when '{{projects}}' = 'not published' then post_id is null
+                 else true end
+        and provider = "storyblocks"
+    group by 1, 2, 3
+    
+    union all
+    
+    select
+        date_trunc(date(meta_received_at), month) as dt,
+        "Added audio" as action,
+        ifnull(is_subscriber, false) as is_subscriber,
+        count(distinct id_for_vendor) as num_users
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_audio_added` as au
+    where date(meta_received_at) >= date_sub(current_date(), interval 18 month)
+        and provider = "storyblocks"
+    group by 1,2,3
+)
+
+select
+    dt,
+    sum(case when action = "Added audio" and is_subscriber then num_users end) as subs_added_audio,
+    sum(case when action = "Added audio" and not is_subscriber then num_users end) as non_subs_added_audio,
+    sum(case when action = "Exported audio" and is_subscriber then num_users end) as subs_exported_audio,
+    sum(case when action = "Exported audio" and not is_subscriber then num_users end) as non_subs_exported_audio,
+from combined
+group by 1

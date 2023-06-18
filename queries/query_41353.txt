@@ -1,0 +1,76 @@
+/*
+    Name: VL iOS - 2023 Initiatives - SMBs - Paid Templates by Category
+    Query ID: 41353
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-25T13:51:31.728Z
+    */
+    with users_1 as (
+  select distinct
+    d.platform_device_id,
+    d.first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+)
+
+
+, users as (
+    select  
+         u.platform_device_id,
+         u.first_active_dt,
+         case when origin_page_response is null then 'No Answer' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as response,
+    from users_1 u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+, actions as (
+    select distinct
+        --a.dt,
+        a.platform_device_id as feed_seen_id,
+        a.response,
+        ut.screen_name,
+        pe.platform_device_id as purchase_success_id
+    from users as a
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` pe
+        on pe.platform_device_id = a.platform_device_id
+        --and date_trunc(en.meta_received_at, {{Time granularity}}) = a.dt
+        and pe.action = "purchase_template"
+        and pe.reason = 'succeeded'
+        and pe.meta_received_at > "2023-03-01"
+        and case when '{{Day}}' = "day0" then date(pe.meta_received_at) = date(a.first_active_dt)
+                     when '{{Day}}' = "non day0" then date(pe.meta_received_at) > date(a.first_active_dt) 
+                     else true end
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ps
+        on pe.action_id = ps.action_id
+        and ps.screen_name = "mini_editor"
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as te
+        on ps.open_project_id = te.open_project_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ut
+        on te.action_identifier = ut.action_id
+        )
+        
+select
+    response,
+    screen_name,
+    count(distinct feed_seen_id) as feed_seen_users,
+    count(distinct purchase_success_id) as purchased_users,
+    safe_divide(count(distinct purchase_success_id), count(distinct feed_seen_id))*100 as purchase_pct
+from actions
+where response != 'No Answer'
+group by 1,2
+having purchased_users > 10
+    

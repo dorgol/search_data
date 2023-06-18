@@ -1,0 +1,30 @@
+/*
+    Name: FT iOS - Has Faces Distribution
+    Query ID: 40101
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-06T14:46:35.036Z
+    */
+    with 
+face_counts as (
+    select
+        process_id,
+        json_extract(process_details, '$.isFaceInVideo') has_faces
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_ended`
+    where true
+    and app_name = 'facetune2'
+    and meta_received_at >= '2023-02-26'
+    and process_name = 'face detection'
+)
+
+select
+    has_faces,
+    count(distinct process_id) num_uploads,
+    count(distinct process_id)/max(total_uploads)*100 pct_total_uploads
+from (
+    select
+        has_faces,
+        process_id,
+        count(distinct process_id) over () total_uploads
+    from face_counts
+)
+group by 1

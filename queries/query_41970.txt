@@ -1,0 +1,152 @@
+/*
+    Name: PL W1 Retention By Feature Usage
+    Query ID: 41970
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-19T08:43:04.576Z
+    */
+    
+with base as
+(
+select *
+from
+(
+SELECT
+distinct
+--    date_trunc(date(first_active_dt),day) as cohort_date,
+    date_trunc(date(first_active_dt),week) as cohort_week,
+    'week' as period_granularity,
+    current_store_country,
+    is_or_was_sub,
+    is_or_was_paid_sub,
+attribution_user_id,
+
+attribution.winning_lt_defacto_id,
+    date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week) as periods_from,
+ max(date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week)) over (partition by attribution_user_id) as survived
+FROM
+
+    `ltx-dwh-prod-processed.agg.app_attribution_user_date`
+where true
+    and dt >= date_trunc(date_sub(date(current_date()), interval 3 month),week)
+    and dt < date_trunc(current_date() ,week)
+    and date(first_active_dt) >= date_trunc(date_sub(date(current_date()), interval 3 month),week)
+    and app_name='editor'
+ and     date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week)<=1
+--and date(first_active_dt)='2023-04-02'
+--    and date_trunc(date(attribution_timestamp),week)>= '2022-01-01' -- to delete
+--    and date_trunc(date(first_active_dt),week) = '2022-01-01' -- to delete
+--    and app_name = 'facetune2_android_china' -- to delete
+
+--order by attribution_user_id
+)
+where periods_from=0
+--limit 100
+)
+,
+
+fs as 
+(select distinct
+date(date_trunc(meta_received_at,week)) as dt,
+platform_device_id,
+farm_fingerprint('editor'|| platform_device_id) as lt_defacto_id,
+feature_name
+from  `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` 
+where
+app_name='editor'
+        and feature_name in  ('text to image', 'sketch to image', 'motion','ai_cars','ai_scenes','ai_transform','ai_rooms','ai_selfies')
+        and date(meta_received_at)>= date_trunc(date_sub(date(current_date()), interval 3 month),week)
+)
+,
+
+
+exp as 
+(select distinct
+date(date_trunc(meta_received_at,week)) as dt,
+platform_device_id,
+farm_fingerprint('editor'|| platform_device_id) as lt_defacto_id,
+export_source
+from  `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` 
+where
+app_name='editor'
+        and export_source in  ('text_to_image_result','text_to_image_sharable_result','sketch_to_image_result','sketch_to_image_sharable_result', 'motion toolbar','ai_cars','ai_cars.es','ai_scenes','ai_scenes.es','ai_transform','ai_transform.es','ai_rooms','ai_rooms.es','ai_selfies','ai_selfies.es')
+        and date(meta_received_at)>= date_trunc(date_sub(date(current_date()), interval 3 month),week)
+)
+
+select cohort_week,
+count(distinct base.winning_lt_defacto_id) as cohort_users,
+count(distinct case when survived=1  then base.winning_lt_defacto_id end) as retained,
+count(distinct case when survived=0  then base.winning_lt_defacto_id end) as churned,
+count(distinct case when survived=1  then base.winning_lt_defacto_id end)/count(distinct base.winning_lt_defacto_id)*100 as w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('text to image', 'sketch to image') then fs.lt_defacto_id end ) as churned_tti_sti,
+count(distinct case when survived=1 and fs.feature_name in ('text to image', 'sketch to image') then fs.lt_defacto_id end ) as survived_tti_sti,
+count(distinct case when fs.feature_name in ('text to image', 'sketch to image') then fs.lt_defacto_id end ) as tti_sti_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('text to image', 'sketch to image') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('text to image', 'sketch to image') then fs.lt_defacto_id end ))*100 as tti_sti_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('motion') then fs.lt_defacto_id end ) as churned_motion,
+count(distinct case when survived=1 and fs.feature_name in ('motion') then fs.lt_defacto_id end ) as survived_motion,
+count(distinct case when fs.feature_name in ('motion') then fs.lt_defacto_id end ) as motion_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('motion') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('motion') then fs.lt_defacto_id end ))*100 as motion_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('ai_scenes') then fs.lt_defacto_id end ) as churned_scenes,
+count(distinct case when survived=1 and fs.feature_name in ('ai_scenes') then fs.lt_defacto_id end ) as survived_scenes,
+count(distinct case when fs.feature_name in ('ai_scenes') then fs.lt_defacto_id end ) as scenes_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('ai_scenes') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('ai_scenes') then fs.lt_defacto_id end ))*100 as scenes_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('ai_cars') then fs.lt_defacto_id end ) as churned_cars,
+count(distinct case when survived=1 and fs.feature_name in ('ai_cars') then fs.lt_defacto_id end ) as survived_cars,
+count(distinct case when fs.feature_name in ('ai_cars') then fs.lt_defacto_id end ) as cars_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('ai_cars') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('ai_cars') then fs.lt_defacto_id end ))*100 as cars_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('ai_transform') then fs.lt_defacto_id end ) as churned_transform,
+count(distinct case when survived=1 and fs.feature_name in ('ai_transform') then fs.lt_defacto_id end ) as survived_transform,
+count(distinct case when fs.feature_name in ('ai_transform') then fs.lt_defacto_id end ) as transform_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('ai_transform') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('ai_transform') then fs.lt_defacto_id end ))*100 as transform_w1_retention,
+
+count(distinct case when survived=0 and fs.feature_name in ('ai_rooms') then fs.lt_defacto_id end ) as churned_rooms,
+count(distinct case when survived=1 and fs.feature_name in ('ai_rooms') then fs.lt_defacto_id end ) as survived_rooms,
+count(distinct case when fs.feature_name in ('ai_rooms') then fs.lt_defacto_id end ) as rooms_users,
+safe_divide(count(distinct case when survived=1 and fs.feature_name in ('ai_rooms') then fs.lt_defacto_id end ),count(distinct case when fs.feature_name in ('ai_transform') then fs.lt_defacto_id end ))*100 as rooms_w1_retention,
+
+count(distinct case when survived=0 and exp.export_source in ('text_to_image_result','text_to_image_sharable_result','sketch_to_image_result','sketch_to_image_sharable_result') then exp.lt_defacto_id end ) as churned_tti_sti_exp,
+count(distinct case when survived=1 and exp.export_source in ('text_to_image_result','text_to_image_sharable_result','sketch_to_image_result','sketch_to_image_sharable_result') then exp.lt_defacto_id end ) as survived_tti_sti_exp,
+count(distinct case when exp.export_source in ('text_to_image_result','text_to_image_sharable_result','sketch_to_image_result','sketch_to_image_sharable_result') then exp.lt_defacto_id end ) as tti_sti_exp,
+safe_divide(count(distinct case when survived=1 and exp.export_source in ('text_to_image_result','text_to_image_sharable_result','sketch_to_image_result','sketch_to_image_sharable_result') then exp.lt_defacto_id end ),count(distinct case when exp.export_source in ('text_to_image_result','text_to_image_sharable_result','sketch_to_image_result','sketch_to_image_sharable_result') then exp.lt_defacto_id end ))*100 as tti_sti_exp_w1_retention,
+
+count(distinct case when survived=0 and exp.export_source in ('motion toolbar') then exp.lt_defacto_id end ) as churned_motion_exp,
+count(distinct case when survived=1 and exp.export_source in ('motion toolbar') then exp.lt_defacto_id end ) as survived_motion_exp,
+count(distinct case when exp.export_source in ('motion toolbar') then exp.lt_defacto_id end ) as motion_exp,
+safe_divide(count(distinct case when survived=1 and exp.export_source in ('motion toolbar') then exp.lt_defacto_id end ),count(distinct case when exp.export_source in ('motion toolbar') then exp.lt_defacto_id end ))*100 as motion_exp_w1_retention,
+--'ai_cars','ai_cars.es','ai_scenes','ai_scenes.es','ai_transform','ai_transform.es','ai_rooms','ai_rooms.es','ai_selfies','ai_selfies.es'
+
+
+count(distinct case when survived=0 and exp.export_source in ('ai_cars','ai_cars.es','ai_cars.es_carousel') then exp.lt_defacto_id end ) as churned_ai_cars_exp,
+count(distinct case when survived=1 and exp.export_source in ('ai_cars','ai_cars.es','ai_cars.es_carousel') then exp.lt_defacto_id end ) as survived_ai_cars_exp,
+count(distinct case when exp.export_source in ('ai_cars','ai_cars.es','ai_cars.es_carousel') then exp.lt_defacto_id end ) as ai_cars_exp,
+safe_divide(count(distinct case when survived=1 and exp.export_source in ('ai_cars','ai_cars.es','ai_cars.es_carousel') then exp.lt_defacto_id end ),count(distinct case when exp.export_source in ('ai_cars','ai_cars.es','ai_cars.es_carousel') then exp.lt_defacto_id end ))*100 as ai_cars_exp_w1_retention,
+
+
+count(distinct case when survived=0 and exp.export_source in ('ai_scenes','ai_scenes.es','ai_scenes.es_carousel') then exp.lt_defacto_id end ) as churned_ai_scenes_exp,
+count(distinct case when survived=1 and exp.export_source in ('ai_scenes','ai_scenes.es','ai_scenes.es_carousel') then exp.lt_defacto_id end ) as survived_ai_scenes_exp,
+count(distinct case when exp.export_source in ('ai_scenes','ai_scenes.es','ai_scenes.es_carousel') then exp.lt_defacto_id end ) as ai_scenes_exp,
+safe_divide(count(distinct case when survived=1 and exp.export_source in ('ai_scenes','ai_scenes.es','ai_scenes.es_carousel') then exp.lt_defacto_id end ),count(distinct case when exp.export_source in ('ai_scenes','ai_scenes.es','ai_scenes.es_carousel') then exp.lt_defacto_id end ))*100 as ai_scenes_exp_w1_retention,
+
+
+count(distinct case when survived=0 and exp.export_source in ('ai_transform','ai_transform.es','ai_transform.es_carousel') then exp.lt_defacto_id end ) as churned_ai_transform_exp,
+count(distinct case when survived=1 and exp.export_source in ('ai_transform','ai_transform.es','ai_transform.es_carousel') then exp.lt_defacto_id end ) as survived_ai_transform_exp,
+count(distinct case when exp.export_source in ('ai_transform','ai_transform.es','ai_transform.es_carousel') then exp.lt_defacto_id end ) as ai_transform_exp,
+safe_divide(count(distinct case when survived=1 and exp.export_source in ('ai_transform','ai_transform.es','ai_transform.es_carousel') then exp.lt_defacto_id end ),count(distinct case when exp.export_source in ('ai_transform','ai_transform.es','ai_transform.es_carousel') then exp.lt_defacto_id end ))*100 as ai_transform_exp_w1_retention,
+
+
+from
+base
+ left join fs
+        on fs.lt_defacto_id = base.winning_lt_defacto_id
+        and fs.dt=base.cohort_week
+left join exp
+        on exp.lt_defacto_id=base.winning_lt_defacto_id
+        and exp.dt=base.cohort_week
+        
+        where  (cohort_week) < date_trunc(date_sub(date(current_date()), interval 1 week),week)
+
+group by 1

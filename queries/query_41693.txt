@@ -1,0 +1,59 @@
+/*
+    Name: Global Events - Export Flow - Integration
+    Query ID: 41693
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-09T09:06:03.800Z
+    */
+    select
+    fs.platform_device_id,
+    fs.flow_id,
+    fs.device_timestamp as start_time,
+    fs.source,
+    fs.source_flow_id,
+    vp.reason as view_reason,
+    vp.view_type,
+    vp.view_name,
+    vp.presentation_id,
+    vp.device_timestamp as view_time, 
+    eps.asset_type,
+    eps.export_source,
+    eps.export_target,
+    eps.asset_duration,
+    eps.asset_height,
+    eps.asset_width,
+    eps.export_details,
+    eps.file_format,
+    eps.frame_rate,
+    eps.parent_template_id,
+    eps.process_id,
+    eps.publish_target,
+    epe.result as export_result,
+    epe.activity_targets,
+    epe.error,
+    fe.flow_id is not null as flow_ended,
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_export_flow_started` fs
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_export_view_presented` vp
+    on vp.app_name = '{{app_name}}'
+    and fs.platform_device_id = vp.platform_device_id
+    and fs.flow_id = vp.flow_id
+    and vp.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_export_process_started` eps
+    on eps.app_name = '{{app_name}}'
+    and fs.platform_device_id = eps.platform_device_id
+    and fs.flow_id = eps.flow_id
+    and vp.presentation_id = eps.presentation_id
+    and eps.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_export_process_ended` epe
+    on epe.app_name = '{{app_name}}'
+    and fs.platform_device_id = epe.platform_device_id
+    and fs.flow_id = epe.flow_id
+    and eps.process_id = epe.process_id
+    and epe.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_export_flow_ended` fe
+    on fe.app_name = '{{app_name}}'
+    and fs.platform_device_id = fe.platform_device_id
+    and fs.flow_id = fe.flow_id
+    and fe.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+where fs.app_name = '{{app_name}}'
+and fs.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+order by 1,3 asc,2,10 asc

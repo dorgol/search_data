@@ -1,0 +1,49 @@
+/*
+    Name: Facetune Android -  Subscription Sources
+    Query ID: 42393
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-31T15:05:56.357Z
+    */
+    select
+    -- case 
+    --     when total_subs_by_source_rank <= 10 then source
+    --     when total_subs_by_source_rank > 10 then 'Other Sources'
+    -- end as 
+    source,
+    dt,
+    count(distinct attribution_user_id) as subs,
+    count(distinct attribution_user_id)/max(total_subs)*100 pct_total_subs
+from (
+    select
+        *,
+        dense_rank() over (order by total_subs_by_source desc) total_subs_by_source_rank
+    from (
+        select
+            case when source_table = 'payment_sources' then 'web' else subscription.subscription_source end as source,
+            timestamp_trunc(original_purchase_date, {{date_part}}) as dt,
+            attribution.attribution_user_id,
+            count(distinct attribution.attribution_user_id) over (partition by subscription.subscription_source) as total_subs_by_source,
+            count(distinct attribution.attribution_user_id) over (partition by timestamp_trunc(original_purchase_date, {{date_part}})) as total_subs,
+        from `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation`
+        where true
+        and 
+            case 
+                when '{{date_part}}' = 'day' then date(original_purchase_date) >= date_sub(current_date(), interval 90 {{date_part}}) 
+                when '{{date_part}}' = 'week' then date(original_purchase_date) >= date_sub(current_date(), interval 15 {{date_part}}) 
+                when '{{date_part}}' = 'month' then date(original_purchase_date) >= date_sub(current_date(), interval 9 {{date_part}}) 
+            end
+        and date_trunc(date(original_purchase_date), {{date_part}}) <> date_trunc(current_date(), {{date_part}}) 
+        and application = 'facetune2_android'
+        and case 
+            when '{{subscriber_type}}' = 'Paid' then payments.revenue_so_far > 0
+            when '{{subscriber_type}}' = 'Non-Paid' then payments.revenue_so_far = 0 or payments.revenue_so_far is null
+            when '{{subscriber_type}}' = 'All Subs' then true
+        end
+        -- and case 
+        --     when '{{segmantation}}' = 'New User' then timestamp_diff(original_purchase_date, attribution.attribution_timestamp, day) <= 14
+        --     when '{{segmantation}}' = 'Existing User' then timestamp_diff(original_purchase_date, attribution.attribution_timestamp, day) > 14
+        -- end 
+    )
+)
+group by 1,2
+order by 2

@@ -1,0 +1,68 @@
+/*
+    Name: Feed global events - user's adoption of delta versions
+    Query ID: 41205
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-20T12:41:14.608Z
+    */
+    with kinesis as
+(
+SELECT
+  -- app_name,
+  date_trunc(meta_received_at,day) dt,
+  platform,
+  -- meta_source as app_name,
+  case 
+    when platform = 'ios' then platform_device_id 
+    when platform = 'android' then installation_id
+    end as idfv, 
+
+FROM
+  `ltx-dwh-prod-raw.analytics_global.ltx_global_app_feed_screen_presented` k
+
+
+WHERE
+  DATE(_PARTITIONTIME) >=  current_date -60
+  and meta_received_by = 'LegacyEncoder-Kinesis'
+GROUP BY
+  1,
+  2,
+  3
+  ),
+
+  delta as
+  (
+    SELECT
+  -- app_name,
+  date_trunc(meta_received_at,day) dt,
+  platform,
+  -- app_name,
+  case 
+    when platform = 'ios' then platform_device_id 
+    when platform = 'android' then installation_id
+    end as idfv, 
+
+FROM
+  `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` k
+
+
+WHERE
+  DATE(_PARTITIONTIME) >=  current_date -60
+  and meta_received_by != 'LegacyEncoder-Kinesis'
+GROUP BY
+  1,
+  2,
+  3
+  )
+
+select 
+dt,
+platform,
+
+count(distinct k.idfv) as num_kinesis_devices,
+count(distinct d.idfv) num_delta_devices,
+round(safe_divide(count(distinct d.idfv), count(distinct k.idfv))*100,2) adoption_pct
+from kinesis k
+left join delta d using (dt,platform,idfv)
+
+group by 1,2
+order by dt,platform

@@ -1,0 +1,72 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 - Total Exports
+    Query ID: 41939
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-22T06:55:42.698Z
+    */
+    
+with users as
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and lower(d.experiment) not like lower('%AU_UK%')
+        and d.display_type = 'reached beauty feed'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        and case when '{{variant}}' = 'all' then true
+            else '{{variant}}' = variant end
+        group by 1,2,3,4,5,6,7,8
+)
+
+
+select
+    case when '{{metric}}' = 'Total Exports' then num_exports
+        when '{{metric}}' = 'Num Exporters' then num_exporters
+        when '{{metric}}' = 'Total Saves' then num_saves
+        when '{{metric}}' = 'Total Accepts' then num_accepts
+        end as metric,
+    num_exporters,
+    100* num_exporters / reached_feed as pct_exporters
+    
+    from (
+    select
+        count(distinct u.id_for_vendor) as reached_feed,
+        count(distinct case when ex.platform_device_id is not null or w.platform_device_id is not null then u.id_for_vendor end) num_exporters,
+        count(distinct case when ex.event_id is not null then ex.event_id end) num_saves,
+        count(distinct case when w.event_id is not null then w.event_id end) num_accepts,
+        count(distinct case when ex.event_id is not null then ex.event_id when w.event_id is not null then w.event_id end) num_exports,
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = u.id_for_vendor
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '{{start_date}}'
+        and ex.meta_received_at > u.experiment_started_meta
+        and (ex.export_source like 'beauty_feed_in_home_tab%')
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.reason in ('accepted')
+    )

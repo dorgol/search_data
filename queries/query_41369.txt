@@ -1,0 +1,34 @@
+/*
+    Name: PL AI Transform Most Popular Prompts
+    Query ID: 41369
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-26T10:32:18.724Z
+    */
+    
+ select
+
+
+dev.app_store_country,
+lower( trim(trim(trim(json_extract_scalar(process_details,"$.Final_text"),','),'.'),' ')) as prompt,
+ count(distinct event_id) as freq,
+ count(distinct platform_device_id) as users
+ from
+ `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_process_ended` as fpe,
+  UNNEST(split(lower( trim(trim(json_extract_scalar(process_details,"$.Final_text"),','),'.')), " ")) as prompt
+  inner join `ltx-dwh-prod-processed`.`devices`.`unified_devices` as dev 
+  on fpe.platform_device_id=dev.id_for_vendor
+  and dev.application='editor'
+
+ where app_name='editor'
+ and process_name in (
+ --'ai_cars_generate'
+ --,
+ 'ai_transform_generate'
+ )
+--and  lower( trim(trim(trim(json_extract_scalar(process_details,"$.Final_text"),','),'.'),' '))='hot bold'
+ and meta_received_at >'2023-03-01'
+
+ and reason= 'success'
+ group by 1,2
+order by 4 desc
+limit 400

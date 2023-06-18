@@ -1,0 +1,65 @@
+/*
+    Name: VL iOS - advanced filtering - Export rate of filtered screens (new)
+    Query ID: 42356
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-30T15:03:14.461Z
+    */
+    with experiment_users as (
+    select distinct
+        experiment,
+        case when variant like "%Baseline" then "Baseline" 
+             when variant like "%Variant1" then "Variant1"
+             when variant like "%Variant2" then "Variant2" end as variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_device
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant`
+    where application = "videoleap"
+      and experiment = "feed_advanced_filtering_experiment_05_2023"
+      and display_type like "display%"
+      and segmentation = '{{segmentation}}'
+)
+
+, raw_data as (
+  select distinct
+    exp.variant,
+    date(sp.meta_received_at) as dt,
+    sp.filter_parameters,
+    sp.platform_device_id,
+    sp.screen_name,
+    sp.feed_screen_id as screen_id,
+    ac.feed_screen_id as screen_id_with_click,
+    ac.action_id as click_action_id,
+    ex.export_id
+  from experiment_users as exp
+  join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` as sp
+    on exp.id_for_vendor = sp.platform_device_id
+    and sp.device_timestamp > exp.experiment_started_device
+    -- and sp.filter_parameters is not null
+  left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_user_action_started` as ac
+    on sp.feed_screen_id = ac.feed_screen_id
+    and ac.action = "use_template"
+left join `ltx-dwh-prod-raw.analytics.ios_videoleap_template_editing_started` as te
+    on ac.action_id = te.action_identifier
+left join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_export_started` as ex
+    on te.open_project_id = ex.open_project_id
+  where true
+)
+
+select
+    *,
+    num_screens_clicked / num_screens_seen * 100 as pct_screens_clicked,
+    num_screens_exported / num_screens_seen * 100 as pct_screens_exported,
+from (
+    select
+        variant,
+        ifnull(filter_parameters <> '[]', false)  as is_filtered_screen,
+        count(distinct screen_id) as num_screens_seen,
+        count(distinct screen_id_with_click) as num_screens_clicked,
+        count(distinct case when export_id is not null then screen_id end) as num_screens_exported,
+    from raw_data
+    where case when '{{include main screen}}' = 'No' then screen_name <> "category.recommended_videoleap"
+               else true end
+    group by 1,2
+    -- having count(distinct num_screens_seen) > 1000
+)

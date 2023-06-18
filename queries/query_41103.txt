@@ -1,0 +1,58 @@
+/*
+    Name: Facetune: Accepted VIP Proxy
+    Query ID: 41103
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-18T06:40:52.462Z
+    */
+    with subs as (
+    select
+        se.id_for_vendor,
+        se.app_session_id,
+        se.editing_session_id,
+        se.device_timestamp,
+        se.meta_received_at,
+        us.original_transaction_id,
+    from `ltx-dwh-prod-raw.analytics.ios_facetune2_store_entered` se
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_store_user_subscribed` us
+        on se.id_for_vendor = us.id_for_vendor
+        and se.store_session_id = us.store_session_id
+        and us.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation` s
+        on s.application = 'facetune2'
+        and us.original_transaction_id = subscription.original_transaction_id
+        and s.original_purchase_date >= timestamp_sub(current_timestamp(), interval 30 day)
+        and case when '{{sub type}}' = 'paid' then s.payments.revenue_so_far > 0
+            else true end
+        and case when '{{late or new}}' = 'month0' then s.payments.month0_late = 'month0'
+                when '{{late or new}}' = 'late' then s.payments.month0_late like '%late%'
+                else true end
+    where se.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+    and se.source in ('acceptedVIPFeature','FreeTrialAlert')
+)
+
+, features as (
+  select distinct
+      date(s.meta_received_at) as dt,
+      s.id_for_vendor,
+      s.editing_session_id,
+      s.original_transaction_id,
+      f.feature_name,
+      row_number() over (partition by s.id_for_vendor, s.editing_session_id order by f.device_timestamp desc) as last_feature,
+  from subs s
+  join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_started` f
+      on s.id_for_vendor = f.id_for_vendor
+      and s.app_session_id = f.app_session_id
+      and s.editing_session_id = f.editing_session_id
+      and s.device_timestamp >= f.device_timestamp
+      and f.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+  where true
+  qualify last_feature = 1
+)
+
+select
+  dt,
+  feature_name,
+  count(distinct original_transaction_id) as subs
+from features
+group by 1,2
+order by 1,3 desc

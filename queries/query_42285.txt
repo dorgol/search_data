@@ -1,0 +1,77 @@
+/*
+    Name: Global Events - Camera Flow - Integration
+    Query ID: 42285
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-28T14:02:14.442Z
+    */
+    select
+    fs.platform_device_id,
+    fs.flow_id,
+    fs.device_timestamp as start_time,
+    fs.source,
+    vp.reason as view_reason,
+    vp.presentation_id,
+    vp.device_timestamp as view_time, 
+    ui.camera_direction,
+    ui.ui_interaction_name,
+    cps.camera_direction,
+    cps.capture_type,
+    cps.selected_preset,
+    cps.start_trigger,
+    cps.timer_interval,
+    cps.process_id,
+    cpp.asset_type,
+    cpp.app_trim_video_length_limit,
+    cpp.app_trim_video_length_subscription_restriction_limit,
+    cpp.video_original_length,
+    cpd.`video_trimmed_length`,
+    cpd.`video_trimmed_start_time`,
+    cpd.result as preview_result,
+    cpe.end_trigger,
+    cpe.`recording_duration`,
+    fe.flow_id is not null as flow_ended,
+    fe.result,
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_camera_flow_started` fs
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_camera_view_presented` vp
+    on vp.app_name = '{{app_name}}'
+    and fs.platform_device_id = vp.platform_device_id
+    and fs.flow_id = vp.flow_id
+    and vp.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_camera_ui_interaction` ui
+    on ui.app_name = '{{app_name}}'
+    and fs.platform_device_id = ui.platform_device_id
+    and fs.flow_id = ui.flow_id
+    and vp.presentation_id = ui.presentation_id
+    and ui.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_camera_capture_process_started` cps
+    on cps.app_name = '{{app_name}}'
+    and fs.platform_device_id = cps.platform_device_id
+    and fs.flow_id = cps.flow_id
+    and vp.presentation_id = cps.presentation_id
+    and cps.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_camera_capture_preview_presented` cpp
+    on cpp.app_name = '{{app_name}}'
+    and fs.platform_device_id = cpp.platform_device_id
+    and fs.flow_id = cpp.flow_id
+    and cpp.process_id = cps.process_id
+    and cpp.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_camera_capture_preview_dismissed` cpd
+    on cpd.app_name = '{{app_name}}'
+    and fs.platform_device_id = cpd.platform_device_id
+    and fs.flow_id = cpd.flow_id
+    and cpd.preview_presentation_id = cpp.preview_presentation_id
+    and cpd.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_camera_capture_process_ended` cpe
+    on cpe.app_name = '{{app_name}}'
+    and fs.platform_device_id = cpe.platform_device_id
+    and fs.flow_id = cpp.flow_id
+    and cpe.process_id = cps.process_id
+    and cpe.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_camera_flow_ended` fe
+    on fe.app_name = '{{app_name}}'
+    and fs.platform_device_id = fe.platform_device_id
+    and fs.flow_id = fe.flow_id
+    and fe.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+where fs.app_name = '{{app_name}}'
+and fs.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+order by 3 desc,2,10 asc

@@ -1,0 +1,143 @@
+/*
+    Name: VL iOS - AI Request Limit Reached Funnel - Felix
+    Query ID: 42495
+    Created By: Felix Ambrose
+    Last Updated At: 2023-06-05T14:40:22.103Z
+    */
+    with store_presented as (
+   select distinct
+        st.platform_device_id as id_for_vendor,
+        st.is_subscriber,
+        st.reason,
+        case when e.flow_id is null then 'failed' else 'accepted' end as purchase_result,
+        date(st.meta_received_at) as usage_dt
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_store_view_presented` st
+    join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.platform_device_id = st.platform_device_id
+        and d.app_name = "videoleap"
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_store_purchase_process_ended` e
+        on st.flow_id = e.flow_id    
+        and e.result = 'success'
+        and e.app_name = 'videoleap'
+        and e.platform = 'ios'            
+    where true
+        and st.app_name = 'videoleap'
+        and date(st.meta_received_at) >= '2023-01-01' and date_trunc(current_date(), {{period}}) > date_trunc(date(st.meta_received_at), {{period}}) -- not today
+        and case when '{{sub_type}}' = 'subscriber' then st.is_subscriber is true
+                 when '{{sub_type}}' = 'free user' then st.is_subscriber is false
+                else true end
+        and case when '{{day0}}' = 'day0' then (d.first_active_dt is null or date(d.first_active_dt) = date(st.meta_received_at))
+             when '{{day0}}' = 'non day0' then date(d.first_active_dt) < date(st.meta_received_at)
+             else true end
+        and reason in ('ai_main_editor_request_limit_alert', 'ai_template_request_limit_alert')
+    )
+
+    
+    
+    
+, limit_message as (
+    select distinct
+        st.platform_device_id as id_for_vendor,
+        st.is_subscriber,
+        st.message_name,
+        date(st.meta_received_at) as usage_dt
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented`  st
+    join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.platform_device_id = st.platform_device_id
+        and d.app_name = "videoleap"
+    where true
+        and st.app_name = 'videoleap'
+        and date(st.meta_received_at) >= '2023-01-01' and date_trunc(current_date(), {{period}}) > date_trunc(date(st.meta_received_at), {{period}}) -- not today
+        and case when '{{sub_type}}' = 'subscriber' then st.is_subscriber is true
+                 when '{{sub_type}}' = 'free user' then st.is_subscriber is false
+                else true end
+        and case when '{{day0}}' = 'day0' then (d.first_active_dt is null or date(d.first_active_dt) = date(st.meta_received_at))
+             when '{{day0}}' = 'non day0' then date(d.first_active_dt) < date(st.meta_received_at)
+             else true end
+        and message_name in ('ai_template_request_limit_alert', 'ai_request_limit_reached_popup')
+    )
+
+
+, totals as (
+    select distinct
+    'ai_template_limit_message_presented' as action,
+    date_trunc(usage_dt, {{period}}) as dt,
+    id_for_vendor
+    from limit_message
+    where message_name in ('ai_template_request_limit_alert')
+    
+    union all 
+    
+    select distinct
+    'ai_editor_limit_message_presented' as action,
+    date_trunc(usage_dt, {{period}}) as dt,
+    id_for_vendor
+    from limit_message
+    where message_name in ('ai_request_limit_reached_popup')
+    
+    union all
+    
+    select distinct
+    'ai_template_limit_store_presented' as action,
+    date_trunc(usage_dt, {{period}}) as dt,
+    id_for_vendor
+    from store_presented
+    where reason in ('ai_template_request_limit_alert')
+    
+    union all 
+    
+    select distinct
+    'ai_editor_limit_store_presented' as action,
+    date_trunc(usage_dt, {{period}}) as dt,
+    id_for_vendor
+    from store_presented
+    where reason in ('ai_main_editor_request_limit_alert')
+
+    union all
+    
+    select distinct
+    'ai_template_limit_store_dismissed' as action,
+    date_trunc(usage_dt, {{period}}) as dt,
+    id_for_vendor
+    from store_presented
+    where reason in ('ai_template_request_limit_alert')
+    and purchase_result = 'accepted'
+    
+    union all 
+    
+    select distinct
+    'ai_editor_limit_store_dismissed' as action,
+    date_trunc(usage_dt, {{period}}) as dt,
+    id_for_vendor
+    from store_presented
+    where reason in ('ai_main_editor_request_limit_alert')
+    and purchase_result = 'accepted'
+    
+)
+
+, final as (select 
+    dt,
+    count(distinct case when action = 'ai_template_limit_message_presented' then id_for_vendor end) as ai_template_limit_message_presented,
+    count(distinct case when action = 'ai_editor_limit_message_presented' then id_for_vendor end) as ai_editor_limit_message_presented,
+    count(distinct case when action = 'ai_template_limit_store_presented' then id_for_vendor end) as ai_template_limit_store_presented,
+    count(distinct case when action = 'ai_editor_limit_store_presented' then id_for_vendor end) as ai_editor_limit_store_presented,
+    count(distinct case when action = 'ai_template_limit_store_dismissed' then id_for_vendor end) as ai_template_limit_store_dismissed,
+    count(distinct case when action = 'ai_editor_limit_store_dismissed' then id_for_vendor end) as ai_editor_limit_store_dismissed,
+from totals
+group by 1)
+
+select
+*,
+safe_divide(ai_template_limit_store_presented, ai_template_limit_message_presented)*100 as ai_template_limit_ctr,
+safe_divide(ai_editor_limit_store_presented, ai_editor_limit_message_presented)*100 as ai_editor_limit_ctr,
+safe_divide(ai_template_limit_store_dismissed,ai_template_limit_message_presented)*100 as ai_template_limit_cvr,
+safe_divide(ai_editor_limit_store_dismissed, ai_editor_limit_message_presented)*100 as ai_editor_limit_cvr
+from final
+order by 1
+
+
+
+
+
+
+

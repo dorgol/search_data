@@ -1,0 +1,22 @@
+/*
+    Name: PL DND Exports By Pack iOS
+    Query ID: 40361
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-30T09:23:38.236Z
+    */
+    (select 
+split(substr(export_source, 22 ),'_')[OFFSET(0)] as preset ,
+count(distinct process_id) as exports
+
+
+
+
+
+from
+`ltx-dwh-prod-raw.analytics_global.ltx_global_export_started`
+where app_name='editor'
+and meta_received_at>'2023-03-08'
+and (export_source like 'dnd_ai_avatar_bundle%')
+and split(substr(export_source, 22 ),'_')[OFFSET(0)] in ('Sorcerer','Paladin','Barbarian','Druid','Bard')
+group by 1
+)

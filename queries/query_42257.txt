@@ -1,0 +1,311 @@
+/*
+    Name: 20230528 - FT2 iOS - [FT-1101] AI Selfies - Global Metrics
+    Query ID: 42257
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-28T13:37:08.481Z
+    */
+    with detailed_view as (
+    select 
+        *
+    from (
+        select
+            *,
+        -- BASIC SUBSCRIPTION DATA
+          round(safe_divide(all_revs_wout_otp , nullif(num_devices,0)),2) as revs_per_device_new_subs,
+          round(safe_divide((coalesce(revs,0) +  coalesce(revs_existing_subs_post_experiment,0)), nullif(num_devices,0)),2) as revs_per_device_new_and_existing_subs,
+
+          round(safe_divide(num_subs , nullif(num_devices,0))*100,2) as conversion_rate,
+          round(safe_divide(num_sol_subs , nullif(num_devices,0))*100,2) as sol_conversion_rate,
+          round(safe_divide(num_paid_subs , nullif(num_devices,0))*100,2) as paid_conversion_rate,
+          round(safe_divide(num_paid_sol_subs , nullif(num_devices,0))*100,2) as paid_sol_conversion_rate,
+          round(safe_divide(num_paid_non_sol_subs , nullif(num_devices,0))*100,2) as paid_non_sol_conversion_rate,
+        
+          round(safe_divide(num_subs_day0 , nullif(num_devices_day0,0))*100,2) as conversion_rate_day0,
+          round(safe_divide(num_paid_subs_day0 , nullif(num_devices_day0,0))*100,2) as paid_conversion_rate_day0,
+          round(safe_divide(num_subs_day3 , nullif(num_devices_day3,0))*100,2) as conversion_rate_day3,
+          round(safe_divide(num_paid_subs_day3 , nullif(num_devices_day3,0))*100,2) as paid_conversion_rate_day3,
+          round(safe_divide(num_subs_day7 , nullif(num_devices_day7,0))*100,2) as conversion_rate_day7,
+          round(safe_divide(num_paid_subs_day7 , nullif(num_devices_day7,0))*100,2) as paid_conversion_rate_day7,
+          round(safe_divide(num_subs_day14 , nullif(num_devices_day14,0))*100,2) as conversion_rate_day14,
+          round(safe_divide(num_paid_subs_day14 , nullif(num_devices_day14,0))*100,2) as paid_conversion_rate_day14,
+        
+          safe_divide(num_refunds, num_eligible_for_refund)*100 as refund_rate,
+          safe_divide(num_cancelled_new_subs, num_subs)*100 as cancellation_rate,
+          safe_divide(num_cancelled_paid_new_subs, num_paid_subs)*100 as paid_cancellation_rate,
+        
+          round(safe_divide(revs_day0_relevant_devices , nullif(num_devices_day0,0)),2) as avg_revs_per_device_day0_from_new_subs,
+          round(safe_divide(revs_day7_relevant_devices , nullif(num_devices_day7,0)),2) as avg_revs_per_device_day7_from_new_subs,
+          round(safe_divide(revs_day14_relevant_devices , nullif(num_devices_day14,0)),2) as avg_revs_per_device_day14_from_new_subs,
+          round(safe_divide(revs_day30_relevant_devices , nullif(num_devices_day30,0)),2) as avg_revs_per_device_day30_from_new_subs,
+          round(safe_divide(revs_day35_relevant_devices , nullif(num_devices_day35,0)),2) as avg_revs_per_device_day35_from_new_subs,
+        
+          safe_divide(num_yearly_subs, num_subs)*100 as pct_yearly_subs,
+          safe_divide(num_monthly_subs, num_subs)*100 as pct_monthly_subs,
+          safe_divide(num_otp_subs, num_subs)*100 as pct_otp_subs,
+          safe_divide(num_paid_yearly_subs, num_paid_subs)*100 as pct_yearly_paid_subs,
+          safe_divide(num_paid_monthly_subs, num_paid_subs)*100 as pct_monthly_paid_subs,
+          safe_divide(num_paid_otp_subs, num_paid_subs)*100 as pct_otp_paid_subs,
+        
+        
+          -- RENEWING TRIAL DATA
+          round(safe_divide(num_renewing_trials , nullif(num_started_trials,0))*100,2) as pct_renewing_trials,
+          round(safe_divide(num_converted_trials , nullif(num_finished_trials,0))*100,2) as trial_to_paid_conversion_rate,
+        
+          -- USAGE DATA
+          round(safe_divide(num_exports , nullif(num_devices,0)),2) as exports_per_device,
+          round(safe_divide(num_exporters_num , nullif(num_devices,0))*100,2) as pct_exporters,
+          
+          safe_divide(sum_session_length,num_sessions) as avg_session_length,
+        
+          round(safe_divide(n_retained_day1 , nullif(num_devices_calendar_day1,0))*100,2) as day1_retention_rate,
+          round(safe_divide(n_retained_week0 , nullif(num_devices_calendar_day7,0))*100,2) as week0_retention_rate,
+          round(safe_divide(n_retained_week1 , nullif(num_devices_calendar_day14,0))*100,2) as week1_retention_rate,
+          (num_devices/first_value(num_devices) over (partition by application, experiment, segmentation, variant, country order by lower(display_type) asc))*100 as display_pct,
+        from(
+            select 
+                application,
+                app_real_world_name,
+                experiment,
+                variant,
+                case 
+                    when '{{countries}}' = 'Global' then 'Global' 
+                    when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+                    else country end as country,
+                segmentation,
+                display_type,
+                first_day,
+        
+                sum(num_devices) as num_devices,
+                sum(num_new_devices) as num_new_devices,
+        
+                sum(num_devices_day0) as num_devices_day0,
+                sum(num_devices_day3) as num_devices_day3,
+                sum(num_devices_day7) as num_devices_day7,
+                sum(num_devices_day14) as num_devices_day14,
+                sum(num_devices_day30) as num_devices_day30,
+                sum(num_devices_day35) as num_devices_day35,
+        
+                -- BASIC SUBSCRIPTION DATA
+        
+                sum(num_subs) as num_subs,
+                sum(num_sol_subs) as num_sol_subs,
+                sum(num_paid_subs) as num_paid_subs,
+                sum(num_paid_sol_subs) as num_paid_sol_subs,
+                sum(num_paid_non_sol_subs) as num_paid_non_sol_subs,
+        
+                sum(num_subs_day0) as num_subs_day0,
+                sum(num_paid_subs_day0) as num_paid_subs_day0,
+                sum(num_subs_day3) as num_subs_day3,
+                sum(num_paid_subs_day3) as num_paid_subs_day3,
+                sum(num_subs_day7) as num_subs_day7,
+                sum(num_paid_subs_day7) as num_paid_subs_day7,
+                sum(num_subs_day14) as num_subs_day14,
+                sum(num_paid_subs_day14) as num_paid_subs_day14,
+        
+                sum(num_refunds) as num_refunds,
+                sum(num_eligible_for_refund) as num_eligible_for_refund,
+                sum(num_cancelled_new_subs) as num_cancelled_new_subs,
+                sum(num_cancelled_paid_new_subs) as num_cancelled_paid_new_subs,
+        
+                sum(revs) as revs,
+                sum(cast(all_revs_wout_otp as float64)) as all_revs_wout_otp,
+                sum(cast(revs_non_sol as float64)) as revs_non_sol,
+                sum(cast(revs_sol as float64)) as revs_sol,
+        
+                sum(revs_day0_relevant_devices) as revs_day0_relevant_devices,
+                sum(revs_day7_relevant_devices) as revs_day7_relevant_devices,
+                sum(revs_day14_relevant_devices) as revs_day14_relevant_devices,
+                sum(revs_day30_relevant_devices) as revs_day30_relevant_devices,
+                sum(revs_day35_relevant_devices) as revs_day35_relevant_devices,
+        
+        
+                -- RENEWING TRIAL DATA
+        
+                sum(num_renewing_trials) as num_renewing_trials,
+                sum(num_started_trials) as num_started_trials,
+                sum(num_converted_trials) as num_converted_trials,
+                sum(num_finished_trials) as num_finished_trials,
+        
+                -- EXISTING SUBSCRIBER DATA
+                sum(num_subs_pre_experiment) as num_subs_pre_experiment,
+                sum(revs_existing_subs_post_experiment) as revs_existing_subs_post_experiment,
+        
+                -- SUBSCRIPTION BREAKDOWN AND DETAILS
+                sum(num_yearly_subs) as num_yearly_subs,
+                sum(num_monthly_subs) as num_monthly_subs,
+                sum(num_otp_subs) as num_otp_subs,
+                sum(num_paid_yearly_subs) as num_paid_yearly_subs,
+                sum(num_paid_monthly_subs) as num_paid_monthly_subs,
+                sum(num_paid_otp_subs) as num_paid_otp_subs,
+        
+        
+                sum(revs_from_yearly_subs) as revs_from_yearly_subs,
+                sum(revs_from_monthly_subs) as revs_from_monthly_subs,
+                sum(revs_from_otp_subs) as revs_from_otp_subs,
+                sum(revs_from_paid_yearly_subs) as revs_from_paid_yearly_subs,
+                sum(revs_from_paid_monthly_subs) as revs_from_paid_monthly_subs,
+                sum(revs_from_paid_otp_subs) as revs_from_paid_otp_subs,
+        
+                -- USAGE DATA
+                sum(num_exports) as num_exports,
+                sum(num_exporters_num) as num_exporters_num,
+                sum(sum_session_length) as sum_session_length,
+                sum(num_sessions) as num_sessions,
+        
+                sum(n_retained_day1) as n_retained_day1,
+                sum(n_retained_week0) as n_retained_week0,
+                sum(n_retained_week1) as n_retained_week1,
+                sum(num_devices_calendar_day1) as num_devices_calendar_day1,
+                sum(num_devices_calendar_day7) as num_devices_calendar_day7,
+                sum(num_devices_calendar_day14) as num_devices_calendar_day14,
+                
+            from `ltx-dwh-prod-processed.ab_test.view_country` d 
+            where case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+                else true end
+            and  d.application = '{{app}}'
+            and (
+                lower(d.experiment) like lower('[FT-1101]AI Selfies Exp')
+            )
+            and case 
+                when '{{countries}}' = 'Global' then true 
+                when '{{countries}}' = 'Rest of the World' then country not in ('US','CN')
+                when '{{countries}}' = 'All' then true
+                else country = '{{countries}}' end
+            group by 1,2,3,4,5,6,7,8
+        )
+    )
+    where case when '{{display}}' = 'All' then true else  display_type = '{{display}}' end
+),
+
+highlights as (
+    select
+        country,
+        segmentation,
+        variant,
+        display_type,
+        num_devices,
+        display_pct,
+        
+        revs,
+        revs_per_device_new_subs,
+        revs_per_device_new_and_existing_subs,
+        paid_conversion_rate,
+        conversion_rate,
+        sol_conversion_rate,
+        conversion_rate - sol_conversion_rate as non_sol_conversion_rate,
+        paid_sol_conversion_rate,
+        paid_non_sol_conversion_rate,
+        
+        (((coalesce(num_started_trials,0) - coalesce(num_finished_trials,0))*coalesce(trial_to_paid_conversion_rate/100,0))+num_paid_subs)*100/num_devices as estimated_paid_cvr_including_trials,
+        
+        pct_yearly_subs,
+        pct_monthly_subs,
+        pct_otp_subs,
+        pct_yearly_paid_subs,
+        pct_monthly_paid_subs,
+        pct_otp_paid_subs,
+        refund_rate,
+        paid_cancellation_rate,
+        pct_renewing_trials,
+        trial_to_paid_conversion_rate,
+        
+        
+        exports_per_device,
+        pct_exporters,
+        avg_session_length,        
+        day1_retention_rate,
+        week0_retention_rate,
+        week1_retention_rate,
+
+        num_subs,
+        num_sol_subs,
+        num_subs - num_sol_subs as num_non_sol_subs,
+        num_paid_subs,
+        num_started_trials,
+        num_converted_trials,
+        num_finished_trials,
+        num_started_trials - num_finished_trials as num_current_in_trial,
+        paid_conversion_rate_day7
+    from detailed_view
+),
+
+
+main_metrics as (
+    select
+        segmentation,
+        variant,
+        num_devices,
+        
+        revs_per_device_new_subs as rpd,
+        paid_conversion_rate as pcvr,
+        conversion_rate as cvr,
+        sol_conversion_rate as sol_cvr,
+        conversion_rate - sol_conversion_rate as non_sol_cvr,
+        -- paid_sol_conversion_rate as sol_pcvr,
+        -- paid_non_sol_conversion_rate as non_sol_pcvr,
+        
+        -- trial_to_paid_conversion_rate as tcvr,
+        paid_cancellation_rate as paid_churn,
+        
+        
+        exports_per_device as exports,
+        pct_exporters as exporters,
+        week0_retention_rate as w0_retention,
+        week1_retention_rate as w1_retention,
+
+        display_type,
+        
+    from detailed_view
+),
+
+conclusion as (
+    select
+        country,
+        segmentation,
+        variant,
+        display_type,
+        num_devices,
+        display_pct,
+        
+        revs_per_device_new_subs,
+        revs_per_device_new_and_existing_subs,
+        conversion_rate,
+        paid_conversion_rate,
+        sol_conversion_rate,
+        paid_sol_conversion_rate,
+        
+        (((coalesce(num_started_trials,0) - coalesce(num_finished_trials,0))*coalesce(trial_to_paid_conversion_rate/100,0))+num_paid_subs)*100/num_devices as estimated_paid_cvr_including_trials,
+        
+        refund_rate,
+        paid_cancellation_rate,
+        trial_to_paid_conversion_rate,
+        
+        
+        exports_per_device,
+        num_exporters_num,
+        pct_exporters,
+        
+        day1_retention_rate,
+        week0_retention_rate,
+        week1_retention_rate,
+        
+        n_retained_day1,
+        n_retained_week0,
+        n_retained_week1,
+        num_devices_calendar_day1,
+        num_devices_calendar_day7,
+        num_devices_calendar_day14
+
+    from detailed_view
+
+)
+
+select
+    *
+from {{view}}
+where num_devices > {{minimum devices per variant}}
+order by 1,2,4,3,5

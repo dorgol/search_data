@@ -1,0 +1,26 @@
+/*
+    Name: Auto edit - Template processing time by num clips
+    Query ID: 42178
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-29T07:23:29.616Z
+    */
+    with raw as (
+    select distinct
+        te.template_editing_flow_id,
+        te.reason,
+        timestamp_diff(te.device_timestamp, ts.device_timestamp, millisecond) as process_duration,
+        num_slots
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as ts
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_ended` as te
+        using(template_editing_flow_id)
+    where date(ts.meta_received_at) >= date_sub(current_date(), interval {{last x days}} day)
+        and flow_name = "assets_first"
+    limit 10000
+)
+
+select
+    *
+from raw
+where true
+    and process_duration < {{max milliseconds duration}}
+    and num_slots < {{max num selected assets}}

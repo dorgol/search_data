@@ -1,0 +1,22 @@
+/*
+    Name: PL Accept rate by Version
+    Query ID: 40320
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-14T11:15:48.699Z
+    */
+    select 
+app_version,
+case 
+when fv.feature_name in ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette') then 'Effects'
+when fv.feature_name in ('Doodle', 'EffectsBrush') then 'Brush'
+when fv.feature_name in ('Fill', 'Inpaint') then 'Heal'
+else fv.feature_name end as feature_name,
+count(distinct fv.event_id) as feature_starts,
+count(distinct case when fv.dismiss_action='ENFeatureExitStateAccepted' then fv.event_id end) as accepted,
+safe_divide(count(distinct case when fv.dismiss_action='ENFeatureExitStateAccepted' then fv.event_id end),count(distinct fv.event_id) )*100 as accept_rate
+
+from `ltx-dwh-prod-raw.analytics.ios_editor_feature_visited` as fv
+where meta_received_at>'2023-01-01'
+and feature_name in ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette', 'Doodle', 'EffectsBrush', 'Fill', 'Inpaint', 'Cutout', 'LayerCrop', 'Filter', 'Adjust', 'Frame', 'Target', 'Reshape', 'Blur','Retouch')
+group by 1,2
+having count(distinct fv.event_id)>500

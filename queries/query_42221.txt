@@ -1,0 +1,74 @@
+/*
+    Name: VL iOS - New Subs vs Churned - by Project Type
+    Query ID: 42221
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-25T14:59:13.232Z
+    */
+    with
+--new_paid_subs as (
+--    select distinct
+--        date_trunc(date(original_purchase_date),{{period}}) as dt,
+--        count(distinct lt_subscription_id) as new_paid_subs
+--    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation_cross_sell`
+--    where date_trunc(date(original_purchase_date),{{period}}) >= '2022-01-01'
+--        and date(original_purchase_date) < date_sub(date_trunc(date(current_date), week), interval 1 week)
+--        and application = 'videoleap'
+--        and platform = 'ios'
+--        and payments.revenue_so_far_alloc_cs > 0
+--        --and subscription.subscription_renewal_date_calc is not null
+--        --and date(subscription.subscription_renewal_date_calc) <= date_add(current_date(), interval 30 day)
+--   group by 1
+--)
+
+--, churned_paid_subs as (
+--   select distinct
+--       date_trunc(date(payments.last_expiration_date),{{period}}) as dt,
+--        count(distinct lt_subscription_id) as churned_paid_subs
+--    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation_cross_sell` ss
+--    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+--        on ss.device.platform_device_id = ex.id_for_vendor
+--        and date(ex.meta_received_at) <= date(payments.last_expiration_date)
+--    where date_trunc(date(payments.last_expiration_date),{{period}}) >= '2022-01-01'
+--        and date(payments.last_expiration_date) < date_sub(date_trunc(date(current_date), week), interval 1 week)
+--        and ss.application = 'videoleap'
+--        and ss.platform = 'ios'
+--        and payments.revenue_so_far_alloc_cs > 0
+--        --and subscription.subscription_renewal_date_calc is not null
+--        --and date(subscription.subscription_renewal_date_calc) <= date_add(current_date(), interval 30 day)
+--   group by 1
+--   
+--   ),
+
+ churned_paid_subs as (
+   select distinct
+       date_trunc(date(payments.last_expiration_date),{{period}}) as dt,
+       ss.lt_subscription_id,
+       count(distinct case when parent_template_id is null then open_project_id end) as  original_exports,
+       count(distinct case when parent_template_id is not null then open_project_id end) as remake_exports 
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation_cross_sell` ss
+    inner join `ltx-dwh-prod-processed`.`subscriptions`.`subscription_to_defacto` sd
+        on sd.lt_subscription_id = ss.lt_subscription_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on sd.id_for_vendor = ex.id_for_vendor
+        and date(ex.meta_received_at) <= date(payments.last_expiration_date)
+    where date_trunc(date(payments.last_expiration_date),{{period}}) >= '2022-09-01'
+        and date(payments.last_expiration_date) < date_sub(date_trunc(date(current_date), week), interval 1 week)
+        and ss.application = 'videoleap'
+        and ss.platform = 'ios'
+        and payments.revenue_so_far_alloc_cs > 0
+        --and subscription.subscription_renewal_date_calc is not null
+        --and date(subscription.subscription_renewal_date_calc) <= date_add(current_date(), interval 30 day)
+   group by 1,2
+   )
+
+
+select 
+dt,
+count(distinct lt_subscription_id) as churned_paid_subs,
+count(distinct case when original_exports = 0 and remake_exports = 0 then lt_subscription_id end) as churned_non_exporter,
+count(distinct case when original_exports = 0 and remake_exports > 0 then lt_subscription_id end) as churned_remake_only_exporter,
+count(distinct case when original_exports > 0 and remake_exports = 0 then lt_subscription_id end) as churned_og_only_exporter,
+count(distinct case when original_exports > 0 and remake_exports > 0 then lt_subscription_id end) as churned_mixed_exporter,
+
+from churned_paid_subs
+group by 1

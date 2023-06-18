@@ -1,0 +1,83 @@
+/*
+    Name: Feed Search - Entry points click rate
+    Query ID: 41356
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-25T14:55:37.084Z
+    */
+    with first_feed_active_date as (
+    select 
+        platform_device_id,
+        min(dt) as first_feed_active_dt
+    from `ltx-dwh-prod-processed.app.feed_unnested_items_info`
+    where application = "videoleap"
+        and platform = "ios"
+    group by 1
+ )
+ 
+ , active_users as (
+    select distinct
+        f.platform,
+        date(f.meta_received_at) as dt,
+        f.platform_device_id as user_id,
+        screen_name
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented` as f
+    left join first_feed_active_date as ff
+        on f.platform_device_id = ff.platform_device_id
+    where true
+        and meta_source = "videoleap"
+        and platform = "ios"
+        and case when '{{day0}}' = 'day0' then first_feed_active_dt = date(f.meta_received_at)
+                 when '{{day0}}' = 'non day0' then first_feed_active_dt < date(f.meta_received_at)
+                 else true end
+        and date(meta_received_at) >= date_sub(current_date(), interval 2 week)
+        and date(meta_received_at) < current_date()
+)
+
+, search_steps as (
+    select distinct
+        "Search Clicked - Main Screen" as step,
+        a.dt,
+        s1.platform_device_id
+    from active_users as a
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` as s1
+        on a.dt = date(s1.meta_received_at)
+        and a.user_id = s1.platform_device_id
+        and s1.button_identifier = "start_feed_search"
+        and (s1.screen_name like "category%" or s1.screen_name = "feed_header")
+        and s1.screen_name not like "%search%"
+    
+    union all
+    
+    select distinct
+        "Search Clicked - Discover Screen" as step,
+        a.dt,
+        s1.platform_device_id
+    from active_users as a
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` as s1
+        on a.dt = date(s1.meta_received_at)
+        and a.user_id = s1.platform_device_id
+        and s1.button_identifier = "start_feed_search"
+        and s1.screen_name like "discover%"
+        and s1.screen_name not like "%search%"
+    
+  
+)
+
+, total_users as (
+    select
+        dt,
+        count(distinct user_id) as num_active_users
+    from active_users
+    group by 1
+)
+
+
+select
+    dt,
+    step,
+    count(distinct platform_device_id) as num_users,
+    count(distinct platform_device_id) / avg(t.num_active_users) * 100 as pct_users,
+from search_steps as s
+left join total_users as t
+    using(dt)
+group by 1,2

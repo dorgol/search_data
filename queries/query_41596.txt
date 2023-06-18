@@ -1,0 +1,47 @@
+/*
+    Name: VL - User List - 2 Consistent Template Purchaser
+    Query ID: 41596
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-05T13:41:32.513Z
+    */
+    
+with template_purchases as (
+    select 
+        lt_id,
+        i.first_installation_id,
+        date_diff(current_date(), date(meta_received_at), day) as date_diff,
+        action_id
+    
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` a
+    inner join (select distinct lt_id, first_installation_id
+                from `ltx-dwh-prod-raw.analytics_global.ltx_global_app_device_info_log`
+                where app_name = 'videoleap') i using(lt_id)
+    where a.action = 'purchase_template'
+        and a.meta_source = 'videoleap'
+        and a.meta_platform = 'ios'
+        and a.reason = 'succeeded'
+        and date(meta_received_at) >= date_sub(current_date(), interval 60 day)
+        and i.first_installation_id is not null
+        
+),
+
+agg as (
+    select
+        lt_id,
+        first_installation_id,
+        count(distinct case when date_diff <= 30 then action_id end) as count_relevant_projects,
+        count(distinct action_id) count_all_projects
+    from template_purchases
+    group by 1,2
+    order by 3 desc
+)
+
+select 
+    lt_id,
+    first_installation_id
+from 
+    agg
+where 
+    count_relevant_projects >= 3
+limit 2000
+    

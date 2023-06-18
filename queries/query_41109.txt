@@ -1,0 +1,23 @@
+/*
+    Name: users with sessions in which they were logged out of both icloud and ft
+    Query ID: 41109
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-04-18T08:43:31.289Z
+    */
+    
+select
+    logged_out_of_ft,
+    logged_out_of_icloud,
+    count(distinct platform_device_id) as num_users
+from
+    (
+    SELECT 
+        platform_device_id,
+        max(lt_id is null) as logged_out_of_ft,
+        max(platform_user_id is null) as logged_out_of_icloud,
+    FROM `ltx-dwh-prod-raw.analytics_global.ltx_global_app_device_info_log` 
+    WHERE DATE(meta_received_at) >= "2023-04-01" 
+    and app_name = 'facetune2'
+    group by 1
+    )
+group by 1,2

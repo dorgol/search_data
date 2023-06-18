@@ -1,0 +1,98 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Feature Retention - By Times Used
+    Query ID: 40204
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-01T07:15:49.666Z
+    */
+    with 
+users as (
+    select distinct
+        d.attribution_user_id,
+        lt_defacto_id,
+        first_session_id_ts,
+        count(distinct d.attribution_user_id) over () total_users
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user` d
+    left join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` a
+        on a.application = 'facetune2'
+        and d.attribution_user_id = a.attribution_user_id
+    where true
+    and d.app_name = 'facetune2'
+),
+exp_users as (
+    select distinct 
+        attribution_user_id,
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    join users u 
+        on true
+        and u.lt_defacto_id = d.lt_defacto_id
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('{{experiment}}') 
+    and display_type = '{{display}}'
+),
+
+combined as (
+    select
+        eu.*,
+        u.lt_defacto_id
+    from exp_users eu
+    left join users u
+        on true
+        and u.attribution_user_id = eu.attribution_user_id
+),
+
+feature_usage as (
+    select distinct 
+        segmentation,
+        variant,
+        attribution_user_id,
+        meta_received_at,
+        fs.id_for_vendor,
+        event_id,
+        device_timestamp,
+        feature_name,
+        is_subscriber,
+        experiment_started_meta,
+        min(fs.meta_received_at) over (partition by u.attribution_user_id) first_feature_usage_ts
+    from combined u
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+        on true
+        and u.lt_defacto_id = farm_fingerprint('facetune2' || fs.id_for_vendor)
+        and feature_name = 'Patch'
+),
+
+post_exp_start_ft_usage as (
+    select
+        *,
+        count(distinct event_id) over (partition by u.attribution_user_id, segmentation, variant) num_times_used_feature
+    from feature_usage u
+    where meta_received_at >= experiment_started_meta
+)
+
+select
+    segmentation,
+    variant,
+    case 
+        when first_feature_usage_ts >= experiment_started_meta then 'first time'
+        when first_feature_usage_ts < experiment_started_meta then 'already used'
+    end as user_type,
+    count(distinct id_for_vendor) num_feature_users,
+    count(distinct case when num_times_used_feature > 1 then id_for_vendor end) num_retained_users,
+    count(distinct case when num_times_used_feature > 1 then id_for_vendor end)/count(distinct id_for_vendor)*100 feature_retention_rate
+from post_exp_start_ft_usage f
+group by 1,2,3
+order by 5 desc,1,2,3

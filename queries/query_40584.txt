@@ -1,0 +1,73 @@
+/*
+    Name: Beauty Feed Research - Category Switching
+    Query ID: 40584
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-24T01:42:37.002Z
+    */
+    with 
+users as
+(
+    select * from
+        (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = 'facetune2'
+        and lower(d.experiment) like lower('%[FT-1067] Beauty Feed%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and d.segmentation in ('01 All Users', '02 New Users', '03 Existing Users')
+        group by 1,2,3,4,5,6,7,8
+    )
+),
+
+first_items_info_per_feed_id as (
+  select
+      platform_device_id,
+      feed_id,
+      device_timestamp,
+      feed_type
+  from  `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_usage_info`
+  where true
+  and app_name = 'facetune2'
+  and meta_received_at >= '2023-02-19'
+  and cast(app_version_code as int64) >= {{since_version}}
+  qualify row_number() over (partition by feed_id order by device_timestamp asc) = 1
+  order by device_timestamp asc
+)
+
+select
+    *,
+    num_users / sum(num_users) over ()*100 pct_of_total
+from (
+    select
+        flow,
+        count(distinct platform_device_id) num_users
+    from (
+        select
+            platform_device_id,
+            string_agg(feed_type, ' > ') flow
+        from first_items_info_per_feed_id
+        group by 1
+    )
+    group by 1
+)

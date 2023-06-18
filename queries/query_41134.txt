@@ -1,0 +1,71 @@
+/*
+    Name: Daily Usage Retention
+    Query ID: 41134
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-19T10:25:08.005Z
+    */
+    -- day0_users: Pull users with first launch on day 0 (day 0 can be between the start and end dates)
+-- dayn_users: Pull users for each day (n) that they return and the corresponding start date
+-- day0_total_users: Total Count of users for each start date (first launch date) 
+
+-- Table
+
+
+-- Pull users with first launch on day 0 (day 0 can be between the start date and today)
+with day0_users as (
+
+    select distinct 
+        lt_defacto_id,
+        date(first_active_dt) as first_active_dt
+        
+    from 
+        `ltx-dwh-prod-processed.agg.app_device_date`
+    where first_active_dt > '{{data start date}}'
+),
+
+
+-- Pull users for each day (n) that they return and the corresponding start date
+dayn_users as (
+
+    select distinct 
+        add.lt_defacto_id,
+        date(day0_users.first_active_dt) as first_active_dt,
+        timestamp_diff(add.dt, day0_users.first_active_dt, day) as day_n
+    from 
+        `ltx-dwh-prod-processed.agg.app_device_date` add
+    inner join day0_users on day0_users.lt_defacto_id = add.lt_defacto_id
+    where dt > '{{data start date}}' 
+        and timestamp_diff(add.dt, day0_users.first_active_dt, day) < 30
+        and cntd_foregrounds > 0
+
+),
+
+
+-- Total Count of users for each start date (first launch date) (Denominator in the retention percentage calculation)
+day0_total_users as (
+
+    select distinct 
+        first_active_dt,
+        count(distinct lt_defacto_id) as count_users,
+        
+    from 
+        `ltx-dwh-prod-processed.agg.app_device_date`
+    where first_active_dt > '{{data start date}}'
+    group by 1
+)
+
+
+select distinct
+    dayn_users.first_active_dt,
+    day_n,
+    day0_total_users.count_users as count_users_day_0,
+    count(distinct lt_defacto_id) as count_users_day_n,
+    (count(distinct lt_defacto_id)/day0_total_users.count_users)*100 as daily_retention
+    
+from dayn_users    
+inner join
+    day0_total_users on day0_total_users.first_active_dt = dayn_users.first_active_dt
+where day_n > 0
+
+group by 1,2,3
+order by 1,2 asc

@@ -1,0 +1,44 @@
+/*
+    Name: Product Analyst Interview - Query 2 (over time)
+    Query ID: 40085
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-06T13:33:31.083Z
+    */
+    with post_effects as
+    (
+    select distinct
+        post_id,
+        account_id, 
+        creation_date, 
+        template_id, 
+        effect_unnest
+    from `ltx-dwh-playground.bi.post_create`, unnest (effects) as effect_unnest
+    )
+    
+, effect_performance as 
+    (
+    select distinct
+        effect_unnest,
+        i.dt,
+        sum(impressions) as impressions,
+        sum(clicks) as clicks,
+        sum(exports) as exports,
+        
+    (case when sum(impressions) > 100 then sum(clicks) / sum(impressions) else 0 end) * 100 as clicks_rate,
+    (case when sum(impressions) > 100 then sum(exports) / sum(impressions) else 0 end) * 100 as export_rate
+    
+    from post_effects pe
+    left join `ltx-dwh-playground.bi.imp_post_per_day` as i
+        on i.post_id = pe.post_id
+    left join `ltx-dwh-playground.bi.click_use_per_day` as c
+        on c.post_id = pe.post_id
+        and i.dt = c.dt
+    left join `ltx-dwh-playground.bi.exports_per_day` as e
+        on e.post_id = pe.post_id
+        and i.dt = e.dt
+    group by 1,2)
+        
+select 
+    *
+from effect_performance
+order by 2 desc--

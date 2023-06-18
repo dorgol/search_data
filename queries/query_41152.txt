@@ -1,0 +1,38 @@
+/*
+    Name: VL iOS - Assets first - exports retention
+    Query ID: 41152
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-19T13:29:34.262Z
+    */
+    with experiment_users as (
+    select distinct
+        variant,
+        id_for_vendor,
+        experiment_started_device,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and experiment = "Assets First Production"
+        and case when '{{segmentation}}' = 'All Users' then segmentation = "01 All Users"
+                 when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+)
+
+, exports_per_user as (
+    select
+        ex.id_for_vendor,
+        ex.variant,
+        xs.parent_template_id is null as is_original,
+        count(distinct xs.export_id) as num_exports,
+    from  experiment_users as ex
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as xs
+        on ex.id_for_vendor = xs.id_for_vendor
+        and xs.device_timestamp > ex.experiment_started_device
+    group by 1,2,3
+)
+
+select
+    variant,
+    case when is_original then "originals" else "remakes" end as is_original,
+    avg(case when num_exports > 0 then num_exports end) as avg_exports_per_exporter,
+from exports_per_user
+group by 1,2

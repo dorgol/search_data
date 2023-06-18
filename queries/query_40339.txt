@@ -1,0 +1,18 @@
+/*
+    Name: FT VL Overlap
+    Query ID: 40339
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-15T07:07:52.958Z
+    */
+    select
+    count(distinct platform_device_id) as multi_app_users,
+from (
+    select
+        platform_device_id,
+        count(distinct app_name) as active_apps,
+    from `ltx-dwh-prod-processed.agg.app_device`
+    where app_name in ('facetune2','videoleap')
+    and last_active_dt >= date_sub(current_date(), interval 30 day)
+    group by 1
+)
+where active_apps = 2

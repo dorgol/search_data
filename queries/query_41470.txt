@@ -1,0 +1,245 @@
+/*
+    Name: 20230404 - [FT-1088] AI Enhance V2 - Cumulative Revenue
+    Query ID: 41470
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-30T11:39:51.195Z
+    */
+    create temp table 
+usage_assignment_state_changed1 as (
+    select
+        r.variant,
+        case when l.last_platform_user_id = 'unknown' then l.platform_device_id else l.last_platform_user_id end as user_id,
+        l.platform_device_id as id_for_vendor,
+        l.lt_defacto_id,
+        r.experiment,
+        reason,
+        min(l.first_session_icloud_app_ts) over (partition by case when l.last_platform_user_id = 'unknown' then l.platform_device_id else l.last_platform_user_id end) as first_launch,
+        min(r.device_timestamp) over (partition by l.platform_device_id, reason) as experiment_started_device,
+        min(r.meta_received_at) over (partition by l.platform_device_id, reason) as experiment_started_meta, 
+    from `ltx-dwh-prod-processed.agg.app_device` as l
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_assignment_state_changed` as r
+        on l.platform_device_id = r.id_for_vendor
+    where (r.experiment= '[FT-1088] AI Enhance V2') and r.reason in ( 'activated_for_device', 'entered_photo_editor', 'entered_feature')
+    and r.meta_received_at >= '2023-04-04' 
+    and  l.app_name = 'facetune2'
+);
+
+create temp table first_experiment_date as (
+    select
+        min(first_day) as first_day
+    from (
+        select
+            timestamp_trunc(experiment_started_meta, hour) as first_day,
+            count(distinct id_for_vendor) as devices
+        from usage_assignment_state_changed1
+        group by 1
+        )
+    where devices > 10
+);
+
+create temp table usage_assignment_state_changed as (
+    select
+        l.*,
+        case when r.id_for_vendor is not null then true else false end as displayed_flag,
+        r.experiment_started_device as experiment_started_device_displayed,
+        r.experiment_started_meta as experiment_started_meta_displayed,
+        first_day
+    from usage_assignment_state_changed1 as l
+    left join usage_assignment_state_changed1 as r
+        on l.id_for_vendor = r.id_for_vendor
+        and r.reason = 'entered_photo_editor'
+    cross join first_experiment_date
+    where l.reason = 'activated_for_device'
+);
+
+create temp table devices_and_variant_full as (
+    select 
+       'facetune2' as application,
+       'Facetune iOS' as app_real_world_name,
+       '02 New Users' as segmentation,
+       experiment,
+       variant,
+       usage_assignment_state_changed.id_for_vendor,
+       lt_defacto_id,
+       first_launch,
+       experiment_started_device,
+       experiment_started_meta,
+       experiment_started_device_displayed,
+       experiment_started_meta_displayed,
+       displayed_flag,
+      first_day
+    from  usage_assignment_state_changed
+    where first_launch >= first_day
+    and displayed_flag
+    
+);
+
+create temp table suspected_frauds as (
+    select distinct
+        d.id_for_vendor 
+    from devices_and_variant_full as d
+    join ltx-dwh-prod-processed.devices.facetune2_otid_idfv_pairs as l
+    	 on d.id_for_vendor = l.id_for_vendor
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_state` as r 
+        on l.original_transaction_id = r.original_transaction_id and num_of_lt_defacto_id > 10
+);
+
+create temp table multiple_variants as (
+	select
+		id_for_vendor,
+		count(distinct variant) as num_variant
+	from devices_and_variant_full
+	group by id_for_vendor
+	having count(distinct variant) > 1
+);
+
+-- create the clean devices and variant table
+create temp table devices_and_variant as (
+    select 
+        *
+    from devices_and_variant_full
+    where id_for_vendor not in 
+        (
+            select 
+                id_for_vendor 
+            from suspected_frauds 
+            where id_for_vendor is not null 
+            union distinct 
+            select 
+                id_for_vendor 
+            from multiple_variants 
+            where id_for_vendor is not null
+        ) 
+);
+
+drop table usage_assignment_state_changed;
+drop table usage_assignment_state_changed1;
+
+
+
+
+with devices as
+(
+select
+  d.application,
+  d.app_real_world_name,
+  d.experiment,
+  d.variant,
+  d.segmentation,
+  d.displayed_flag,
+  d.first_day,
+  timestamp_diff(current_timestamp (),d.experiment_started_meta_displayed,day) as days_since_assignment,
+  count (distinct d.lt_defacto_id) as num_devices_day_x_from_assignment,
+from
+    devices_and_variant as d
+where true
+and timestamp_diff(current_timestamp (),d.experiment_started_meta_displayed,day)>=0
+group by 1,2,3,4,5,6,7,8
+)
+
+, devices_cumulative as
+
+(
+select
+  d.application,
+  d.app_real_world_name,
+  d.experiment,
+  d.variant,
+  d.segmentation,
+  d.displayed_flag,
+  d.first_day,
+  day_n,
+  sum (num_devices_day_x_from_assignment) as num_devices_assigned_at_least_x_days_from_assignment
+from devices as d
+join
+(
+  select
+    day_n
+  from
+    unnest((select generate_array(0,timestamp_diff(current_timestamp(), '2023-04-04', day)+1))) day_n
+) as x
+on d.days_since_assignment >=x.day_n
+ and d.days_since_assignment >= 0
+group by  1,2,3,4,5,6,7,8
+)
+
+
+, transactions as
+
+(
+    select
+      d.application,
+      d.app_real_world_name,
+      d.experiment,
+      d.variant,
+      d.segmentation,
+      d.displayed_flag,
+      first_day,
+      timestamp_diff(current_timestamp (),d.experiment_started_meta_displayed,day) as days_since_assignment,
+      timestamp_diff(t.purchase_date,d.experiment_started_meta_displayed,day) as day_x_from_assignment,
+      sum(coalesce(payments.actual_proceeds,0)) as revenue_day_x_from_assignment
+    from `devices_and_variant` as d
+    join `ltx-dwh-prod-processed`.`ulei`.`ulei_att_user_groups_and_devices` g
+        on farm_fingerprint('facetune2'||d.id_for_vendor) = g.lt_defacto_id
+    left join
+     `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` as t
+      on d.application = t.application
+      and g.attribution_user_id = t.attribution.attribution_user_id
+    where true
+    and t.original_purchase_date>= d.experiment_started_meta_displayed
+    and t.purchase_date>= d.experiment_started_meta_displayed
+    and t.original_purchase_date >= '2023-04-04'
+    and timestamp_diff(current_timestamp (),d.experiment_started_meta_displayed,day) >= 0
+    and subscription.subscription_duration in ('1m','1y')
+    group by 1,2,3,4,5,6,7,8,9
+)
+
+
+, revenue as
+(
+select
+  t.application,
+  t.app_real_world_name,
+  t.experiment,
+  t.variant,
+  t.segmentation,
+  t.displayed_flag,
+  day_n,
+  sum(revenue_day_x_from_assignment)  as revenue_until_day_x_from_assignment
+from transactions as t
+join
+(
+  select
+    day_n
+  from
+    unnest((select generate_array(0,timestamp_diff(current_timestamp(), '2023-04-04', day)+1))) day_n
+) as x
+ on t.days_since_assignment >=x.day_n
+ and t.days_since_assignment >= 0
+ and t.day_x_from_assignment <= x.day_n
+group by 1,2,3,4,5,6,7
+)
+
+
+
+
+select
+  d.experiment,
+  d.variant,
+  d.segmentation,
+  d.displayed_flag,
+  d.day_n,
+  num_devices_assigned_at_least_x_days_from_assignment,
+  revenue_until_day_x_from_assignment,
+  revenue_until_day_x_from_assignment/num_devices_assigned_at_least_x_days_from_assignment as cum_rev_per_device
+from devices_cumulative as d
+left join revenue  as r
+  on d.application = r.application
+  and d.experiment = r.experiment
+  and d.variant =r.variant
+  and d.segmentation =r.segmentation
+  and d.displayed_flag = r.displayed_flag
+  and d.day_n = r.day_n
+group by 1,2,3,4,5,6,7,8
+having segmentation = '02 New Users'
+order by 5,2

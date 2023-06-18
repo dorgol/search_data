@@ -1,0 +1,68 @@
+/*
+    Name: 20230528 - FT2 iOS - [FT-1101] AI Selfies - Num. Faces Distribution
+    Query ID: 42261
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-30T10:20:07.624Z
+    */
+    with 
+
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1101]AI Selfies Exp')
+    and display_type = 'entered_photo_editor'
+    and variant != 'Baseline'
+),
+
+selfies_ended as (
+    select
+        segmentation,
+        case when variant = 'Variant1' then 'Variant 1' else variant end as variant,
+        reason,
+        round(safe_cast(json_extract_scalar(sub_feature_state, '$.miscState.processingDurationInSeconds') as float64),1) processing_time,
+        json_extract_scalar(sub_feature_state, '$.miscState.selectedFace') selected_face,
+        json_extract_scalar(sub_feature_state, '$.miscState.numberOfFaces') num_faces,
+        json_extract_scalar(sub_feature_state, '$.deviceState.networkIsAvailable') is_network_available,
+        json_extract(sub_feature_state, '$.inputModels') inputModels,
+        u.id_for_vendor,
+        fe.event_id,
+        fe.feature_usage_id,
+        fe.editing_session_id,
+        sub_feature_state,
+        count(distinct fe.editing_session_id) over (partition by segmentation, variant) total_num_edting_sessions,
+        count(distinct fe.event_id) over (partition by segmentation, variant, reason) total_num_ended_by_end_type
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.app_name = 'facetune2'
+        and fe.meta_received_at >= '2023-05-20'
+        and fe.meta_received_at >= experiment_started_meta
+        and fe.platform_device_id = u.id_for_vendor
+        and feature_name = 'aiSelfies'
+)
+
+select
+    segmentation, 
+    variant, 
+    safe_cast(num_faces as int64) num_faces,
+    count(distinct editing_session_id) num_usage_sessions,
+    count(distinct feature_usage_id) num_uses,
+    count(distinct editing_session_id)/max(total_num_edting_sessions)*100 pct_total_editing_sessions
+from selfies_ended
+group by 1,2,3
+order by 1,2,3

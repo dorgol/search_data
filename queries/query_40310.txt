@@ -1,0 +1,56 @@
+/*
+    Name: Templates Pricing experiment - Purchase ditribution by variant
+    Query ID: 40310
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-14T08:56:59.665Z
+    */
+    with experiment_users as (
+    select distinct
+        id_for_vendor,
+        variant,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and experiment = "vl_selling_templates_pricing_1_2023"
+)    
+
+, purchase_data as (
+    select distinct
+        ex.variant,
+        en.is_subscriber,
+        ex.id_for_vendor as platform_device_id,
+        en.action_id,
+        en.post_id
+    from experiment_users as ex
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` as en
+        on ex.id_for_vendor = en.platform_device_id
+        and ex.experiment_started_device < en.device_timestamp
+        and en.reason = "succeeded"
+        and en.action = "purchase_template"
+)
+
+, count as (
+    select
+        platform_device_id,
+        variant,
+        max(is_subscriber) as is_subscriber,        -- If a user was converted during this period then counted as sub for all period 
+        count(distinct action_id) as num_purchase_actions,
+    from purchase_data
+    group by 1,2
+)
+
+select
+    *
+from (
+    select distinct
+        num_purchase_actions,
+        variant,
+        count(distinct platform_device_id) over (partition by num_purchase_actions, variant) as num_users,
+        count(distinct platform_device_id) over (partition by num_purchase_actions, variant) / count(distinct platform_device_id) over (partition by variant) * 100 as pct_users,
+    from count
+    where case when '{{subs}}' = 'subs' then is_subscriber
+               when '{{subs}}' = 'non subs' then not is_subscriber
+               else true end
+)
+where num_purchase_actions <= {{max num purchases shown}}

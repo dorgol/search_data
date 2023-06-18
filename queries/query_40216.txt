@@ -1,0 +1,77 @@
+/*
+    Name: PopPays Brands - Self-Serve Onboarding Funnel (days between steps)
+    Query ID: 40216
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-09T17:11:41.467Z
+    */
+    with actions as (
+
+select
+    a.id as org_id,
+    su.subscription_type,
+    date(a.created_at) as account_created_dt,
+    date(c.created_at) as campaign_created_dt,
+    date(c.activated_at) as campaign_activated_dt,
+    date(pg.created_at) as application_sent_dt,
+    date(pg.accepted_at) as application_accepted_dt,
+    case when c.aasm_state = 'closed' then date(c.updated_at) end as campaign_closed_dt
+from agencies a
+    left join merchants m
+      on m.agency_id = a.id
+    left join agency_memberships am
+      on am.agency_id = a.id
+    left join dashboard_users d
+      on d.id = am.dashboard_user_id
+inner join subscriptions su
+    on su.agency_id = a.id
+left join campaigns c
+    on m.id = c.merchant_id
+left join paid_gigs pg
+    on pg.campaign_id = c.id
+    and pg.aasm_state not in ('replaced', 'cancelled')
+where date(a.created_at) >= '{{from_date}}'
+    and primary_email not like '%lightricks%'
+    and primary_email not like '%popular%'
+    and primary_email not like '%poppays%'
+    and primary_email not like '%test%'
+    and primary_email not like '%codicate%'
+    and a.name != 'TZLILBRAND'
+
+)
+
+
+, days_between as (
+select distinct
+    org_id,
+    campaign_created_dt - account_created_dt      as days_to_create_campaign,
+    campaign_activated_dt - account_created_dt    as days_to_activate_campaign,
+    application_sent_dt - account_created_dt      as days_to_application_invite,
+    application_accepted_dt - account_created_dt  as days_to_accept_application,
+    campaign_closed_dt - account_created_dt  as days_to_close_campaign
+from actions a1
+where subscription_type = 'platform_free')
+      
+      
+, min_days as (
+    select
+        org_id,
+        min(days_to_create_campaign) as days_to_create_campaign,
+        min(days_to_activate_campaign) as days_to_activate_campaign,
+        min(days_to_application_invite) as days_to_application_invite,
+        min(days_to_accept_application)  as days_to_accept_application,
+        min(days_to_close_campaign)  as days_to_close_campaign
+    from days_between
+    group by 1
+    )
+    
+select
+    count(distinct org_id) as organizations,
+    avg(case when days_to_create_campaign is not null then days_to_create_campaign end) as avg_days_to_create_campaign,
+    avg(case when days_to_activate_campaign is not null then days_to_activate_campaign end) as avg_days_to_activate_campaign,
+    avg(case when days_to_application_invite is not null then days_to_application_invite end) as avg_days_to_application_invite,
+    avg(case when days_to_accept_application is not null then days_to_accept_application end) as avg_days_to_accept_application,
+    avg(case when days_to_close_campaign is not null then days_to_close_campaign end) as avg_days_to_close_campaign
+from min_days
+    
+    
+    

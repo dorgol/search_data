@@ -1,0 +1,108 @@
+/*
+    Name: PL iOS: AI Scenes By Country
+    Query ID: 41244
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-06-06T12:54:13.710Z
+    */
+    with starts as
+(
+select
+    app_real_world_name,
+        case when app_store_country in ('ID','US','MY','KH','VN','TH','PK','GB') then app_store_country else 'ROW' end as country,
+    date_trunc(fs.meta_received_at,{{ date }}) as hour,
+    count(distinct fs.platform_device_id) as scenes_users,
+    count(distinct fs.feature_usage_id) as scenes_feature_starts,
+    safe_divide(count(distinct fs.feature_usage_id),count(distinct fs.platform_device_id) ) as starts_per_user
+from `ltx-dwh-prod-processed`.`devices`.`unified_devices` f
+
+inner join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` as fs
+on fs.platform_device_id=f.id_for_vendor
+and fs.app_name='editor'
+and fs.meta_received_at >=f.first_launch
+and fs.feature_name='ai_scenes'
+and fs.meta_received_at >='2023-04-17'
+
+
+where f.application in (
+--'editor'
+ 'editor'
+)
+--and first_launch >= '2023-04-17'
+group by 1,2,3
+order by 1,2,3
+)
+
+,
+exports as 
+(
+select
+    app_real_world_name,
+        case when app_store_country in ('ID','US','MY','KH','VN','TH','PK','GB') then app_store_country else 'ROW' end as country,
+    date_trunc(fs.meta_received_at,{{ date }}) as hour,
+    count(distinct fs.platform_device_id) as scenes_exporters,
+    count(distinct fs.process_id) as scenes_exports,
+    safe_divide(count(distinct fs.process_id),count(distinct fs.platform_device_id) ) as exports_per_exporter
+from `ltx-dwh-prod-processed`.`devices`.`unified_devices` f
+
+inner join `ltx-dwh-prod-raw.analytics_global.ltx_global_export_started` as fs
+on fs.platform_device_id=f.id_for_vendor
+and fs.app_name='editor'
+and fs.meta_received_at >=f.first_launch
+and fs.export_source='ai_scenes'
+and fs.meta_received_at >='2023-04-17'
+
+
+where f.application in (
+--'editor'
+ 'editor'
+)
+--and first_launch >= '2023-04-17'
+group by 1,2,3
+order by 1,2,3
+),
+
+generations as 
+(
+select
+    app_real_world_name,
+        case when app_store_country in ('ID','US','MY','KH','VN','TH','PK','GB') then app_store_country else 'ROW' end as country,
+    date_trunc(fs.meta_received_at,{{ date }}) as hour,
+    count(distinct fs.platform_device_id) as scenes_generators,
+    count(distinct fs.event_id) as scenes_generations,
+    safe_divide(count(distinct fs.event_id),count(distinct fs.platform_device_id) ) as generates_per_generator
+from `ltx-dwh-prod-processed`.`devices`.`unified_devices` f
+
+inner join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_sub_feature_started` as fs
+on fs.platform_device_id=f.id_for_vendor
+and fs.app_name='editor'
+and fs.meta_received_at >=f.first_launch
+and fs.root_feature_name='ai_scenes'
+and fs.meta_received_at >='2023-04-17'
+
+
+where f.application in (
+--'editor'
+ 'editor'
+)
+--and first_launch >= '2023-04-17'
+group by 1,2,3
+order by 1,2,3
+)
+
+select 
+starts.*,
+exports.scenes_exporters,
+exports.scenes_exports,
+exports.exports_per_exporter,
+generations.scenes_generators,
+generations.scenes_generations,
+generations.generates_per_generator,
+safe_divide(exports.scenes_exports,starts.scenes_users) as exports_per_user,
+safe_divide(exports.scenes_exporters,starts.scenes_users)*100 as export_pct
+from starts
+left join exports on
+starts.hour=exports.hour
+and starts.country=exports.country
+left join generations on 
+starts.hour=generations.hour
+and starts.country=generations.country

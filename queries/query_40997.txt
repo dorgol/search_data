@@ -1,0 +1,134 @@
+/*
+    Name: Felix - Format
+    Query ID: 40997
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-12T13:32:21.844Z
+    */
+    -- generate list of time periods since the product launch.
+with time_periods_with_latest as (
+    select 
+        distinct(timestamp_trunc(original_purchase_date, month)) as time_period
+    from `ltx-dwh-prod-processed.subscriptions.facetune2_transactions_state`
+),
+
+-- remove the latest time period, as it contains partial data.
+time_periods as (
+    select 
+        time_period 
+    from (
+        select
+            time_period,
+            row_number() over (order by time_period desc) as row_number
+        from time_periods_with_latest
+        )
+    where row_number != 1
+),
+
+-- filter subscriptions transactions that are not part of trial since mrr for them is 0.
+subscription_transactions_without_trial as (
+    select distinct *
+    from `ltx-dwh-prod-processed.subscriptions.facetune2_transactions_state`
+    where product_type = 'subscription'
+        and is_trial_period = false
+),
+
+-- add mrr to each transaction, based on the actual proceeds and the subscription length.
+-- add auxiliary columns of the time period the transaction purchase_date and subscription_renewal_date fall into.
+-- add auxiliary columns with the time period corresponding to the first payment of the subscription, and the churn of the subscription.
+subscription_transactions_with_mrr as (
+    select
+        timestamp_trunc(first_value(purchase_date) over (partition by original_transaction_id order by purchase_date rows unbounded preceding) ,month) as first_payment_time_period,
+        timestamp_trunc(last_value(subscription_renewal_date) over (partition by original_transaction_id order by purchase_date rows between current row and unbounded following), month) as churn_time_period,
+        timestamp_trunc( purchase_date, month) as purchase_time_period,
+        timestamp_trunc( subscription_renewal_date, month) as renewal_time_period,
+        *,
+        (
+            case subscription_duration
+                when '1m' then actual_proceeds
+                when '6m' then cast(actual_proceeds as float64) / 6
+                when '1y' then cast(actual_proceeds as float64) / 12
+                end
+    )    as mrr
+    from subscription_transactions_without_trial
+),
+
+-- list the transactions corresponding to active subscriptions at each time period.
+active_subscribers_per_time_period as (
+    select 
+        r.*, 
+        l.*
+    from subscription_transactions_with_mrr l
+        inner join time_periods r
+            on r.time_period >= l.purchase_time_period
+            and r.time_period < l.renewal_time_period
+),
+
+-- list the transactions corresponding to new subscriptions at each time period. (transactions of subscription that started at the time period).
+new_subscribers_per_time_period as (
+    select 
+        r.*, 
+        l.*
+    from subscription_transactions_with_mrr l
+    inner join time_periods r
+        on r.time_period = l.first_payment_time_period
+        and r.time_period = l.purchase_time_period
+),
+
+-- list the transactions corresponding to churned subscriptions at each time period. (transactions of subscription that expired at the time period).
+churned_subscribers_per_time_period as (
+    select 
+        r.*, 
+        l.*
+    from subscription_transactions_with_mrr l
+    inner join time_periods r
+        on r.time_period = l.churn_time_period
+        and r.time_period = l.renewal_time_period
+),
+
+-- aggregate the active subscribers and mrr for each time period.
+mrr_per_time_period as (
+    select
+        time_period,
+        count(distinct original_transaction_id) as active_subscribers,
+        sum(mrr) as mrr
+    from active_subscribers_per_time_period
+    group by time_period
+),
+
+-- aggregate the new subscribers and addedmrr for each time period.
+new_mrr_per_time_period as (
+    select
+        time_period,
+        count(distinct original_transaction_id) as new_subscribers,
+        sum(mrr) as new_mrr
+    from new_subscribers_per_time_period
+    group by time_period
+),
+
+-- aggregate the churned subscribers and lost mrr for each time period.
+churned_mrr_per_time_period as (
+    select
+        time_period,
+        count(distinct original_transaction_id) as churned_subscribers,
+        sum(mrr) as churned_mrr
+    from churned_subscribers_per_time_period
+    group by time_period
+)
+
+select
+    l.time_period,
+    active_subscribers,
+    new_subscribers,
+    churned_subscribers,
+    mrr,
+    new_mrr,
+    churned_mrr,
+    new_mrr - coalesce(churned_mrr, 0) as mrr_growth,
+    cast(new_mrr as float64)/churned_mrr as mrr_quick_ratio,
+    cast(new_subscribers as float64)/churned_subscribers as subscribers_quick_ratio
+from mrr_per_time_period l
+left join new_mrr_per_time_period a
+    on l.time_period = a.time_period
+left join churned_mrr_per_time_period b
+    on l.time_period = b.time_period
+order by time_period

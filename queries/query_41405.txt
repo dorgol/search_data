@@ -1,0 +1,140 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1076] Your photo showcase - Uploaded Photo - High Level Metrics
+    Query ID: 41405
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-27T11:15:35.184Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1076] Your photo showcase')
+    and display_type = '{{display_type}}'
+),
+
+users_w_upload as (
+    select
+        u.*
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on true
+        and app_name = 'facetune2'
+        and u.id_for_vendor = pq.platform_device_id
+        and pq.meta_received_at >= u.experiment_started_meta
+        and origin_page_index = 4
+        and origin_page_response = 'Image selected for photo showcase'
+),
+
+subs as (
+    select
+        u.id_for_vendor,
+        s.revenue_so_far,
+        is_sol as sol_sub,
+        subscription_source,
+        first_subscription_duration as subscription_duration,
+        first_known_cancellation_date,
+        current_is_in_trial_period as is_in_trial_period,
+        had_trial
+    from users_w_upload u 
+    join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on true
+        and app_name = 'facetune2'
+        and u.id_for_vendor = s.platform_device_id
+        and original_purchase_date >= experiment_started_meta
+),
+
+exports as (
+    select
+        u.id_for_vendor,
+        count(distinct e.event_id) as num_exports,
+    from users_w_upload u 
+    join `ltx-dwh-prod-processed`.`devices`.`unified_app_export` e
+        on true
+        and e.application = 'facetune2'
+        and u.id_for_vendor = e.id_for_vendor
+        and meta_received_at >= experiment_started_meta
+    group by 1
+),
+retention as (
+    select
+        u.id_for_vendor,
+        max(case when date_diff(ad.dt, date(u.experiment_started_meta), day) = 1 then true else false end) as is_day1_retained,
+        max(case when date_diff(ad.dt, date(u.experiment_started_meta), day) between 1 and 7 then true else false end) as is_week0_retained,
+        max(case when date_diff(ad.dt, date(u.experiment_started_meta), day) between 8 and 14 then true else false end) as is_week1_retained
+    from users_w_upload u 
+    join `ltx-dwh-prod-processed`.`agg`.`app_device_date` ad
+        on true
+        and ad.app_name = 'facetune2'
+        and ad.dt >= '2023-03-15'
+        and u.id_for_vendor = ad.platform_device_id
+        and ad.dt >= date(experiment_started_meta)
+        and cntd_foregrounds > 0
+    group by 1
+)
+
+select 
+    segmentation,
+    variant,
+    count(distinct u.id_for_vendor) as num_devices,
+    sum(revenue_so_far) revs,
+    sum(revenue_so_far)/nullif(count(distinct u.id_for_vendor),0) as revenue_per_device_new_subs,
+    
+    count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as cvr,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as sol_cvr,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is false then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as non_sol_cvr,
+    
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_cvr,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 and sol_sub is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_sol_cvr,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 and sol_sub is false then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_non_sol_cvr,
+    count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is false and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is false then u.id_for_vendor end),0)*100 as trial_to_paid_cvr,
+    
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1y' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_yearly_subs,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1m' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_monthly_subs,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = 'l' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_otp_subs,
+    
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1y' and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as pct_yearly_subs,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1m' and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as pct_monthly_subs,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = 'l'  and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as pct_otp_subs,
+    
+    count(distinct case when s.id_for_vendor is not null and first_known_cancellation_date is not null then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as cancellation_rate,
+    count(distinct case when s.id_for_vendor is not null and first_known_cancellation_date is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as paid_cancellation_rate,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1y' and first_known_cancellation_date is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and subscription_duration = '1y' and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as paid_yearly_cancellation_rate,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1m' and first_known_cancellation_date is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and subscription_duration = '1m' and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as paid_monthly_cancellation_rate,
+    
+    count(distinct case when e.id_for_vendor is not null then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_exporters,
+    sum(num_exports)/nullif(count(distinct u.id_for_vendor),0) as exports_per_device,
+    
+    count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end) as num_subscribers,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end) as num_paid_subscribers,
+    count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is true then u.id_for_vendor end) num_still_in_trial,
+    count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is false then u.id_for_vendor end) num_finished_trial,
+    
+            -- day0, week0, week1 retention
+    count(distinct case when r.is_day1_retained is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_retained_day1,
+    count(distinct case when r.is_week0_retained is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_retained_week0,
+    count(distinct case when r.is_week1_retained is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_retained_week1,
+from users_w_upload u
+left join exports e
+    on e.id_for_vendor = u.id_for_vendor
+left join subs s
+    on s.id_for_vendor = u.id_for_vendor
+left join retention r
+    on r.id_for_vendor = u.id_for_vendor
+where true
+group by 1,2

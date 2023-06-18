@@ -1,0 +1,70 @@
+/*
+    Name: Feed - Paid templates - Num creators over time V2
+    Query ID: 41388
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-28T15:36:53.973Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        template_id,
+        account_id,
+        parent_template_id,
+        root_template_id,
+        parent_template_id is null as is_original,
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` as p
+    qualify (row_number() over (partition by post_id order by server_timestamp desc) = 1)
+)
+
+, purchases as (
+    select
+        st.platform_device_id,
+        st.post_id,
+        st.action_id as start_purchase_action,
+        en.action_id as end_purchase_action,
+        date_trunc(min(date(st.meta_received_at)), {{period}}) as dt,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started`as st
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended`as en
+        on st.action_id = en.action_id
+        and en.reason = "succeeded"
+    where st.action = "purchase_template"
+        and date_trunc((date(st.meta_received_at)), {{period}}) >= '2022-10-01'
+        and date_trunc((date(st.meta_received_at)), {{period}}) < date_trunc(current_date(), {{period}})
+    group by 1,2,3,4
+)
+
+, purchases_enriched as (
+    select distinct
+        p.dt,
+        p.platform_device_id,
+        p.post_id,
+        p.start_purchase_action,
+        p.end_purchase_action,
+        po1.is_original,
+        case when po1.is_original then po1.account_id else po2.account_id end as account_id,
+        case when po1.is_original then po1.post_id else po2.post_id end as original_post_id,
+    from purchases as p
+    left join posts as po1
+        on p.post_id = po1.post_id
+    left join posts as po2      -- data about the original template
+        on ifNull(po1.root_template_id, po1.parent_template_id) = po2.template_id
+    where case when po1.is_original then po1.account_id else po2.account_id end is not null
+)
+
+, purchases_per_creator as (
+    select
+        p.dt,
+        p.account_id,
+        count(distinct p.end_purchase_action) as num_purchases,
+    from purchases_enriched as p
+    group by 1,2
+)
+
+select
+    dt,
+    case when num_purchases <= 9 then "1-9 purchases"
+         when num_purchases <= 20 then "10-20 purchases"
+         else "20+ purchases" end as num_purchases,
+    count(distinct account_id) as num_creators
+from purchases_per_creator
+group by 1,2

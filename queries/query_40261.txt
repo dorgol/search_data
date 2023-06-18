@@ -1,0 +1,41 @@
+/*
+    Name: Facetune Android: Legacy % Exporters
+    Query ID: 40261
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-22T14:25:04.382Z
+    */
+    with
+
+foreground as (
+    select
+        date(f.meta_received_at) as day,
+        app_version as app_version_short,
+        count(distinct f.installation_id) as devices,
+    from `ltx-dwh-prod-raw.analytics.android_facetune2_app_foregrounded` f
+    where true
+    and f.meta_received_at >= timestamp_sub(current_timestamp(), interval 60 day)
+    group by 1,2
+)
+
+, exports as (
+    select
+        date(f.meta_received_at) as day,
+        app_version as app_version_short,
+        count(distinct f.installation_id) as exported,
+    from `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_image_exported` f
+    where true
+    and f.meta_received_at >= timestamp_sub(current_timestamp(), interval 60 day)
+    group by 1,2
+)
+
+
+select
+    day, 
+    app_version_short,
+    devices,
+    exported,
+    100*exported/devices as pct_exported,
+from foreground f
+left join exports e
+    using(day, app_version_short)
+where devices > 5000

@@ -1,0 +1,52 @@
+/*
+    Name: VL iOS - Branded Templates - Mini-editor Test
+    Query ID: 40912
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-06T11:56:31.724Z
+    */
+    
+with bt_users as (
+    select distinct
+        dav.id_for_vendor,
+        dav.experiment_started_meta
+        
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_app_foregrounded` af
+    inner join `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+        on af.id_for_vendor = dav.id_for_vendor
+        and dav.experiment in ('IOS Feed Branded Campaign 11.22', 'IOS Feed Branded Campaign 01.23')
+        and segmentation = '01 All Users'
+        and display_type = 'activated_for_device'
+    --where date(dav.experiment_started_meta) >= '2023-03-21'
+)
+
+, actions as (
+
+ 
+    select 
+        case when date(ui.meta_received_at) >= '2023-03-21' then 'New' else 'Old' end as version,
+        u.id_for_vendor,
+        ep.id_for_vendor as pres_id_for_vendor
+    from bt_users u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and ui.action_id = te.action_identifier
+    
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editor_presented` ep
+        on u.id_for_vendor = ep.id_for_vendor
+        and ((ep.open_project_id = ui.open_project_id) or (ep.open_project_id = te.open_project_id))
+        
+    )
+    
+    
+select
+        a.version,
+        count(distinct a.id_for_vendor) as users,
+        count(distinct a.pres_id_for_vendor) as presented_users,
+        
+    from actions a
+    group by 1

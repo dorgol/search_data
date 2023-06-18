@@ -1,0 +1,210 @@
+/*
+    Name: PL AI Transform Funnel
+    Query ID: 40488
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-10T10:20:06.945Z
+    */
+    
+with base as
+(select distinct dt,
+platform_device_id
+from
+`ltx-dwh-prod-processed`.`agg`.`app_device_date`
+where
+dt >= "2023-03-18"
+    and dt < date_trunc(current_date, {{Time granularity}})
+    and app_name = "editor"
+    and platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then dt = first_active_dt
+    when '{{Day}}' = "week0" then date_diff(dt, first_active_dt, day) <= 7
+        when '{{Day}}' = "non day0" then dt > first_active_dt
+        else true end
+)
+
+,
+
+bp as
+(select distinct
+date(bp.meta_received_at) as dt,
+platform_device_id,
+screen_name,
+button_identifier
+from
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` as bp
+ where
+     bp.app_name='editor'
+    and bp.screen_name in (
+    --'ai_transform_preview_page','ai_scenes_photo_selection','ai_scenes_main',
+    'ai_transform_preview_page', 'ai_transform_text_prompt','ai_transform_results_preview','ai_transform_edit','ai_transform')
+    and bp.button_identifier in ('start','next','use_image','save')
+    and date(bp.meta_received_at)>="2023-03-18"
+),
+
+im as
+(select distinct
+date(im_e.meta_received_at) as dt,
+im_e.platform_device_id
+from
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_started` as im_s
+
+    --and d.dt = date(im_s.meta_received_at)
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_ended` as im_e
+   on im_e.platform_device_id = im_s.platform_device_id
+   and im_e.process_id=im_s.process_id
+    and im_e.app_name='editor'
+    and im_e.reason='success'
+    and im_e.meta_received_at>="2023-03-18"
+where im_s.app_name='editor'
+    and im_s.source in (
+    --'ai_scenes'
+    'ai_transform'
+    )
+    and im_s.meta_received_at>="2023-03-18"
+),
+
+fs as
+(select distinct
+date(efs.meta_received_at) as dt,
+platform_device_id,
+feature_name,
+feature_usage_id as feature_starts
+from
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as efs
+ where
+     efs.app_name='editor'
+    and efs.feature_name in ('ai_transform'
+    --,
+    --'ai_scenes'
+    )
+   and efs.meta_received_at>="2023-03-18"
+   --group by 1,2,3
+),
+
+exps as
+(
+select distinct
+date(ex_s.meta_received_at) as dt,
+platform_device_id,
+export_source,
+process_id as exports
+from
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` as ex_s
+   where
+     ex_s.app_name='editor'
+    and ex_s.export_source in (
+    --'ai_scenes',
+    'ai_transform','ai_transform.es'
+    )
+    and ex_s.meta_received_at>="2023-03-18"
+    --group by 1,2,3
+  ),
+  
+  sub_f as
+  (select distinct
+  date(subf.meta_received_at) as dt,
+  sub_feature_name,
+  platform_device_id
+  from
+  `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_started` as subf
+    where subf.root_feature_name='ai_transform'
+    and subf.app_name='editor'
+    and date(subf.meta_received_at)>="2023-03-18"
+    and sub_feature_name  in ('edit_screen','results','mask_applied')
+    )
+
+,
+custom as
+(
+select distinct date(meta_received_at) as dt,
+platform_device_id
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_process_ended` as subf
+  where
+     subf.app_name='editor'
+    and date(subf.meta_received_at)>="2023-03-18"
+    and platform='ios'
+and reason='success'
+and process_name='ai_transform_generate'
+)
+
+
+select *,
+safe_divide(ai_transform_starters ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_transform_starters end)*100 as started_ai_transform,
+--safe_divide(ai_scenes_photo_selection_screen ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_cars_starters end)*100 as photo_selection,
+safe_divide(ai_transform_import_screen ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_transform_starters end)*100 as import_screen,
+safe_divide(ai_transform_imported_image ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_transform_starters end)*100 as imported_image,
+safe_divide(ai_transform_applied_mask ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_transform_starters end)*100 as applied_mask,
+safe_divide(ai_transform_next_button ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_transform_starters end)*100 as accept_mask,
+safe_divide(ai_transform_text_generated ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_transform_starters end)*100 as text_generated,
+safe_divide(ai_transform_result_selected ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_transform_starters end)*100 as result_selected,
+safe_divide(ai_transform_save_button ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_transform_starters end)*100 as save_button,
+safe_divide(ai_transform_exported ,case when '{{ % of }}'='All Users' then users when '{{ % of }}'='Users Starting Feature' then ai_transform_starters end)*100 as exported,
+safe_divide(ai_transform_starts,ai_transform_starters) as feature_starts_per_user,
+safe_divide(ai_transform_exports,ai_transform_starters) as exports_per_user
+
+from
+(
+--exported_users as (
+  select distinct
+    date(date_trunc(d.dt, {{Time granularity}} )) as time,
+    count( distinct d.platform_device_id) as users,
+    count(distinct case when efs.feature_name='ai_transform' then efs.platform_device_id end) as ai_transform_starters,
+    --count(distinct case when efs.feature_name='ai_scenes' then efs.platform_device_id end) as ai_scenes_starters,
+    count( distinct case when efs.feature_name='ai_transform' then efs.feature_starts end) as ai_transform_starts,
+   -- sum( case when efs.feature_name='ai_scenes' then efs.feature_starts end) as ai_scenes_starts,
+    --count(distinct case when bp.screen_name='ai_scenes_preview_page' and bp.button_identifier='continue' then bp.platform_device_id end) as ai_scenes_photo_selection_screen,
+    --count(distinct case when bp.screen_name='ai_scenes_photo_selection' and bp.button_identifier='start' then bp.platform_device_id end) as ai_scenes_import_screen,
+    count(distinct case when bp.screen_name in ('ai_transform_edit','ai_transform') and bp.button_identifier='save' then bp.platform_device_id end) as ai_transform_save_button,
+    count(distinct case when bp.screen_name='ai_transform_edit' and bp.button_identifier='next' then bp.platform_device_id end) as ai_transform_next_button,
+    count(distinct case when bp.screen_name='ai_transform_preview_page' and bp.button_identifier='start' then bp.platform_device_id end) as ai_transform_import_screen,
+    count(distinct case when bp.screen_name='ai_transform_results_preview' and bp.button_identifier='use_image' then bp.platform_device_id end) as ai_transform_result_selected,
+    count(distinct im.platform_device_id ) as ai_transform_imported_image,
+    --count(distinct case when im_s.source='ai_cars' and im_e.reason='success' then im_e.platform_device_id end) as ai_cars_imported_image,
+    count(distinct  case when sub_f.sub_feature_name='mask_applied' then sub_f.platform_device_id end) as ai_transform_applied_mask,
+    count(distinct custom.platform_device_id) as ai_transform_text_generated,
+    count(distinct case when ex_s.export_source  in ('ai_transform','ai_transform.es') then ex_s.platform_device_id end) as ai_transform_exported,
+    --count(distinct case when ex_s.export_source='ai_scenes' then ex_s.platform_device_id end) as ai_scenes_exported,
+    count (distinct case when ex_s.export_source in ('ai_transform','ai_transform.es') then ex_s.exports end) as ai_transform_exports
+  from base as d
+  left join fs as efs
+    on d.platform_device_id = efs.platform_device_id
+    and d.dt = efs.dt
+    --and efs.app_name='editor'
+    --and efs.feature_name in ('ai_cars', 'ai_scenes')
+   --and efs.meta_received_at>="2023-03-05"
+   left join sub_f
+   on d.platform_device_id = sub_f.platform_device_id
+    and d.dt = sub_f.dt
+   
+   left join bp
+    on d.platform_device_id = bp.platform_device_id
+    and d.dt = bp.dt
+   
+   left join im
+   on d.platform_device_id = im.platform_device_id
+    and d.dt = im.dt
+   left join exps as ex_s
+   on d.platform_device_id = ex_s.platform_device_id
+    and d.dt = ex_s.dt
+    left join custom 
+    on d.platform_device_id = custom.platform_device_id
+    and d.dt = custom.dt
+   /*left join 
+   `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_started` as im_s
+   on d.platform_device_id = im_s.platform_device_id
+    and d.dt = date(im_s.meta_received_at)
+    and im_s.app_name='editor'
+    and im_s.source in ('ai_scenes','ai_cars')
+    and im_s.meta_received_at>="2023-03-05"
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_ended` as im_e
+   on im_e.platform_device_id = im_s.platform_device_id
+   and im_e.process_id=im_s.process_id
+    and im_e.app_name='editor'
+    and im_e.reason='success'
+    and im_e.meta_received_at>="2023-03-05"
+    */
+
+  
+  group by 1
+--)
+)

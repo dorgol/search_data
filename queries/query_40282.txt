@@ -1,0 +1,47 @@
+/*
+    Name: Facetune Android: Period New Users by Country
+    Query ID: 40282
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-13T08:02:30.138Z
+    */
+    with installs as (
+    select distinct
+        date_trunc(date(case when row_number() over (partition by f.attribution_user_id order by a.first_session_id_ts asc) = 1 then f.attribution_timestamp else a.first_session_id_ts end), {{period}}) as period,
+        f.current_store_country,
+        a.lt_defacto_id,
+        f.attribution_user_id,
+        f.attribution_user_group_number,
+        a.first_session_id_ts
+    from `ltx-dwh-prod-processed.agg.app_attribution_user` f
+    join `ltx-dwh-prod-processed`.`ulei`.`ulei_att_user_groups_and_devices` g
+        on f.attribution_user_id = g.attribution_user_id
+        and g.application = 'facetune2_android'
+    join `ltx-dwh-prod-processed`.`agg`.`app_device` a
+        on g.lt_defacto_id = a.lt_defacto_id
+        and a.app_name = 'facetune2_android'
+        -- and a.first_session_id_ts <= coalesce(next_attribution_user_group_timestamp, timestamp_add(current_timestamp(), interval 1000 day))
+    where f.app_name = 'facetune2_android'
+)
+
+, classified as (
+    select
+        period,
+        current_store_country,
+        lt_defacto_id,
+        case 
+            when row_number() over (partition by attribution_user_id order by first_session_id_ts asc) > 1 then 'Reinstall'
+            when attribution_user_group_number = 1 then 'New User' 
+            else 'Reattribution' end as install_type,
+    from installs
+)
+
+select distinct
+    period,
+    current_store_country,
+    count(distinct lt_defacto_id) as installs
+from classified
+where install_type != 'Reinstall'
+group by 1,2
+having period >= date_sub(current_date(), interval 90 {{period}})
+and period != date_trunc(current_date(), {{period}})
+order by 1,2 

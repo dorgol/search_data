@@ -1,0 +1,15 @@
+/*
+    Name: Felix - Installations by Country (Onboarding) - 1
+    Query ID: 41032
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-17T15:43:30.970Z
+    */
+    select
+    current_device_country, -- Current location?
+    count(distinct lt_defacto_id) as count_installations
+from 
+    `ltx-dwh-prod-processed.agg.app_device`
+group by
+    current_device_country
+order by 2 desc
+limit 20

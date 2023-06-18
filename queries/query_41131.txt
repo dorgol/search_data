@@ -1,0 +1,51 @@
+/*
+    Name: Felix - Attributions (Onboarding) - Installations by Marketing Network - Conversion Rate
+    Query ID: 41131
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-18T15:16:11.304Z
+    */
+    -- Which network has most attributed installs 
+-- Does this change:
+-- Over time?
+-- Per App?
+-- Conversion Rate vs Raw?
+
+with top_networks as (
+
+    select 
+        
+        attribution.network as network,
+        count(distinct device.lt_defacto_id) as count_devices
+        
+    from 
+        `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` 
+    where lei_attribution.is_missing_attribution = False
+        and device.install_time > '{{start date}}'-- `device.install_time`
+        group by 1
+    order by 2 desc
+    limit 20
+
+)
+
+
+select 
+    attribution.network,
+    --date_trunc(device.install_time, month) as install_time,
+    --vertical,
+    count(distinct case when payments.revenue_so_far > 0 and subscription.had_trial = True then device.lt_defacto_id end) as converted_trials,
+    count(distinct case when subscription.had_trial = True then device.lt_defacto_id end) as trials,
+    count(distinct case when payments.revenue_so_far > 0 and subscription.had_trial = True then device.lt_defacto_id end)/count(distinct case when subscription.had_trial = True then device.lt_defacto_id end) as conversion_rate
+    --count(distinct device.lt_defacto_id) as count_devices,
+    -- count(distinct lt_subscription_id) as count_subscriptions
+        
+from 
+    `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` subs
+inner join top_networks 
+    on top_networks.network = attribution.network
+where 
+    lei_attribution.is_missing_attribution = False
+    and device.install_time > '{{start date}}'-- `device.install_time`
+    
+    group by 1
+    order by 4 desc
+    

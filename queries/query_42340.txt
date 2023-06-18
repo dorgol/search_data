@@ -1,0 +1,50 @@
+/*
+    Name: VL iOS - Trial Comm Analysis
+    Query ID: 42340
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-30T11:49:46.719Z
+    */
+        with active_users as (
+    select distinct
+        platform_device_id,
+        dt,
+        first_active_dt
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where app_name = "videoleap"
+        and date_trunc(dt, {{period}}) >= '2023-03-01'
+        and date_trunc(dt, {{period}}) < date_trunc(current_date(), {{period}})
+        and case when '{{day0}}' = 'day0' then date(dt) = date(first_active_dt)
+                 when '{{day0}}' = 'non day0' then date(dt) > date(first_active_dt)
+                 else true end
+  
+ )
+ 
+
+
+, steps as (
+    select distinct
+        date_trunc(a.dt, {{period}}) as dt,
+        count(distinct a.platform_device_id) as active_users,
+        count(distinct p.platform_device_id) as trial_comm_users,
+        
+    from active_users as a
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_store_view_presented` p
+        on a.platform_device_id = p.platform_device_id
+        and app_name = 'videoleap'
+        and a.dt = date(p.meta_received_at)
+        and case when '{{day0}}' = 'day0' then date(first_active_dt) = date(p.meta_received_at)
+                 when '{{day0}}' = 'non day0' then date(first_active_dt) < date(p.meta_received_at)
+                 else true end
+        and view_name = 'trial_plan'
+    
+    group by 1)
+    
+select
+    *,
+    safe_divide(trial_comm_users, active_users)*100 as trial_comm_user_pct,
+from steps
+
+    
+    
+    
+    

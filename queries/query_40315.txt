@@ -1,0 +1,92 @@
+/*
+    Name: VL All - SMBs - Num Template Purchases by week from install
+    Query ID: 40315
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-14T10:21:49.037Z
+    */
+    with users as (
+  select distinct
+    u.platform_device_id,
+    date(d.first_active_dt) as first_active_dt
+   from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+    and date(d.first_active_dt) = date(u.meta_received_at)
+    and date(d.first_active_dt) >= '2022-08-01'
+)
+
+
+, response as (
+    select  
+         u.platform_device_id,
+         case when origin_page_response is null then 'No Answer' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as response,
+        u.first_active_dt
+    from users u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+, remakes as (
+    select distinct
+        floor(cast(date_diff(date(en.meta_received_at), l.first_active_dt, day) as float64) / cast(7 as float64)) as week_diff,
+        floor(cast(date_diff(current_date(), l.first_active_dt, day) as float64) / cast(7 as float64)) as weeks_from_first_to_current,
+        l.platform_device_id,
+        l.response,
+        en.action_id
+    from response as l
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` en
+        on en.platform_device_id = l.platform_device_id
+        and action = "purchase_template"
+        and reason = 'succeeded'
+    where date(en.meta_received_at) >= first_active_dt
+            and date(en.meta_received_at) <= date_add(date(first_active_dt), interval 6 week)
+)
+
+, test_week as (
+    select week_diff
+    from(select generate_array(0,6) as week_diff_array),unnest(week_diff_array) as week_diff
+)
+
+, totals as(
+    select
+        *,
+        cast(num_purchases as float64) / cast(cohort as float64) as purchases_per_user,
+    from (
+        select
+            tw.week_diff,
+            ur.response,
+            count(distinct ur.platform_device_id) as cohort,
+            count(distinct case when ur.week_diff <= tw.week_diff then ur.action_id end) as num_purchases
+        from remakes as ur
+        cross join test_week as tw
+           where ur.weeks_from_first_to_current >= tw.week_diff
+        group by 1,2
+        )
+    )
+
+    
+  --  select distinct action from actions
+        
+select
+    week_diff,
+    response,
+    cohort,
+    num_purchases,
+    purchases_per_user
+from totals
+where response != 'No Answer'
+order by response, week_diff
+

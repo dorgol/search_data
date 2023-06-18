@@ -1,0 +1,49 @@
+/*
+    Name: VL iOS: New vs Late vs Renewals Revs by Project Type
+    Query ID: 40712
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-16T09:54:12.589Z
+    */
+    with transactions as (
+    select distinct 
+        ss.device.platform_device_id as id_for_vendor,
+        lt_transaction_id,
+        date(ss.original_purchase_date) as original_purchase_date,
+        date(ss.purchase_date) as purchase_date,
+        date(attribution.attribution_timestamp) as attribution_timestamp,
+        date(payments.first_payment_date) as first_payment_date,
+        ss.projected.adjusted_actual_proceeds_alloc_cs as actual_proceeds,
+        
+        payments.month0_late_or_renewal as rev_source,
+
+
+        ex.id_for_vendor,
+        case when ex.id_for_vendor is null then "not_exporter"
+        when count(distinct case when parent_template_id is null then open_project_id end) = 0 then "remaker" 
+        when count(distinct case when parent_template_id is not null then open_project_id end) = 0 then "original" 
+        else "mixed" end as user_segment,
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation_cross_sell` ss
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ss.device.platform_device_id = ex.id_for_vendor
+        and date(ex.meta_received_at) <= date(purchase_date)
+    where ss.application in ('videoleap')
+        --and days_until_subscription = 0
+        --and revenue_so_far >0
+        --and is_in_trial_period = false --only those out of trial period)
+    group by 1,2,3,4,5,6,7,8,9
+        )
+
+, revs as (
+    select
+        date_trunc(date(purchase_date), {{time granularity}}) as purchase_dt,
+             
+        concat(rev_source,' - ', user_segment) as category,
+             
+        sum(actual_proceeds) as sub_revs
+    from transactions
+    where date(purchase_date) >= '2022-01-01'
+    group by 1,2)
+
+select
+    *
+from revs

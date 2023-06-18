@@ -1,0 +1,18 @@
+/*
+    Name: PL Android DND Version
+    Query ID: 40212
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-09T16:44:28.661Z
+    */
+    
+    select
+screen_name,
+app_version_code,
+count(*)
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+    where w.app_name = '{{app_name}}'
+   -- and w.screen_name like '%ai_avatar_photo_selection_start%'
+   and w.screen_name like 'dnd%'
+    --and cast(w.app_version_code as int64) >= 4467
+    and app_version_code in ('108000091','109010099')
+    group by 1,2

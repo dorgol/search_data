@@ -1,0 +1,14 @@
+/*
+    Name: VL iOS - project_template_fetching_failed error distribution (tech_debug)
+    Query ID: 40826
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-02T19:20:26.170Z
+    */
+    select distinct
+    json_extract(trim(replace(replace(json_extract(debug_data, "$.error"), '\\"', '"'), '\\n', ''), '"'), "$.user_info.NSDescription") as error_code,
+    count(distinct event_id) as num_entries
+ from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_tech_debug_data`
+ where app_name = "videoleap"
+    and date(meta_received_at) >= date_sub(current_date(), interval 1 month)
+    and context = "project_template_fetching_failed"
+group by 1

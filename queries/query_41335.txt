@@ -1,0 +1,45 @@
+/*
+    Name: FT iOS - TOF Dashboard - Questionnaire Q3 Answers - Flat - Inc. Skips
+    Query ID: 41335
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-25T07:56:34.764Z
+    */
+    with
+users as (
+    select distinct
+        platform_device_id as id_for_vendor,
+        meta_received_at,
+        origin_page_response as response,
+        count(distinct platform_device_id) over () total_num_users
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+    where true
+        and app_name = 'facetune2'
+        and date(meta_received_at) >= date_sub(current_date(), interval {{days_back}} day)
+        and origin_page_index = 3
+        and (destination_page_index = 4 or destination_page_index is null)
+    qualify row_number() over (partition by id_for_vendor, destination_page_index order by meta_received_at desc) = 1
+),
+
+features_chosen as (
+    select distinct
+        id_for_vendor,
+        features,
+        meta_received_at,
+        total_num_users,
+        `ltx-dwh-playground.bi.mapQuestionnaireToQuickstart`(replace(features,'"','')) questionnaire_feature_chosen,
+    from users, unnest(case when array_length(json_extract_array(response, '$')) is null then array(select 'Skip') else json_extract_array(response, '$') end) features
+)
+
+select
+    features,
+    count(distinct id_for_vendor) num_users,
+    count(distinct id_for_vendor)/max(total_num_users)*100 pct_total_users
+from (
+    select
+        replace(case when features is null then 'Skip' else features end, '"','') as features,
+        id_for_vendor,
+        total_num_users
+    from features_chosen
+)
+group by 1
+order by 2 desc

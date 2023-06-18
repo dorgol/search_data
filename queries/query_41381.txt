@@ -1,0 +1,18 @@
+/*
+    Name: VL iOS - Actual Revs by Source (allocation)
+    Query ID: 41381
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-12T14:47:38.036Z
+    */
+    select distinct
+        date_trunc(date(t.purchase_date),{{period}}) as period,
+        sum(projected.adjusted_actual_proceeds_alloc_cs) as total,
+        sum(case when payments.month0_late_or_renewal = 'month0' then projected.adjusted_actual_proceeds_alloc_cs end) as month0,
+        sum(case when payments.month0_late_or_renewal = 'late' then projected.adjusted_actual_proceeds_alloc_cs end) as late,
+        sum(case when payments.month0_late_or_renewal = 'renewal' then projected.adjusted_actual_proceeds_alloc_cs end) as renewal
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation_cross_sell` t
+    where date_trunc(date(t.purchase_date), week) >= '2023-01-01' and date_trunc(date(t.purchase_date), week) != date_trunc(date(current_date()), week)
+    and case when '{{platform}}' = 'all' then t.application in ('videoleap', 'videoleap_android')
+             when '{{platform}}' = 'ios' then t.application in ('videoleap')
+             when '{{platform}}' = 'android' then t.application in ('videoleap_android') end
+    group by 1

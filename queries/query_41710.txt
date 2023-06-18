@@ -1,0 +1,22 @@
+/*
+    Name: Account ID -> Lt_id conversion
+    Query ID: 41710
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-09T13:41:17.759Z
+    */
+    select distinct account_id, 
+lt_id,
+from 
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_registered`
+where account_id in (
+
+'d6e869a2-ef29-47c7-9a4b-8f47a3a4004e',
+'4bfff1e9-e374-4100-93ff-bc3890a11fae',
+'a07c05dd-0cb9-4483-bec2-0d4e5d7c112e',
+'5d5e023e-9abf-420b-a874-bc1ff9bcb156',
+'c63458ad-8602-4720-88e1-6ad6b05eaf0d',
+'8906618d-d143-44bb-8b73-6aca7c17d86d',
+'39d59119-5898-44fb-ad3c-387459b8b268'
+)
+
+qualify (row_number() over (partition by account_id order by meta_received_at desc) = 1)

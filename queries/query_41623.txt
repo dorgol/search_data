@@ -1,0 +1,69 @@
+/*
+    Name: VL - User List - 3 - Remakes
+    Query ID: 41623
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-05T13:20:31.895Z
+    */
+    
+-- pulls all lt_id's for ios videoleap for template media exports where the date of the event is in the last 30 days.
+
+with remakes as (
+
+    select 
+        lt_id,
+        i.first_installation_id,
+        case when date_diff(current_date(), date(e.meta_received_at), day) <= 30 then True else False end as if_30,
+        count(distinct e.open_project_id) as count_templates -- export_id?
+    from 
+        `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` e
+    inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_exported`
+        using (export_id)
+    inner join (select distinct lt_id, first_installation_id
+                from `ltx-dwh-prod-raw.analytics_global.ltx_global_app_device_info_log`
+                where app_name = 'videoleap') i using(lt_id)        
+    where 
+        date(e.meta_received_at) >= date_sub(current_date(), interval 30 day)
+        and e.parent_template_id is not null 
+        and i.first_installation_id is not null
+    group by 1,2,3
+
+),
+
+
+-- Pulls all template purchases for videoleap ios by lt_id and first_installation_id
+template_purchases as (
+
+    select distinct 
+        lt_id,
+        --first_installation_id,
+    
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` a
+    where a.action = 'purchase_template'
+        and a.meta_source = 'videoleap'
+        and a.meta_platform = 'ios'
+        and a.reason = 'succeeded'
+
+)
+
+
+-- Pulls all users who have exported more than 4 templates in the last 30 days.
+-- Also removes all users who have EVER purchased and template
+
+select 
+    remakes.*
+from 
+    remakes
+left join template_purchases
+    on remakes.lt_id = template_purchases.lt_id
+where
+    if_30 is True
+    and count_templates >= 30
+    and count_templates <= 100
+    and template_purchases.lt_id is null
+order by 4 desc
+
+    
+
+
+
+

@@ -1,0 +1,162 @@
+/*
+    Name: FT iOS Beauty Feed - Posts Performance -  with categories and toggles - last month
+    Query ID: 41876
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-16T08:00:33.877Z
+    */
+    
+with posts as (
+    select distinct
+        post_id,
+        title,
+        row_number() over (partition by post_id order by server_timestamp desc) as row_num
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where true
+    and app_name = 'facetune'
+    and account_id is not null
+    and requirements[offset(0)] like 'beauty%'
+    qualify row_number() over (partition by post_id order by server_timestamp desc) = 1
+),
+
+usage as (
+select distinct
+    feed_type,
+    platform_device_id,
+    post_id,
+    session_id,
+    run_id,
+    feed_id,
+    position,
+    actions,
+    action_id
+from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` as f
+where true
+and application = 'facetune2'
+and date(meta_received_at) >= date_sub(current_date(), interval 1 month)
+and feed_type like '%beauty%'
+),
+
+ 
+usage_with_exports as (   
+    select
+        u.feed_type,
+        u.platform_device_id,
+        u.post_id,
+        u.session_id,
+        u.run_id,
+        u.feed_id,
+        u.actions,
+        u.action_id,
+        count(distinct case when w.export_source like 'beauty_quickstart%' then w.event_id end) as num_exports_from_beauty_qs,
+        count(distinct case when w.export_source like 'beauty_quickstart%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.backdrop') = 'false' then w.event_id end) as num_exports_from_beauty_qs_backdropOFF,
+        count(distinct case when w.export_source like 'beauty_quickstart%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.filter') = 'false' then w.event_id end) as num_exports_from_beauty_qs_filterOFF,
+        count(distinct case when w.export_source like 'beauty_quickstart%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.makeup') = 'false' then w.event_id end) as num_exports_from_beauty_qs_makeupOFF,
+        count(distinct case when w.export_source like 'beauty_quickstart%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.overlay') = 'false' then w.event_id end) as num_exports_from_beauty_qs_overlayOFF,
+        count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab,
+        count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.backdrop') = 'false' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab_backdropOFF,
+        count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.filter') = 'false' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab_filterOFF,
+        count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.makeup') = 'false' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab_makeupOFF,
+        count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.overlay') = 'false' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab_overlayOFF,
+        count(distinct case when f.reason = 'edit' then f.event_id end) as num_continue_to_edit,
+        count(distinct case when f.reason = 'edit' and contains_substr(sub_feature_state, '"backdrop":"false"') then f.event_id end) as num_continue_to_edit_backdropOFF,
+        count(distinct case when f.reason = 'edit' and contains_substr(sub_feature_state, '"filter":"false"') then f.event_id end) as num_continue_to_edit_filterOFF,
+        count(distinct case when f.reason = 'edit' and contains_substr(sub_feature_state, '"makeup":"false"') then f.event_id end) as num_continue_to_edit_makeupOFF,
+        count(distinct case when f.reason = 'edit' and contains_substr(sub_feature_state, '"overlay":"false"') then f.event_id end) as num_continue_to_edit_overlayOFF,
+        count(distinct case when f.reason = 'accepted' then f.event_id end) as num_accepted_in_editor,
+        count(distinct case when f.reason = 'accepted' and contains_substr(sub_feature_state, '"backdrop":"false"') then f.event_id end) as num_accepted_in_editor_backdropOFF,
+        count(distinct case when f.reason = 'accepted' and contains_substr(sub_feature_state, '"filter":"false"') then f.event_id end) as num_accepted_in_editor_filterOFF,
+        count(distinct case when f.reason = 'accepted' and contains_substr(sub_feature_state, '"makeup":"false"') then f.event_id end) as num_accepted_in_editor_makeupOFF,
+        count(distinct case when f.reason = 'accepted' and contains_substr(sub_feature_state, '"overlay":"false"') then f.event_id end) as num_accepted_in_editor_overlayOFF,
+    from usage u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` w
+        on w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.platform_device_id
+        and w.meta_received_at >= '2023-02-19'
+        and date(w.meta_received_at) >= date_sub(current_date(), interval 1 month)
+        and (w.export_source like 'beauty_feed_in_home_tab%' or w.export_source like 'beauty_quickstart%')
+        and ends_with(w.export_source, u.action_id)
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` f
+        on f.app_name = '{{app_name}}'
+        and f.platform_device_id = u.platform_device_id
+        and f.meta_received_at >= '2023-02-19'
+        and date(f.meta_received_at) >= date_sub(current_date(), interval 1 month)
+        and f.feature_name = 'BeautyPresets'
+        and f.reason in ('edit', 'accepted')
+        -- and case when f.reason = 'edit' then split(json_extract_scalar(f.sub_feature_state, '$.miscState'),'.')[safe_offset(1)] = u.action_id
+        --     when f.reason = 'accepted' then left(split(sub_feature_state, '"actionID":"')[safe_offset(1)],36) = u.action_id
+        --     end
+        and case when f.reason = 'edit' then ends_with(f.feature_usage_id, u.action_id)
+            when f.reason = 'accepted' then left(split(sub_feature_state, '"actionID":"')[safe_offset(1)],36) = u.action_id
+            end
+    group by 1,2,3,4,5,6,7,8
+)
+
+
+select 
+    category,
+    --post_id,
+    title,
+    impressions,
+    num_users_seen,
+    impressions / num_users_seen as imp_per_user,
+    --try_preset_clicks,
+    --num_exports,
+    100* try_preset_clicks / impressions as click_rate,
+    100* num_exports / impressions as export_rate,
+    100* num_exports / try_preset_clicks as click_to_export_rate,
+    
+    case when '{{level}}' = 'category' then null else if(num_exports_makeupOFF = 0, null, (100* num_exports_makeupOFF / num_exports))  end as pct_exports_makeupOFF,
+    case when '{{level}}' = 'category' then null else if(num_exports_filterOFF = 0, null, (100* num_exports_filterOFF / num_exports)) end as pct_exports_filterOFF,
+    case when '{{level}}' = 'category' then null else if(num_exports_backdropOFF = 0, null, (100* num_exports_backdropOFF / num_exports)) end as pct_exports_backdropOFF,
+    case when '{{level}}' = 'category' then null else if(num_exports_overlayOFF = 0, null, (100* num_exports_overlayOFF / num_exports)) end as pct_exports_overlayOFF,
+    
+    --num_users_tried_preset,
+    --num_users_exported_at_least_twice,
+    100* num_users_tried_preset / num_users_seen as pct_users_clicked,
+    num_users_exported,
+    100* num_users_exported / num_users_seen as pct_users_exported,
+    100* num_users_exported_at_least_twice / num_users_seen as pct_users_exported_at_least_twice,
+    100* num_users_exported_at_least_twice / num_users_exported as pct_users_exported_at_least_twice_from_exporters,
+from (
+select
+    case when '{{level}}' in ('category','post in category') then u.feed_type else 'all' end as category,
+    --case when '{{level}}' = 'category' then 'all' else p.post_id end as post_id,
+    case when '{{level}}' = 'category' then 'all' else p.title end as title,
+    count(distinct concat(u.platform_device_id,'-',u.post_id,'-',u.session_id,'-',u.feed_id)) as impressions,
+    count(distinct case when u.actions = 'use_template' then u.action_id end) as try_preset_clicks,
+    count(distinct u.platform_device_id) as num_users_seen,
+    count(distinct case when u.actions = 'use_template' then u.platform_device_id end) as num_users_tried_preset,
+    -- sum(u.num_exports_from_beauty_qs) as num_exports_from_beauty_qs,
+    -- sum(u.num_exports_from_beauty_feed_in_home_tab) as num_exports_from_beauty_feed_in_home_tab,
+    -- sum(u.num_continue_to_edit) as num_continue_to_edit,
+    -- sum(u.num_accepted_in_editor) as num_accepted_in_editor,
+    sum(u.num_exports_from_beauty_qs) + sum(u.num_exports_from_beauty_feed_in_home_tab) + sum(u.num_continue_to_edit) + sum(u.num_accepted_in_editor) as num_exports,
+    sum(u.num_exports_from_beauty_qs_backdropOFF) + sum(u.num_exports_from_beauty_feed_in_home_tab_backdropOFF) + sum(u.num_continue_to_edit_backdropOFF) + sum(u.num_accepted_in_editor_backdropOFF) as num_exports_backdropOFF,
+    -- sum(u.num_exports_from_beauty_qs_backdropOFF),
+    -- sum(u.num_exports_from_beauty_feed_in_home_tab_backdropOFF),
+    -- sum(u.num_continue_to_edit_backdropOFF),
+    -- sum(u.num_accepted_in_editor_backdropOFF),
+    sum(u.num_exports_from_beauty_qs_filterOFF) + sum(u.num_exports_from_beauty_feed_in_home_tab_filterOFF) + sum(u.num_continue_to_edit_filterOFF) + sum(u.num_accepted_in_editor_filterOFF) as num_exports_filterOFF,
+    -- sum(u.num_exports_from_beauty_qs_filterOFF),
+    -- sum(u.num_exports_from_beauty_feed_in_home_tab_filterOFF),
+    -- sum(u.num_continue_to_edit_filterOFF),
+    -- sum(u.num_accepted_in_editor_filterOFF),
+    sum(u.num_exports_from_beauty_qs_makeupOFF) + sum(u.num_exports_from_beauty_feed_in_home_tab_makeupOFF) + sum(u.num_continue_to_edit_makeupOFF) + sum(u.num_accepted_in_editor_makeupOFF) as num_exports_makeupOFF,
+    -- sum(u.num_exports_from_beauty_qs_makeupOFF),
+    -- sum(u.num_exports_from_beauty_feed_in_home_tab_makeupOFF),
+    -- sum(u.num_continue_to_edit_makeupOFF),
+    -- sum(u.num_accepted_in_editor_makeupOFF),
+    sum(u.num_exports_from_beauty_qs_overlayOFF) + sum(u.num_exports_from_beauty_feed_in_home_tab_overlayOFF) + sum(u.num_continue_to_edit_overlayOFF) + sum(u.num_accepted_in_editor_overlayOFF) as num_exports_overlayOFF,
+    -- sum(u.num_exports_from_beauty_qs_overlayOFF),
+    -- sum(u.num_exports_from_beauty_feed_in_home_tab_overlayOFF),
+    -- sum(u.num_continue_to_edit_overlayOFF),
+    -- sum(u.num_accepted_in_editor_overlayOFF),
+    count(distinct case when (u.num_exports_from_beauty_qs + u.num_exports_from_beauty_feed_in_home_tab + u.num_continue_to_edit + u.num_accepted_in_editor) > 0 then u.platform_device_id end) as num_users_exported,
+    count(distinct case when (u.num_exports_from_beauty_qs + u.num_exports_from_beauty_feed_in_home_tab + u.num_continue_to_edit + u.num_accepted_in_editor) > 1 then u.platform_device_id end) as num_users_exported_at_least_twice,
+from usage_with_exports u
+left join posts p
+    on p.post_id = u.post_id
+group by 1,2--,3
+)
+where impressions >= {{minimum_impressions}}
+order by 7 desc

@@ -1,0 +1,39 @@
+/*
+    Name: VL iOS - RecSys in categories experiment - Templates impressions
+    Query ID: 40699
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-28T22:58:53.783Z
+    */
+    with experiment_users as (
+    select distinct
+        experiment,
+        variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = "videoleap"
+        and experiment = "feed_ios_recommendation_categories_02_20"
+        and display_type like "displayed%"      -- Feed users
+        and segmentation in ('02 New Users', '03 Existing Users' )
+)
+
+, data as (
+    select
+        ex.variant,
+        ex.segmentation,
+        count(distinct f.post_id) as num_templates
+    from experiment_users as ex
+    join `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` as f
+        on ex.id_for_vendor = f.platform_device_id
+        and ex.experiment_started_device < f.meta_received_at 
+    where true
+        and f.feed_type like "%category%"
+        and f.actions = "become_ready"
+    group by 1,2
+    having(count(distinct ex.id_for_vendor) > 20)
+)
+
+select 
+    *
+from data

@@ -1,0 +1,88 @@
+/*
+    Name: Felix - VL iOS - Discovery Screen - Screen Measures
+    Query ID: 42236
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-26T13:17:20.178Z
+    */
+    with users as (
+    select distinct
+        ii.platform_device_id,
+        date(ii.first_active_dt) as first_active_dt
+    from (select 
+                    platform_device_id,
+                    min(af.meta_received_at) as first_active_dt
+               from `ltx-dwh-prod-processed.app.feed_unnested_items_info` af
+               group by 1) ii
+)
+
+
+, feed_info as (
+    select distinct
+        ii.application,
+        ii.platform,
+        date(ii.meta_received_at) as dt,
+        ii.platform_device_id,
+        ii.meta_received_at,
+        ii.feed_id,
+        ii.session_id,
+        ii.feed_type,
+        ii.app_version_code,
+        ii.post_id,
+        ii.firstPresentedTime,
+        case when actions = 'use_template' then ii.action_id else null end as use_template_action_id,
+        case when date(ii.meta_received_at) = first_active_dt then 'day0' else 'non day0' end as day0
+    from users u 
+    inner join `ltx-dwh-prod-processed.app.feed_unnested_items_info` ii
+        on u.platform_device_id = ii.platform_device_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_home_subscreen_button_pressed` bp
+        on bp.id_for_vendor = ii.platform_device_id
+            and ii.run_id = bp.run_id
+            and bp.button_name like "%discover%"
+    where date_trunc(date(ii.meta_received_at), day) >= date_sub(current_date(), interval 60 day) -- last x days
+    --and date_trunc(current_date(), day) != date_trunc(date(ii.meta_received_at), day) -- not today
+    and date_trunc(date(ii.meta_received_at), day) < '2023-05-14'
+    and case when date(ii.meta_received_at) > '2022-11-10' and bp.id_for_vendor is null and cast(ii.app_version_code as int64) < 3612 and feed_type like '%discover%' then false else true end
+    )
+
+, total as (
+    select distinct
+        fi.platform_device_id,
+        fi.dt,
+        fi.day0,
+        case when lower(fi.feed_type) like '%category.recommended%' or fi.feed_type like '%for_you%' then 'Main Feed'
+             when lower(fi.feed_type) like '%discover.recommended%' then 'Discover Main Feed'
+             when lower(fi.feed_type) like '%discover.%' then 'Discover Categories'
+             when lower(fi.feed_type) like '%search%' then 'Search'
+             when fi.feed_type like '%categor%' then 'Main Categories'
+             when fi.feed_type like '%templates%' or fi.feed_type like '%liked%' or fi.feed_type like '%purchased%' then 'Profile'
+             when fi.feed_type = 'post_details' or fi.feed_type = 'remakes' then 'Remake screen'
+             else fi.feed_type end as feed_type,
+        concat(fi.post_id, feed_id) as post_id,
+        fi.feed_id,
+        fi.use_template_action_id
+    from feed_info fi
+    where fi.application = 'videoleap' and fi.platform = 'ios'
+     )
+   
+select
+    dt,
+    feed_type,
+    count(distinct feed_id) as feed_presentations,
+    count(distinct platform_device_id) as users,
+   (count(distinct feed_id)/count(distinct platform_device_id)) as feed_views_per_user,
+   (count(distinct post_id)/count(distinct feed_id)) as post_views_per_screen,
+   (count(distinct post_id)/count(distinct platform_device_id)) as post_views_per_user,
+   (count(distinct use_template_action_id)/count(distinct feed_id)) as use_template_per_screen,
+   (count(distinct use_template_action_id)/count(distinct post_id)) as use_template_per_post,
+   (count(distinct use_template_action_id)/count(distinct platform_device_id)) as use_template_per_user,
+from total
+where feed_type is not null
+
+    and feed_type in ('Main Feed','Search','Discover Main Feed') -- need to make sure of naming convention
+group by 1,2
+having users > 50
+order by dt asc, post_views_per_screen desc
+
+
+   
+   

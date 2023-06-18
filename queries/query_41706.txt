@@ -1,0 +1,53 @@
+/*
+    Name: Facetune: Monthly Post Trial Renewal Rates
+    Query ID: 41706
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-15T06:16:44.994Z
+    */
+    with subs as (
+    select
+        attribution.attribution_user_id,
+        subscription.had_trial,
+        subscription.subscription_duration,
+        payments.revenue_so_far > 0 as paid,
+        payments.number_of_payments,
+        original_purchase_date,
+        subscription.current_is_active,
+        row_number() over (partition by attribution.attribution_user_id order by original_purchase_date asc) as sub_number,
+        lead(subscription.had_trial) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_had_trial,
+        lead(subscription.subscription_duration) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_subscription_duration,
+        lead(payments.revenue_so_far) over (partition by attribution.attribution_user_id order by original_purchase_date asc) > 0 as next_paid,
+        lead(payments.number_of_payments) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_number_of_payments,
+        lead(original_purchase_date) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_original_purchase_date,
+        lead(subscription.current_is_active) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_current_is_active,
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation`
+    where application = 'facetune2'
+)
+
+, nums as (
+    select payment_number
+    from(select generate_array(1,24) as week_diff_array),unnest(week_diff_array) as payment_number
+)
+
+select distinct
+    payment_number,
+    count(distinct case when n.payment_number <= floor(timestamp_diff(current_timestamp(), s.next_original_purchase_date, day)/30) then attribution_user_id end) over () as total_reached,
+    count(distinct attribution_user_id) over (partition by payment_number) as total_users_who_could_have_renewed,
+    count(distinct case when n.payment_number <= s.next_number_of_payments then attribution_user_id end) over (partition by payment_number) as users_who_renewed,
+    100*count(distinct case when n.payment_number <= s.next_number_of_payments then attribution_user_id end) over (partition by payment_number)/count(distinct attribution_user_id) over (partition by payment_number) as pct_users_renewed_from_reached,
+    100*count(distinct case when n.payment_number <= s.next_number_of_payments then attribution_user_id end) over (partition by payment_number)/count(distinct case when n.payment_number <= floor(timestamp_diff(current_timestamp(), s.next_original_purchase_date, day)/30) then attribution_user_id end) over () as pct_users_renewed,
+from subs s
+join nums n
+    on n.payment_number <= floor(timestamp_diff(current_timestamp(), s.next_original_purchase_date, day)/30)
+    and n.payment_number <= s.next_number_of_payments + 1
+where true
+and sub_number = 1
+and had_trial
+and subscription_duration = '1y'
+and not current_is_active
+and not next_had_trial
+and next_subscription_duration = '1m'
+and next_paid
+and next_original_purchase_date >= '2021-10-01'
+and next_original_purchase_date <= '2022-03-01'
+

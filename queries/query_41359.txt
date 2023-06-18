@@ -1,0 +1,61 @@
+/*
+    Name: VL iOS - 2023 Initiatives - SMBs - Sub Duration Mix
+    Query ID: 41359
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-26T08:49:15.404Z
+    */
+    with users as (
+  select distinct
+    u.platform_device_id,
+   from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+    and date(d.first_active_dt) = date(u.meta_received_at)
+)
+
+
+, response as (
+    select  
+         u.platform_device_id,
+         case when origin_page_response is null then 'No Answer' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as response,
+    from users u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+, trans_rev as (
+    select distinct
+        r.platform_device_id,
+        r.response,
+        date(original_purchase_date) as purchase_dt, -- month payment is made
+        lt_subscription_id,
+        ss.subscription.subscription_duration
+    from response r
+    inner join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions` ss
+        on ss.device.platform_device_id = r.platform_device_id
+        and ss.license_applications ='videoleap'
+    where date(original_purchase_date) >= '2022-08-01'
+        and ss.subscription.subscription_duration in ('1y', '1m')
+    )
+
+select
+    date_trunc(purchase_dt,{{period}}) purchase_dt,
+    response,
+    count(distinct lt_subscription_id) as subs,
+    count(distinct case when subscription_duration = '1y' then lt_subscription_id end) as yearly_subs,
+    safe_divide(count(distinct case when subscription_duration = '1y' then lt_subscription_id end), count(distinct lt_subscription_id))*100 as yr_pct
+from trans_rev
+group by 1,2

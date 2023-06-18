@@ -1,0 +1,53 @@
+/*
+    Name: VL iOS - advanced filtering experiment - most selected filters
+    Query ID: 42347
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-30T22:03:16.155Z
+    */
+    with experiment_users as (
+    select distinct
+        experiment,
+        case when variant like "%Baseline" then "Baseline" 
+             when variant like "%Variant1" then "Variant1"
+             when variant like "%Variant2" then "Variant2" end as variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_device
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant`
+    where application = "videoleap"
+      and experiment = "feed_advanced_filtering_experiment_05_2023"
+      and display_type like "display%"
+      and segmentation = '{{segmentation}}'
+)
+
+, filters_raw as (
+    select
+      ex.variant,
+      bp1.event_id,
+      bp1.input_value,
+      filters,
+      ifnull(split(filters, ".")[offset(0)], "Nothing") as filter_type,
+      ifnull(split(filters, ".")[offset(1)], "Nothing") as filter,
+    from experiment_users as ex
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` as bp1
+      on bp1.app_name = "videoleap"
+      and bp1.platform_device_id = ex.id_for_vendor
+      and bp1.device_timestamp > ex.experiment_started_device
+      and bp1.button_identifier = "filters_apply"
+    left join unnest(json_extract_array(bp1.input_value)) as filters ON true
+)
+
+select 
+    *,
+    num_filters_type / num_times * 100 as pct_filetrs_type,
+    num_filter / num_times * 100 as pct_filetr,
+from (
+    select distinct
+        variant,
+        filter_type,
+        filter,
+        count(distinct event_id) over (partition by variant) as num_times,
+        count(distinct event_id) over (partition by variant, filter_type) as num_filters_type,
+        count(distinct event_id) over (partition by variant, filter) as num_filter,
+    from filters_raw
+)

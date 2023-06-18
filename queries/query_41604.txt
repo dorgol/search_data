@@ -1,0 +1,77 @@
+/*
+    Name: [FT-1094] Video: Delayed Toolbar: Import Export Rate (Photo & Video)
+    Query ID: 41604
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-29T08:12:32.224Z
+    */
+    with users as (
+    select
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = 'facetune2'
+    and display_type = '{{display}}'
+    and experiment = '[FT-1094] Video: Delayed Toolbar 1.1'
+    and segmentation in ('02 New Users')
+)
+
+
+select
+    segmentation,
+    variant,
+    '{{is_sub}}'  as is_sub,
+    'Photo' as import_type,
+    count(distinct l.editing_session_id) as imports,
+    count(distinct r.editing_session_id) as exports,
+    100*count(distinct r.editing_session_id)/count(distinct l.editing_session_id) as import_to_export_rate,
+    count(distinct l.editing_session_id)/count(distinct d.id_for_vendor) as imports_per_device,
+    count(distinct r.editing_session_id)/count(distinct d.id_for_vendor) as exports_per_device,
+from users d
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` l
+    on l.id_for_vendor = d.id_for_vendor
+    and date(l.meta_received_at) >= '2023-05-02'
+    and (l.meta_received_at) >= experiment_started_meta_by_type
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_image_exported` r
+    on l.id_for_vendor = r.id_for_vendor
+    and date(r.meta_received_at) >= '2023-05-02'
+    and (r.meta_received_at) >= experiment_started_meta_by_type
+    and l.editing_session_id = r.editing_session_id
+where true 
+and case when '{{is_sub}}' = 'All' then true
+    when '{{is_sub}}' = 'True' then coalesce(r.is_subscriber,l.is_subscriber,false)
+    when '{{is_sub}}' = 'False' then not coalesce(r.is_subscriber,l.is_subscriber,false)
+    end
+group by 1,2,3,4
+
+union all
+
+select
+    segmentation,
+    variant,
+    '{{is_sub}}'  as is_sub,
+    'Video' as import_type,
+    count(distinct l.ftv_editing_session_id) as imports,
+    count(distinct r.ftv_editing_session_id) as exports,
+    100*count(distinct r.ftv_editing_session_id)/count(distinct l.ftv_editing_session_id) as import_to_export_rate,
+    count(distinct l.editing_session_id)/count(distinct d.id_for_vendor) as imports_per_device,
+    count(distinct r.editing_session_id)/count(distinct d.id_for_vendor) as exports_per_device,
+from users d
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_feature_started` l
+    on l.id_for_vendor = d.id_for_vendor
+    and date(l.meta_received_at) >= '2023-05-02'
+    and (l.meta_received_at) >= experiment_started_meta_by_type
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported` r
+    on l.id_for_vendor = r.id_for_vendor
+    and date(r.meta_received_at) >= '2023-05-02'
+    and (r.meta_received_at) >= experiment_started_meta_by_type
+    and l.ftv_editing_session_id = r.ftv_editing_session_id
+where true 
+and case when '{{is_sub}}' = 'All' then true
+    when '{{is_sub}}' = 'True' then coalesce(r.is_subscriber,l.is_subscriber,false)
+    when '{{is_sub}}' = 'False' then not coalesce(r.is_subscriber,l.is_subscriber,false)
+    end
+group by 1,2,3,4
+
+order by 1,4,2

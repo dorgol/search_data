@@ -1,0 +1,60 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 - Feed Sessions and Try preset - totals by variant - from assignments
+    Query ID: 41952
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-17T06:23:37.424Z
+    */
+    
+with users as
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        and case when '{{variant}}' = 'all' then true
+            else '{{variant}}' = variant end
+        group by 1,2,3,4,5,6,7,8
+)
+
+
+
+    select
+        count(distinct case when f.session_id is not null then f.session_id end) num_feed_sessions,
+        count(distinct case when f.event_id is not null then f.event_id end) num_feed_entrances, --includes category switches
+        count(distinct case when w.event_id is not null then w.event_id end) num_try_preset,
+    from users u
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+        on true
+        and f.app_name = '{{app_name}}'
+        and f.platform_device_id = u.id_for_vendor
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '{{start_date}}'
+        and f.meta_received_at > u.experiment_started_meta
+        and f.external_flow_id like 'beauty%'
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_user_action_started` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.meta_source = '{{app_name}}'
+        and w.platform_device_id = f.platform_device_id
+        and w.flow_id = f.flow_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > f.meta_received_at
+        and w.action = 'use_template'

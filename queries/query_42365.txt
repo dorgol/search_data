@@ -1,0 +1,24 @@
+/*
+    Name: Feed posts ratio daily - monitoring for alerts (Old)
+    Query ID: 42365
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-30T19:51:36.596Z
+    */
+    select
+    application,
+    dt,
+    count(1) as num_rows,
+    count(distinct post_id) as num_posts,
+    sum(distinct_total_impressions) as impressions,
+    sum(total_clicks) as total_clicks,
+    sum(total_clicks_auto_edit) as total_clicks_auto_edit,
+    sum(distinct_export_pressed) as distinct_export_pressed,
+    sum(distinct_export_pressed_feed) as distinct_export_pressed_feed,
+    sum(distinct_export_pressed_auto_edit) as distinct_export_pressed_auto_edit,
+    avg(ctr) as ctr,
+    avg(distinct_export_rate) as distinct_export_rate,
+    avg(distinct_export_rate_feed) as distinct_export_rate_feed
+from `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily`
+where application in ({{application}})
+    and dt >= date('{{start time}}')
+group by 1,2

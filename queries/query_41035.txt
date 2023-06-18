@@ -1,0 +1,33 @@
+/*
+    Name: Installations by Country and App (Onboarding)
+    Query ID: 41035
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-17T15:21:28.223Z
+    */
+    with top_countries as (
+    select 
+        current_device_country as country, 
+        count(distinct lt_defacto_id) as count_install
+    from `ltx-dwh-prod-processed.agg.app_device`
+where current_device_country is not null
+and install_time is not null
+group by 1
+order by 2 desc 
+limit 8
+
+)
+
+
+select 
+    --current_device_country, 
+    (case 
+        when country is null then 'Other'
+        else country end) as country_bin,
+    vertical,
+    count(distinct lt_defacto_id) as count_installs
+from `ltx-dwh-prod-processed.agg.app_device`
+left join top_countries on top_countries.country = current_device_country
+where current_device_country is not null
+group by 1,2
+order by 2,3 desc
+

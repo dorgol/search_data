@@ -1,0 +1,210 @@
+/*
+    Name: VL iOS - Branded Templates Master - Funnel (Simply - TooShy Comparison)
+    Query ID: 40911
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-06T12:18:35.078Z
+    */
+    
+with bt_users as (
+    select distinct
+        dav.id_for_vendor,
+        dav.experiment_started_meta
+        
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_app_foregrounded` af
+    inner join `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+        on af.id_for_vendor = dav.id_for_vendor
+        and dav.experiment in ('IOS Feed Branded Campaign 11.22', 'IOS Feed Branded Campaign 01.23')
+        and segmentation = '01 All Users'
+        and display_type = 'activated_for_device'
+    --where date(dav.experiment_started_meta) >= '2023-03-21'
+)
+
+, actions as (
+
+  --select 'All Users' as action,
+  -- 1 as order_sort,
+  --    u.*
+  --from bt_users u
+  --
+  -- union all
+    
+    select '0. Post Seen' as action,
+        u.*,
+        case when date(ui.meta_received_at) >= '2023-03-21' then 'New' else 'Old' end as version
+    from bt_users u
+    join `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.actions = 'become_ready'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+                
+    union all
+    
+    select '1. Start Collab Pressed' as action,
+        u.*,
+        case when date(ui.meta_received_at) >= '2023-03-21' then 'New' else 'Old' end as version
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+    union all
+    
+    select '2. Context Screen Presented' as action,
+        u.*,
+        case when date(ui.meta_received_at) >= '2023-03-21' then 'New' else 'Old' end as version
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and ui.action_id = te.action_identifier
+    
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+        
+
+   union all
+   
+   
+       select '3. Import Screen Presented' as action,
+        u.*,
+        case when date(ui.meta_received_at) >= '2023-03-21' then 'New' else 'Old' end as version
+    from bt_users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+             
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and ui.action_id = te.action_identifier
+    
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_import_wizard_screen_presented` sp
+        on u.id_for_vendor = sp.id_for_vendor
+        and te.template_editing_flow_id = sp.template_editing_flow_id
+  
+  
+
+   union all
+    
+    select '4. Mini Editor Presented' as action,
+        u.*,
+        case when date(ui.meta_received_at) >= '2023-03-21' then 'New' else 'Old' end as version
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and ui.action_id = te.action_identifier
+    
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+        
+    --join `ltx-dwh-prod-raw.analytics.ios_videoleap_import_wizard_screen_presented` sp
+    --    on u.id_for_vendor = sp.id_for_vendor
+    --    and te.template_editing_flow_id = sp.template_editing_flow_id
+    --    and date(sp.meta_received_at) >= '2023-03-21'
+   
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editor_presented` ep
+        on u.id_for_vendor = ep.id_for_vendor
+        and ((ep.open_project_id = ui.open_project_id) or (ep.open_project_id = te.open_project_id))
+        
+        
+    union all
+
+    
+    select '5. Mini Editor Closed - Submit' as action,
+        u.*,
+        case when date(ui.meta_received_at) >= '2023-03-21' then 'New' else 'Old' end as version
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and ui.action_id = te.action_identifier
+    
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+    
+    --join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editor_presented` ep
+    --    on u.id_for_vendor = ep.id_for_vendor
+    --    and te.open_project_id = ep.open_project_id
+        
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported` sr
+        on u.id_for_vendor = sr.id_for_vendor
+        and ((ui.open_project_id = sr.open_project_id) or (te.open_project_id = sr.open_project_id))
+        and sr.reason = 'template editor submit button pressed'
+        
+    union all
+    
+    select '6. Save & Submit' as action,
+        u.*,
+        case when date(ui.meta_received_at) >= '2023-03-21' then 'New' else 'Old' end as version
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and ui.action_id = te.action_identifier
+    
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+   
+    --join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editor_presented` ep
+    --    on u.id_for_vendor = ep.id_for_vendor
+    --    and te.open_project_id = ep.open_project_id
+
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported` sr
+        on u.id_for_vendor = sr.id_for_vendor
+        and ((ui.open_project_id = sr.open_project_id) or (te.open_project_id = sr.open_project_id))
+        and sr.reason = 'template editor submit started'
+        
+    )
+    
+    
+ , final as  (select
+        a.version,
+        a.action,
+        post_seen_users,
+        count(distinct a.id_for_vendor) as users,
+        case when a.action != '0. Post Seen' then safe_divide(count(distinct a.id_for_vendor), post_seen_users)*100 else null end as pct_post_seen,
+        
+    from actions a
+    inner join (select version, count(distinct a.id_for_vendor) as post_seen_users
+                    from actions a where action = '0. Post Seen'
+                group by 1) t
+            on t.version = a.version
+    group by 1,2,3
+    )
+    
+select
+    *,
+    safe_divide(users, lag(users) over (partition by version order by action asc))*100 as pct_prev_step
+from final

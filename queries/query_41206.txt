@@ -1,0 +1,62 @@
+/*
+    Name: VL iOS - CVR from violation list by Pro feature used
+    Query ID: 41206
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-21T08:55:41.347Z
+    */
+    with devices as (
+select distinct
+    dd.platform_device_id as id_for_vendor,
+    date(dd.first_active_dt) as first_active_dt,
+    date(dt) as dt
+from `ltx-dwh-prod-processed`.`agg`.`app_device_date` dd
+where date_diff(date(current_date()), date(dd.dt), day) < {{last x days}}
+and dd.app_name = 'videoleap'
+)
+
+, pro_features as (
+select 
+        JSON_EXTRACT_SCALAR(list, "$.object_identifier") AS object_identifier,
+        JSON_EXTRACT_SCALAR(list, "$.violation_class") AS violation_class,
+        JSON_EXTRACT_SCALAR(list, "$.violation_name") AS violation_name,
+        JSON_EXTRACT_SCALAR(list, "$.instruction_name") AS instruction_name,
+        JSON_EXTRACT_SCALAR(list, "$.selected_option") AS selected_option,
+        presentation_id
+        
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_violations_list`, UNNEST(JSON_EXTRACT_ARRAY(violation_list)) AS list
+where meta_received_at >= '2023-01-01'
+ )
+
+select 
+    case when violation_name in ('Adjust', 'Tone Lab', 'Defocus','Freeze', 'Stickers','Point tracking','Colorfy') then violation_name
+        when violation_name is not null and instruction_name is null then violation_class
+        else instruction_name end as pro_feature,
+    count(distinct v.id_for_vendor) as num_users_violations_presented,
+    count(distinct r.id_for_vendor) as num_users_sub_requested,
+    count(distinct i.id_for_vendor) as num_users_purchase_initiated,
+    count(distinct s.id_for_vendor) as num_users_purchase_succeeded,
+    count(distinct r.id_for_vendor) / count(distinct v.id_for_vendor) *100 as pct_users_sub_requested,
+    count(distinct i.id_for_vendor) / count(distinct v.id_for_vendor) *100 as pct_users_initiate_purchase,
+    count(distinct s.id_for_vendor) / count(distinct v.id_for_vendor) *100 as cvr_from_violation_list,
+    case when count(distinct r.id_for_vendor) > 0 then count(distinct s.id_for_vendor) / count(distinct r.id_for_vendor) *100 else 0 end as cvr_from_sub_requested
+    
+from devices d
+join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_violations_presented` v
+    on d.id_for_vendor = v.id_for_vendor
+    and case when '{{day}}' = 'day0' then date(v.meta_received_at) = date(d.first_active_dt)
+                 when '{{day}}' = 'non day0' then date(v.meta_received_at) > date(d.first_active_dt)
+                 when '{{day}}' = 'all' then date(v.meta_received_at) >= date(d.first_active_dt) end
+left join pro_features f
+    on f.presentation_id = v.presentation_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_violations_requested_subscription` r
+    on r.presentation_id = v.presentation_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_presented` p
+    on p.id_for_vendor = r.id_for_vendor
+    and abs(timestamp_diff(p.device_timestamp, r.device_timestamp, second)) < 5
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_purchase_initiated` i
+    on i.presentation_id = p.presentation_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_purchase_succeeded` s
+    on s.presentation_id = p.presentation_id
+
+group by 1
+having num_users_violations_presented > 100 and pro_feature is not null

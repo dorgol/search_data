@@ -1,0 +1,15 @@
+/*
+    Name: Felix - Traffic (Onboarding)
+    Query ID: 41011
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-13T09:51:59.757Z
+    */
+    select 
+    media_source,
+    max(meta_received_at) as max_time
+from `ltx-dwh-prod-raw.analytics.backend_attribution_event`
+where contributor_3_touch_type = 'impression'
+group by 1
+
+
+

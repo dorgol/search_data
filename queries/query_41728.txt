@@ -1,0 +1,255 @@
+/*
+    Name: VL iOS - Feed Usage Funnel over time
+    Query ID: 41728
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-10T08:31:17.516Z
+    */
+    -- VL Feed Funnel
+
+
+with first_feed_active_date as (
+    select 
+        platform_device_id,
+        min(dt) as first_feed_active_dt
+    from `ltx-dwh-prod-processed.app.feed_unnested_items_info`
+    where application = "videoleap"
+        and platform = "ios"
+    group by 1
+ )
+ 
+
+, users as (
+        select distinct
+            ii.platform_device_id,
+            ii.first_feed_active_dt
+        from first_feed_active_date ii
+        )
+        
+, actions as (
+        
+        select
+            'Feed Presented' as action,
+            date_trunc(ui.meta_received_at,{{period}}) as dt,
+            count(distinct u.platform_device_id) as users,
+            count(distinct ui.run_id) as actions,        --sessions
+        from users u 
+        inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented` as ui
+            on u.platform_device_id = ui.platform_device_id 
+            and date_trunc(date(meta_received_at), {{period}}) >= date_sub(current_date(), interval {{last x days}} day)
+            and date_trunc(current_date(), {{period}}) != date_trunc(date(meta_received_at), {{period}})
+            and case when '{{Day}}' = "day0" then date(ui.meta_received_at) = date(u.first_feed_active_dt)
+                     when '{{Day}}' = "non day0" then date(ui.meta_received_at) > date(u.first_feed_active_dt) 
+                     else true end
+            and case when '{{subs}}' = "subs" then ui.is_subscriber
+                     when '{{subs}}' = "non subs" then not ui.is_subscriber
+                     else true end
+        group by 1,2
+          
+        -- union all    
+        
+        -- select 
+        --     'Feed Action Performed' as action,
+        --     date_trunc(ui.meta_received_at,{{period}}) as dt,
+        --     count(distinct u.platform_device_id) as users
+        -- from users u 
+        -- inner join ltx-dwh-prod-processed.app.feed_unnested_items_info ui
+        --     on u.platform_device_id = ui.platform_device_id
+        --     and actions is not null and actions != '' and actions != 'become_ready'
+        --     and ui.application = 'videoleap' and ui.platform = 'ios'
+        --     and date_trunc(date(meta_received_at), {{period}}) >= date_sub(current_date(), interval 120 day)
+        --     and date_trunc(current_date(), {{period}}) != date_trunc(date(meta_received_at), {{period}})
+        --     and case when '{{Day}}' = "day0" then date(ui.meta_received_at) = date(u.first_feed_active_dt)
+        --              when '{{Day}}' = "non day0" then date(ui.meta_received_at) > date(u.first_feed_active_dt) 
+        --              else true end
+        -- group by 1,2
+        
+        
+        union all
+        
+        select 
+            'Use template Clicked' as action,
+            date_trunc(ui.meta_received_at,{{period}}) as dt,
+            count(distinct u.platform_device_id) as users,
+            count(distinct ui.action_id) as actions
+        from users u 
+        inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ui
+            on u.platform_device_id = ui.platform_device_id
+            and action  = 'use_template'
+            and date_trunc(date(meta_received_at), {{period}}) >= date_sub(current_date(), interval {{last x days}} day)
+            and date_trunc(current_date(), {{period}}) != date_trunc(date(meta_received_at), {{period}})
+            and case when '{{Day}}' = "day0" then date(ui.meta_received_at) = date(u.first_feed_active_dt)
+                     when '{{Day}}' = "non day0" then date(ui.meta_received_at) > date(u.first_feed_active_dt) 
+                     else true end
+            and case when '{{subs}}' = "subs" then ui.is_subscriber
+                     when '{{subs}}' = "non subs" then not ui.is_subscriber
+                     else true end
+            and screen_name not like "%assets_first.%" 
+        group by 1,2
+    
+        union all
+        
+        select 
+            'Video Asset Imported' as action,
+            date_trunc(sd.meta_received_at,{{period}}) as dt,
+            count(distinct u.platform_device_id) as users,
+            count(distinct sd.event_id) as actions
+        from users u
+        inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_import_wizard_screen_dismissed` as sd
+            on u.platform_device_id = sd.id_for_vendor
+            and sd.reason = 'Next button pressed'
+            and date_trunc(date(meta_received_at), {{period}}) >= date_sub(current_date(), interval {{last x days}} day)
+            and date_trunc(current_date(), {{period}}) != date_trunc(date(meta_received_at), {{period}})
+            and case when '{{Day}}' = "day0" then date(sd.meta_received_at) = date(u.first_feed_active_dt)
+                     when '{{Day}}' = "non day0" then date(sd.meta_received_at) > date(u.first_feed_active_dt) 
+                     else true end
+            and case when '{{subs}}' = "subs" then sd.is_subscriber
+                     when '{{subs}}' = "non subs" then not sd.is_subscriber
+                     else true end
+        group by 1,2
+        
+        -- union all
+        
+        -- select 
+        --     'Mini-Editor Presented' as action,
+        --     date_trunc(ep.meta_received_at,{{period}}) as dt,
+        --     count(distinct u.platform_device_id) as users
+        -- from users u 
+        -- inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_template_editor_presented` as ep -- editing started from template
+        --     on u.platform_device_id = ep.id_for_vendor
+        --     and date_trunc(date(meta_received_at), {{period}}) >= date_sub(current_date(), interval 120 day)
+        --     and date_trunc(current_date(), {{period}}) != date_trunc(date(meta_received_at), {{period}})
+        --     and case when '{{Day}}' = "day0" then date(ep.meta_received_at) = date(u.first_feed_active_dt)
+        --              when '{{Day}}' = "non day0" then date(ep.meta_received_at) > date(u.first_feed_active_dt) 
+        --              else true end
+        -- group by 1,2   
+        
+        union all
+        
+         select 
+            'purchase started' as action,
+            date_trunc(ui.meta_received_at,{{period}}) as dt,
+            count(distinct u.platform_device_id) as users,
+            count(distinct ui.action_id) as actions
+        from users u 
+        inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ui
+            on u.platform_device_id = ui.platform_device_id
+            and action  = 'purchase_template'
+            and date_trunc(date(meta_received_at), {{period}}) >= date_sub(current_date(), interval {{last x days}} day)
+            and date_trunc(current_date(), {{period}}) != date_trunc(date(meta_received_at), {{period}})
+            and case when '{{Day}}' = "day0" then date(ui.meta_received_at) = date(u.first_feed_active_dt)
+                     when '{{Day}}' = "non day0" then date(ui.meta_received_at) > date(u.first_feed_active_dt) 
+                     else true end
+            and case when '{{subs}}' = "subs" then ui.is_subscriber
+                     when '{{subs}}' = "non subs" then not ui.is_subscriber
+                     else true end
+        group by 1,2
+            
+        union all
+        
+        select 
+            'purchase ended' as action,
+            date_trunc(ui.meta_received_at,{{period}}) as dt,
+            count(distinct u.platform_device_id) as users,
+            count(distinct ui.action_id) as actions
+        from users u 
+        inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` as ui
+            on u.platform_device_id = ui.platform_device_id
+            and action  = 'purchase_template'
+            and reason = "succeeded"
+            and date_trunc(date(meta_received_at), {{period}}) >= date_sub(current_date(), interval {{last x days}} day)
+            and date_trunc(current_date(), {{period}}) != date_trunc(date(meta_received_at), {{period}})
+            and case when '{{Day}}' = "day0" then date(ui.meta_received_at) = date(u.first_feed_active_dt)
+                     when '{{Day}}' = "non day0" then date(ui.meta_received_at) > date(u.first_feed_active_dt) 
+                     else true end
+            and case when '{{subs}}' = "subs" then ui.is_subscriber
+                     when '{{subs}}' = "non subs" then not ui.is_subscriber
+                     else true end
+        group by 1,2
+            
+        union all
+        
+        select
+            "Remake Export attempt" as action,
+            date_trunc(sr.meta_received_at,{{period}}) as dt,
+            count(distinct u.platform_device_id) as users,
+            count(distinct t.action_identifier) as actions
+        from users u
+        inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as t
+            on u.platform_device_id = t.id_for_vendor
+        inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported` as sr
+            on t.open_project_id = sr.open_project_id
+            and sr.reason like "%export button pressed"
+            and date_trunc(date(sr.meta_received_at), {{period}}) >= date_sub(current_date(), interval {{last x days}} day)
+            and date_trunc(current_date(), {{period}}) != date_trunc(date(sr.meta_received_at), {{period}})
+            and case when '{{Day}}' = "day0" then date(sr.meta_received_at) = date(u.first_feed_active_dt)
+                     when '{{Day}}' = "non day0" then date(sr.meta_received_at) > date(u.first_feed_active_dt) 
+                     else true end
+            and case when '{{subs}}' = "subs" then t.is_subscriber
+                     when '{{subs}}' = "non subs" then not t.is_subscriber
+                     else true end
+            -- and (t.flow_name is null or t.flow_name <> "assets_first")
+        group by 1,2
+            
+        -- union all
+        
+        -- select 
+        --     'Remake Exported' as action,
+        --     date_trunc(ex.meta_received_at,{{period}}) as dt,
+        --     count(distinct u.platform_device_id) as users
+        -- from users u
+        -- inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_export_started` xs
+        --     on u.platform_device_id = xs.id_for_vendor
+        -- inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_exported` ex
+        --     on xs.id_for_vendor = ex.id_for_vendor
+        --     and xs.export_id = ex.export_id
+        --     and date_trunc(date(ex.meta_received_at), {{period}}) >= date_sub(current_date(), interval {{last x days}} day)
+        --     and date_trunc(current_date(), {{period}}) != date_trunc(date(ex.meta_received_at), {{period}})
+        --     and case when '{{Day}}' = "day0" then date(ex.meta_received_at) = date(u.first_feed_active_dt)
+        --              when '{{Day}}' = "non day0" then date(ex.meta_received_at) > date(u.first_feed_active_dt) 
+        --              else true end
+        --     and xs.parent_template_id is not null
+        -- group by 1,2
+        
+        union all
+    
+        select 
+            'Post Published' as action,
+            date_trunc(a.meta_received_at,{{period}}) as dt,
+            count(distinct u.platform_device_id) as users,
+            count(distinct a.event_id) as actions
+        from users u
+        inner join `ltx-dwh-prod-raw.analytics_global.ltx_global_app_feed_post_published` a
+            on u.platform_device_id = a.platform_device_id
+            and date_trunc(date(meta_received_at), {{period}}) >= date_sub(current_date(), interval {{last x days}} day)
+            and date_trunc(current_date(), {{period}}) != date_trunc(date(meta_received_at), {{period}})
+            and case when '{{Day}}' = "day0" then date(a.meta_received_at) = date(u.first_feed_active_dt)
+                     when '{{Day}}' = "non day0" then date(a.meta_received_at) > date(u.first_feed_active_dt) 
+                     else true end
+            and case when '{{subs}}' = "subs" then a.is_subscriber
+                     when '{{subs}}' = "non subs" then not a.is_subscriber
+                     else true end
+        group by 1,2
+    
+    
+        )
+    
+, total_users as (
+        select 
+        dt,
+        max(users) over (partition by dt) as total_users,
+        max(actions) over (partition by dt) as total_sessions,
+        from actions a
+        where action = 'Feed Presented')
+    
+  --  select distinct action from actions
+        
+    select
+        *,
+        100*users/total_users as pct_of_users,
+        actions / users as actions_per_user
+    from actions a
+    join total_users t
+        on t.dt = a.dt
+    where action != 'Feed Presented' -- don't want to show feed presented in the chart, but need them for the %s
+
+    

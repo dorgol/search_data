@@ -1,0 +1,32 @@
+/*
+    Name: VL iOS - Exports per Exporter
+    Query ID: 42382
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-31T10:21:15.134Z
+    */
+    with data as (
+    select
+        date_trunc(ex.meta_received_at, {{Time granularity}}) as time,
+        "ios" as platform,
+        count(distinct ex.open_project_id) as num_projects,
+        count(distinct ex.export_id) as num_exports,
+        count(distinct ex.id_for_vendor) as num_exporters,
+        count(distinct case when te.parent_template_id is null then ex.export_id end) as num_original_exports,
+        count(distinct case when te.parent_template_id is not null then ex.export_id end) as num_remake_exports,
+        
+        count(distinct case when te.parent_template_id is null then ex.id_for_vendor end) as num_original_exporters,
+        count(distinct case when te.parent_template_id is not null then ex.id_for_vendor end) as num_remake_exporters,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as te
+        on te.export_id = ex.export_id
+    where date(ex.meta_received_at) >= '2023-01-01'
+        and date_trunc(date(ex.meta_received_at), {{Time granularity}}) < date_trunc(current_date(), {{Time granularity}})
+    group by 1,2
+)
+
+select
+    *,
+    safe_divide(num_exports, num_exporters) as exports_per_exporter,
+    safe_divide(num_remake_exports, num_remake_exporters) as remake_exports_per_exporter,
+    safe_divide(num_original_exports, num_original_exporters) as original_exports_per_exporter
+from data

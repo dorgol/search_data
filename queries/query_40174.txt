@@ -1,0 +1,63 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Whats new usage
+    Query ID: 40174
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-21T10:43:04.529Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1072]Lama Inpainting')
+    and display_type = '{{display_type}}'
+)
+
+select
+    segmentation,
+    variant,
+    count(distinct u.id_for_vendor) num_users,
+    count(distinct mp.platform_device_id) num_users_saw_whats_new,
+    count(distinct case when md.reason = 'accepted' then mp.platform_device_id end) num_users_accepted_whats_new,
+    count(distinct case when md.reason = 'background_tapped' or md.reason = 'closed' then mp.platform_device_id end) num_users_rejected_whats_new,
+    count(distinct mp.platform_device_id)/nullif(count(distinct u.id_for_vendor),0)*100 pct_users_saw_whats_new,
+    count(distinct case when md.reason = 'accepted' then mp.platform_device_id end)/nullif(count(distinct mp.platform_device_id),0)*100 pct_users_accepted_whats_new,
+    count(distinct case when md.reason = 'background_tapped' or md.reason = 'closed' then mp.platform_device_id end)/nullif(count(distinct mp.platform_device_id),0)*100 pct_users_rejected_whats_new,
+    count(distinct case when (md.reason = 'accepted' or timestamp_diff(fs.meta_received_at, md.meta_received_at, hour) between 0 and 24) then mp.platform_device_id end)/nullif(count(distinct mp.platform_device_id),0)*100 pct_users_accepted_whats_new_OR_entered_in_24h,
+from users u
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+    on true 
+    and mp.app_name = 'facetune2'
+    and mp.meta_received_at >= experiment_started_meta
+    and mp.platform_device_id = u.id_for_vendor
+    and message_name ='vanishWhatsNew'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` md
+    on true
+    and md.app_name = 'facetune2'
+    and md.meta_received_at >= experiment_started_meta
+    and md.flow_id = mp.flow_id
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+    on fs.app_name = 'facetune2'
+    and fs.meta_received_at >= '2023-03-01'
+    and fs.meta_received_at >= experiment_started_meta
+    and fs.platform_device_id = u.id_for_vendor
+    and feature_name = 'Patch'
+where true
+and variant <> 'Baseline'
+group by 1,2
+order by 1,2

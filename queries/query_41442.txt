@@ -1,0 +1,68 @@
+/*
+    Name: VL iOS - Interest Based Funnel V3 -  Q1 Answers
+    Query ID: 41442
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-28T14:23:18.482Z
+    */
+    with users as (
+    select distinct
+        dav.id_for_vendor as platform_device_id,
+        case when variant like '%Baseline' then 'Baseline'
+                     when variant like '%Variant1' then 'Variant1'
+                     when variant like '%Variant2' then 'Variant2' end as variant,
+        dav.segmentation,
+        dav.display_type,
+        dav.experiment_started_meta
+        
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+    where dav.experiment = 'vl_smb_feed_categories_3_2023'
+        and case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'No Segmentation' then segmentation = '01 All Users'
+                else true end
+        --and variant in ('Baseline' , 'Variant 1')
+        and case 
+                when '{{display}}' = 'Activated' then display_type = 'activated_for_device'
+                when '{{display}}' = 'Displayed' then display_type = 'displayed_vl_smb_feed_categories_3_2023' -- change this when we know the name
+                else true end
+)
+
+, questionnaire as (
+    select
+        variant,
+        origin_page_name,
+        case when origin_page_response is null then 'No answer'
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%content%' then 'Im a content creator'
+                when origin_page_response like '%fun%' then 'I edit for fun'
+                when origin_page_response like '%Other%' then 'Other' 
+                
+                when origin_page_response is null then 'No answer'
+                --when origin_page_response like '%fashion%' then 'fashion' 
+                --when origin_page_response like '%health%' then 'health and fitness' 
+                --when origin_page_response like '%travel%' then 'travel'
+                when origin_page_response like '%other%' then 'Other'
+                --when origin_page_response like '%["%' then 'Other' 
+                
+                else origin_page_response end as response,
+        count(distinct u.platform_device_id) as users
+    from users u 
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_presented` qp
+        on u.platform_device_id = qp.platform_device_id
+        and qp.app_name = 'videoleap'
+        and qp.platform = 'ios'
+        and qp.meta_received_at >= u.experiment_started_meta
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pt
+        on qp.platform_device_id = pt.platform_device_id
+        and pt.app_name = 'videoleap'
+        and pt.origin_page_name = 'So, what brings you here?'
+        and pt.meta_received_at >= u.experiment_started_meta
+    group by 1,2,3
+    )
+   
+   
+  select* from questionnaire

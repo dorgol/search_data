@@ -1,0 +1,57 @@
+/*
+    Name: android upload data validations
+    Query ID: 40128
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-07T12:24:36.648Z
+    */
+    -- select
+--     parent_template_id is null as is_original,
+--     "published" as source,
+--     count(distinct post_id)
+-- from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published`
+-- where platform = "ios"
+--     and export_error is null
+--     and date(meta_received_at) >= date_sub(current_date(), interval 2 day)
+-- group by 1,2
+
+-- union all
+
+--  select distinct 
+--         ex.parent_template_id is null as is_original,
+--         "export" as source,
+--         count(distinct post_id)
+--     from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` as p
+--     left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+--         on ex.export_id = p.export_id
+--     where p.platform = "ios"
+--         and date(p.meta_received_at) >= date_sub(current_date(), interval 2 day)
+--         and p.export_error is null
+--         -- and r.post_id is not null
+--     group by 1,2
+
+
+
+select
+    parent_template_id = "" as is_original,
+    "published" as source,
+    count(distinct post_id)
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_post_upload_ended`
+where platform = "android"
+    and export_error is null
+    and date(meta_received_at) >= date_sub(current_date(), interval 2 day)
+group by 1,2
+
+union all
+
+ select distinct 
+        ex.parent_template_id is null as is_original,
+        "export" as source,
+        count(distinct post_id)
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_post_upload_ended` as p
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` as ex
+        on ex.open_project_id = p.open_project_id
+    where p.platform = "android"
+        and date(p.meta_received_at) >= date_sub(current_date(), interval 2 day)
+        and p.export_error is null
+        -- and r.post_id is not null
+    group by 1,2

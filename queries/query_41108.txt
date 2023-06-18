@@ -1,0 +1,14 @@
+/*
+    Name: sessions with log in
+    Query ID: 41108
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-04-18T08:41:12.469Z
+    */
+    SELECT 
+    lt_id is null as logged_out_of_ft,
+    platform_user_id is null as logged_out_of_icloud,
+    count(distinct session_id)
+FROM `ltx-dwh-prod-raw.analytics_global.ltx_global_app_device_info_log` 
+WHERE DATE(meta_received_at) >= "2023-04-01" 
+and app_name = 'facetune2'
+group by 1,2

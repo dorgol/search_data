@@ -1,0 +1,20 @@
+/*
+    Name: FT iOS - Video - Preview to Editor - Over Time (Data issues?)
+    Query ID: 40179
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-09T09:27:14.873Z
+    */
+    select 
+    timestamp_trunc(ss.meta_received_at, {{date_part}}) date_part,
+    count(distinct ss.id_for_vendor) num_users_saw_preview,
+    count(distinct case when ftv_reason = 'apply' then se.id_for_vendor end) num_users_entered_editor,
+    count(distinct case when ftv_reason = 'apply' then se.id_for_vendor end)/nullif(count(distinct ss.id_for_vendor),0)*100 pct_users_saw_editor,
+    count(distinct case when ftv_reason = 'apply' then se.event_id end)/nullif(count(distinct ss.event_id),0)*100 pct_previews_saw_editor
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_import_preview_session_started` ss
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_import_preview_session_ended` se
+    on true
+    and se.ftv_import_preview_session_id = ss.ftv_import_preview_session_id
+where true
+and ss.meta_received_at >= '2021-12-01'
+group by 1
+order by 1

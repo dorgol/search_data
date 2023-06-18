@@ -1,0 +1,50 @@
+/*
+    Name: PL AI Scenes Overall Exports By Preset
+    Query ID: 40479
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-26T08:36:11.656Z
+    */
+    
+
+select *
+from
+(
+--exported_users as (
+  select 
+  --distinct
+  --ex_s.preset_name,
+  --split(ex_s.preset_name,'.')[offset(1)] as theme,
+case when ex_s.preset_name like ('Custom%') then 'Custom' else ex_s.preset_name end as theme,
+    count(distinct case when ex_s.export_source='ai_scenes' then ex_s.platform_device_id end) as exporters,
+    count(distinct case when ex_s.export_source='ai_scenes' then ex_s.process_id end) as exports
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+  left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as efs
+    on d.platform_device_id = efs.platform_device_id
+    and d.dt = date(efs.meta_received_at)
+    and efs.app_name='editor'
+    and efs.feature_name in (
+    --'ai_cars', 
+    'ai_scenes')
+
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` as ex_s
+    on efs.platform_device_id = ex_s.platform_device_id
+    and date(efs.meta_received_at) = date(ex_s.meta_received_at)
+    and ex_s.app_name='editor'
+    and ex_s.export_source in ('ai_scenes'
+    --,'ai_cars'
+    )
+    and  cast(ex_s.app_version_code as int64)  >= 4490
+  where dt >= "2023-03-05"
+    and dt < date_trunc(current_date, {{Time granularity}})
+    and d.app_name = "editor"
+    and d.platform = "ios"
+    and dt >= date_add(current_date(),interval -{{ last x days }} day)
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then d.dt = d.first_active_dt
+    when '{{Day}}' = "week0" then date_diff(d.dt, d.first_active_dt, day) <= 7
+        when '{{Day}}' = "non day0" then d.dt > d.first_active_dt
+        else true end
+    and ex_s.preset_name is not null
+  group by 1
+--)
+)

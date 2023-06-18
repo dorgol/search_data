@@ -1,0 +1,59 @@
+/*
+    Name: FT2 iOS - Time until export X
+    Query ID: 40010
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-05T02:40:13.448Z
+    */
+    with 
+users as (
+    select distinct
+        d.attribution_user_id,
+        lt_defacto_id,
+        first_session_id_ts
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user` d
+    left join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` a
+        on a.application = 'facetune2'
+        and d.attribution_user_id = a.attribution_user_id
+    where true
+    and d.app_name = 'facetune2'
+    and date_trunc(date(d.first_session_id_ts), day) = date_sub(current_date(), interval {{installed_x_days_back}} day) 
+    and date_trunc(current_date(), day) != date_trunc(date(d.first_session_id_ts), day)
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then d.current_store_country not in ('US','CN')
+        else d.current_store_country = '{{countries}}' end
+),
+
+exports as (
+    select
+        *,
+        count(distinct attribution_user_id) over (partition by export_num) total_users
+    from (
+        select
+            u.attribution_user_id,
+            row_number() over (partition by u.attribution_user_id order by e.event_timestamp asc) export_num,
+            timestamp_diff(meta_received_at, first_session_id_ts, day) days_to_export,
+        from users u
+        left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` e
+            on u.lt_defacto_id = farm_fingerprint('facetune2' || platform_device_id)
+            and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval {{installed_x_days_back}} day)
+            and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+    )
+    where true
+    and export_num <= 5
+    and days_to_export >= 0
+)
+
+select
+    *,
+    sum(pct_total_users) over (partition by export_num order by days_to_export asc) cumul_pct_exported
+from (
+    select
+        export_num,
+        days_to_export,
+        count(distinct attribution_user_id) as num_users,
+        count(distinct attribution_user_id)/max(total_users)*100 pct_total_users
+    from exports
+    group by 1,2
+)
+order by 1,2

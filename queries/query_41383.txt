@@ -1,0 +1,30 @@
+/*
+    Name: FT iOS - Video Screen Recordings - Conversion
+    Query ID: 41383
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-26T13:43:55.131Z
+    */
+    -- No overlap between tables
+
+
+select
+    date_trunc(meta_received_at, month) as event_timestamp_month,
+    date_trunc(meta_received_at, week) as event_timestamp_week,
+    date_trunc(meta_received_at, day) as event_timestamp_day,
+    sr.open_project_id,
+    count(distinct sr.editing_session_id) as num_recorded_sessions,
+    count(distinct export.open_project_id) as count_exports
+
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_screen_recording_started` sr
+left join (select distinct 
+                open_project_id
+            from 
+                `ltx-dwh-prod-raw.analytics_global.ltx_global_export_ended`
+                ) export using (open_project_id)
+where date(meta_received_at) >= date_sub(current_date(),interval 6 month)
+
+group by 1,2,3,4
+order by 1,2,3 asc
+limit 10
+
+--0FB001EC-26BD-44FF-8A41-1F682E228A79 export

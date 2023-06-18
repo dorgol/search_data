@@ -1,0 +1,16 @@
+/*
+    Name: Feed VL - % clicked posts
+    Query ID: 41056
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-16T13:13:13.798Z
+    */
+    select
+    date_trunc(dt, {{period}}) as dt,
+    count(distinct case when total_clicks > 0 then post_id end) as num_posts_clicked,
+    count(distinct case when distinct_total_impressions > 0 then post_id end) as num_posts_seen,
+    safe_divide(count(distinct case when total_clicks > 0 then post_id end), count(distinct case when distinct_total_impressions > 0 then post_id end))* 100 as pct_clicked_posts
+from `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily`
+where application = "videoleap"
+    and date_trunc(dt, {{period}}) >= "2022-09-01"
+    and dt < date_trunc(current_date(), {{period}})
+group by 1

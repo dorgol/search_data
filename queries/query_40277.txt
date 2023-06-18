@@ -1,0 +1,21 @@
+/*
+    Name: Facetune: Video Features Presence in Subscriber Exports
+    Query ID: 40277
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-13T07:08:44.815Z
+    */
+    select distinct
+    ftv_feature_name,
+    count(distinct e.ftv_editing_session_id) over () as exports,
+    count(distinct e.ftv_editing_session_id) over (partition by ftv_feature_name) as feature_exports,
+    100*count(distinct e.ftv_editing_session_id) over (partition by ftv_feature_name)/count(distinct e.ftv_editing_session_id) over () as pct_of_feature_in_exports,
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported` e
+join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_feature_ended` f
+    on e.id_for_vendor = f.id_for_vendor
+    and e.ftv_editing_session_id = f.ftv_editing_session_id
+    and f.ftv_did_update_render_model is true 
+    and f.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+where true
+and e.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+and e.is_subscriber
+order by 4 desc

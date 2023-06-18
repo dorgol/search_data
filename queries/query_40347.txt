@@ -1,0 +1,143 @@
+/*
+    Name: PL DND Avatar Funnel Android
+    Query ID: 40347
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-30T09:22:53.605Z
+    */
+    with screens as
+(
+select
+
+date(meta_received_at) as dt,
+count(distinct case when screen_name ='ai_avatar_welcome' then installation_id end) as welcome_screen,
+count(distinct case when screen_name ='dnd_ai_avatar_photo_selection_start' then installation_id end) as photo_selection,
+--count(distinct case when screen_name ='dnd_ai_avatar_photo_import' then platform_device_id end) as import_screen,
+count(distinct case when screen_name ='dnd_ai_avatar_gender_selection' then installation_id end) as gender_select_screen,
+count(distinct case when screen_name ='dnd_ai_avatar_video_result' then installation_id end) as video_result_screen,
+count(distinct case when screen_name ='dnd_ai_avatar_avatar_select' then installation_id end) as avatar_select_for_video,
+count(distinct case when screen_name ='dnd_ai_avatar_photo_selection_start' then feature_usage_id end) as feature_starts,
+count(distinct case when screen_name ='dnd_ai_avatar_bundle_export' then platform_device_id end) as dnd_pack_results,
+
+
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` 
+where app_name='editor_android'
+and meta_received_at>'2023-03-01'
+and screen_name in (
+'ai_avatar_welcome',
+'dnd_ai_avatar_photo_selection_start',
+--'dnd_ai_avatar_photo_import',
+'dnd_ai_avatar_gender_selection',
+'dnd_ai_avatar_video_result',
+'dnd_ai_avatar_avatar_select',
+'dnd_ai_avatar_bundle_export'
+
+)
+group by 1
+)
+
+
+,
+bp as
+(
+select 
+date(meta_received_at) as dt,
+count(distinct installation_id) as import_screen
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` 
+where app_name='editor_android'
+and meta_received_at>'2023-03-01'
+and screen_name in (
+--'ai_avatar_welcome',
+'dnd_ai_avatar_photo_selection_start'
+--,
+--'dnd_ai_avatar_photo_import',
+--'dnd_ai_avatar_gender_selection',
+--'dnd_ai_avatar_video_result',
+--'dnd_ai_avatar_avatar_select'
+
+)
+and button_identifier='accept'
+group by 1
+)
+
+,
+bp1 as
+(
+select 
+date(meta_received_at) as dt,
+count(distinct installation_id) as import_screen
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` 
+where app_name='editor_android'
+and meta_received_at>'2023-03-01'
+and screen_name ='dnd_ai_avatar_avatar_select'
+and button_identifier='create_video'
+group by 1
+)
+,
+generate  as
+(
+select
+
+count(distinct client_app_info.first_installation_id) as generated_avatar,
+date(created_at) as dt,
+count(distinct event_id) as generates
+from `ltx-dwh-prod-raw`.`analytics`.`backend_youniverse_job_generation`
+where lower(ARRAY_TO_STRING(pack_categories, '-')) LIKE '%dnd_paramount_collab%'
+and created_at > '2023-03-09 16:30:00' and status='READY'
+and client_app_info.platform='android'
+group by 2
+)
+,
+
+export as
+(select distinct
+date(meta_received_at) as dt,
+count(distinct case when asset_type='image' and  split(substr(export_source, 18 ),'_')[OFFSET(0)] in ('Sorcerer','Paladin','Barbarian','Druid','Bard') then installation_id end) as exported_dnd_image ,
+count(distinct case when asset_type='image' and  split(substr(export_source, 18 ),'_')[OFFSET(0)] in ('Sorcerer','Paladin','Barbarian','Druid','Bard') then process_id end) as dnd_image_exports ,
+count(distinct case when asset_type='video' then installation_id end) as exported_dnd_video,
+count(distinct case when asset_type='video' then process_id end) as dnd_video_exports
+
+
+from
+`ltx-dwh-prod-raw.analytics_global.ltx_global_export_started`
+where app_name='editor_android'
+and meta_received_at>'2023-03-08'
+and (export_source ='dnd_ai_avatar_video' or export_source like 'ai_avatar_bundle%')
+
+group by 1
+)
+
+select *,
+safe_divide(import_screen,photo_selection)*100 as import_screen_pct,
+safe_divide(gender_select_screen,photo_selection)*100 as gender_select_screen_pct,
+safe_divide(generated_avatar,photo_selection)*100 as generated_avatar_pct,
+safe_divide(exported_dnd_image,photo_selection)*100 as exported_dnd_image_pct,
+safe_divide(exported_dnd_video,photo_selection)*100 as exported_dnd_video_pct,
+safe_divide(avatar_select_for_video,photo_selection)*100 as avatar_select_for_video_pct,
+safe_divide(video_result_screen,photo_selection)*100 as video_result_screen_pct,
+safe_divide(feature_starts,photo_selection) as dnd_starts_per_user,
+safe_divide(generates,photo_selection) as generates_per_user,
+safe_divide(dnd_image_exports,photo_selection) as img_exports_per_user,
+safe_divide(dnd_video_exports,photo_selection) as vid_exports_per_user,
+
+
+
+from
+(
+select screens.*,
+generate.generated_avatar,
+generate.generates,
+export.exported_dnd_image,
+export.exported_dnd_video,
+export.dnd_video_exports,
+export.dnd_image_exports,
+bp.import_screen
+from screens
+left join generate on
+screens.dt=generate.dt
+left join export on
+screens.dt=export.dt
+left join bp 
+on
+screens.dt=bp.dt
+where screens.dt>='2023-03-09'
+)

@@ -1,0 +1,261 @@
+/*
+    Name: [FT-1067] Beauty Feed - retention rate per first exported post
+    Query ID: 41013
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-04-13T10:48:50.917Z
+    */
+    with users as
+(
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.experiment_started_meta_by_type,
+        d.display_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where 
+    true
+    and d.application = '{{app_name}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+    and d.display_type = 'reached home screen'
+    and date(d.experiment_started_meta) >= '2023-02-19'
+    and case 
+        when '{{segments}}' = 'All Users' then d.segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then d.segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+        else true end
+),
+
+feed_exports as (
+    select
+        u.experiment,
+        u.variant,
+        u.segmentation,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+        w.export_source as flow_and_actionid_source,
+        'save' as reason,
+        json_extract_scalar(split(w.preset_name,'_')[safe_offset(1)],'$.backdrop') as backdrop_state,
+        json_extract_scalar(split(w.preset_name,'_')[safe_offset(1)],'$.filter') as filter_state,
+        json_extract_scalar(split(w.preset_name,'_')[safe_offset(1)],'$.makeup') as makeup_state,
+        json_extract_scalar(split(w.preset_name,'_')[safe_offset(1)],'$.overlay') as overlay_state,
+        w.event_id,
+        w.device_timestamp,
+        w.meta_received_at
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` w
+        on w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and w.meta_received_at >= '2023-02-19'
+        and (w.export_source like 'beauty_feed_in_home_tab%' or w.export_source like 'beauty_quickstart%')
+
+    union all
+    
+        select
+        u.experiment,
+        u.variant,
+        u.segmentation,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+        case when f.reason = 'edit' then f.feature_usage_id
+            when f.reason = 'accepted' then f.sub_feature_state end as flow_and_actionid_source,
+        f.reason,
+        case when contains_substr(sub_feature_state, '"backdrop":"true"') then 'true' else 'false' end as backdrop_state,
+        case when contains_substr(sub_feature_state, '"filter":"true"') then 'true' else 'false' end as filter_state,
+        case when contains_substr(sub_feature_state, '"makeup":"true"') then 'true' else 'false' end as makeup_state,
+        case when contains_substr(sub_feature_state, '"overlay":"true"') then 'true' else 'false' end as overlay_state,
+        f.event_id,
+        f.device_timestamp,
+        f.meta_received_at
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` f
+        on f.app_name = '{{app_name}}'
+        and f.platform_device_id = u.id_for_vendor
+        and f.meta_received_at >= '2023-02-19'
+        and f.feature_name = 'BeautyPresets'
+        and f.reason in ('edit', 'accepted')
+),
+
+first_feed_export as (
+select * 
+from feed_exports
+qualify row_number() over (partition by id_for_vendor order by device_timestamp asc) = 1
+),
+
+
+posts as (
+    select distinct
+        post_id,
+        title,
+        row_number() over (partition by post_id order by server_timestamp desc) as row_num
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where true
+    and app_name = 'facetune'
+    and account_id is not null
+    and requirements[offset(0)] like 'beauty%'
+    qualify row_number() over (partition by post_id order by server_timestamp desc) = 1
+),
+
+
+last_items_info_per_feed_id as (
+   select date(meta_received_at) as dt,
+          *
+   from (
+         select
+              *,
+              row_number () over (partition by feed_id order by device_timestamp desc) as row
+          from  `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_usage_info`
+          where true
+          and items_info <> '[]'
+          and items_info is not null
+          and app_name = 'facetune2'
+          and date(meta_received_at) >= '2023-02-19'
+          and cast(app_version_code as int64) >= {{since_version}}
+)
+where row = 1
+),
+
+
+usage as (    
+select distinct
+    f1.feed_type,
+    f1.platform_device_id,
+    f1.post_id,
+    f1.dt,
+    f1.session_id,
+    f1.run_id,
+    f1.feed_id,
+    f2.actions,
+    f2.action_id
+from 
+    (
+    select
+        app_name,
+        platform,
+        dt,
+        platform_device_id,
+        feed_id,
+        meta_received_at, 
+        app_version_code,
+        `is_subscriber`,
+        event_id,
+        run_id,
+        session_id,
+        feed_description,
+        feed_type,
+        json_extract_scalar(items_info,"$.identifier.section.identifier") as post_id,
+        cast (json_extract_scalar(items_info,"$.sectionPositionInFeed") as int) as position,
+        cast (json_extract_scalar(items_info,"$.totalVisibleTime") as float64) totalVisibleTime,
+    from last_items_info_per_feed_id as fui,
+    unnest(json_extract_array(items_info)) as items_info
+    ) f1
+left join 
+    (
+    select
+        platform_device_id,
+        feed_id,
+        meta_received_at,
+        json_extract_scalar(items_info,"$.identifier.section.identifier") as post_id,
+        json_extract_scalar(selections,"$.actionType") as actions,
+        json_extract_scalar(selections,"$.actionIdentifier") action_id,
+        cast(json_extract_scalar(selections,"$.actionTime") as float64) action_time,
+    from last_items_info_per_feed_id as fui,
+    unnest(json_extract_array(items_info)) as items_info,
+    unnest(json_extract_array(items_info, "$.actions")) as selections
+
+    ) f2
+on f1.feed_id = f2.feed_id
+and f1.platform_device_id = f2. platform_device_id
+and f1.post_id = f2.post_id
+and f1.dt = date(f2.meta_received_at)
+where true
+and feed_type like '%beauty%'
+),
+
+usage_with_exports as (   
+    select
+        ex.experiment,
+        ex.variant,
+        ex.segmentation,
+        ex.id_for_vendor,
+        ex.experiment_started_meta,
+        case when ex.reason in ('save','edit') then split(ex.flow_and_actionid_source,'.')[safe_offset(0)] 
+            when ex.reason = 'accepted' then 'editor' end as source,
+        ex.reason,
+        ex.backdrop_state,
+        ex.filter_state,
+        ex.makeup_state,
+        ex.overlay_state,
+        ex.event_id,
+        ex.device_timestamp,
+        ex.meta_received_at,
+        u.feed_type,
+        u.post_id,
+        case when title is not null then title else u.post_id end as title,
+        u.dt,
+        u.session_id,
+        u.run_id,
+        u.feed_id,
+        u.actions,
+        u.action_id,
+    from first_feed_export ex
+    join usage u
+        on ex.id_for_vendor = u.platform_device_id
+        and case when ex.reason = 'save' then ends_with(ex.flow_and_actionid_source, u.action_id)
+                when ex.reason = 'edit' then ends_with(ex.flow_and_actionid_source, u.action_id)
+                when ex.reason = 'accepted' then left(split(ex.flow_and_actionid_source, '"actionID":"')[safe_offset(1)],36) = u.action_id
+                end
+    left join posts p
+        on p.post_id = u.post_id
+),
+
+
+retention as (
+    select
+        u.experiment,
+        u.variant,
+        u.segmentation,
+        u.id_for_vendor,
+        u.title,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 7, false) as week_0_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 14, false) as week_1_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 21, false) as week_2_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 28, false) as week_3_user,
+        max(date_diff(d.dt, date(experiment_started_meta), day) between 1 and 7) as retained_week_0,
+        max(date_diff(d.dt, date(experiment_started_meta), day) between 8 and 14) as retained_week_1,
+        max(date_diff(d.dt, date(experiment_started_meta), day) between 15 and 21) as retained_week_2,
+        max(date_diff(d.dt, date(experiment_started_meta), day) between 22 and 28) as retained_week_3,
+    from usage_with_exports u 
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device_date` d
+        on u.id_for_vendor = d.platform_device_id
+        and d.dt >= date(experiment_started_meta)
+        and d.dt >= '2023-02-19'
+        and d.app_name = 'facetune2'
+    group by 1,2,3,4,5,6,7,8,9
+)
+
+select
+    experiment,
+    --variant,
+    segmentation,
+    title,
+    count(distinct case when week_0_user then id_for_vendor end) as users_week_0,
+    count(distinct case when week_1_user then id_for_vendor end) as users_week_1,
+    count(distinct case when week_2_user then id_for_vendor end) as users_week_2,
+    count(distinct case when week_3_user then id_for_vendor end) as users_week_3,
+    count(distinct case when retained_week_0 and week_0_user then id_for_vendor end) as retained_week_0,
+    count(distinct case when retained_week_1 and week_1_user then id_for_vendor end) as retained_week_1,
+    count(distinct case when retained_week_2 and week_2_user then id_for_vendor end) as retained_week_2,
+    count(distinct case when retained_week_3 and week_3_user then id_for_vendor end) as retained_week_3,
+    100*count(distinct case when retained_week_0 and week_0_user then id_for_vendor end)/nullif(count(distinct case when week_0_user then id_for_vendor end),0) as pct_retained_week_0,
+    100*count(distinct case when retained_week_1 and week_1_user then id_for_vendor end)/nullif(count(distinct case when week_1_user then id_for_vendor end),0) as pct_retained_week_1,
+    100*count(distinct case when retained_week_2 and week_2_user then id_for_vendor end)/nullif(count(distinct case when week_2_user then id_for_vendor end),0) as pct_retained_week_2,
+    100*count(distinct case when retained_week_3 and week_3_user then id_for_vendor end)/nullif(count(distinct case when week_3_user then id_for_vendor end),0) as pct_retained_week_3,
+from retention
+where true
+group by 1,2,3--,4
+having users_week_0 > 100
+order by 13 desc

@@ -1,0 +1,67 @@
+/*
+    Name: [FT-1086] Video Toolbar Reorder - Feature Use
+    Query ID: 41511
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-02T07:37:07.490Z
+    */
+    with users as (
+    select
+        segmentation,
+        application,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else country end as country,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+        count(distinct id_for_vendor) over (partition by segmentation,variant) as total_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and case
+        when '{{countries}}' = 'Global' then true
+        when '{{countries}}' = 'Rest of the world' then country not in ('United States', 'China')
+        else country = '{{countries}}' end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) = lower('[FT-1086] Video Toolbar Reorder')
+    and display_type = 'reached video editor'
+)
+
+select
+    u.segmentation,
+    u.experiment,
+    u.country,
+    u.variant,
+    u.total_users,
+    s.ftv_feature_name,
+    count(distinct s.id_for_vendor) as users,
+    count(distinct s.ftv_feature_usage_id) as uses,
+    count(distinct e.ftv_feature_usage_id) as accepts,
+    count(distinct x.ftv_editing_session_id) as exports,
+    count(distinct s.ftv_feature_usage_id)/total_users as uses_per_user,
+    count(distinct e.ftv_feature_usage_id)/total_users as accepts_per_user,
+    count(distinct x.ftv_editing_session_id)/total_users as exports_per_user,
+    count(distinct e.ftv_feature_usage_id)/count(distinct s.ftv_feature_usage_id) as accept_ratio,
+from users u 
+join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_feature_started` s
+    on u.id_for_vendor = s.id_for_vendor
+    and u.experiment_started_meta_by_type <= s.meta_received_at
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_feature_ended` e
+    on u.id_for_vendor = e.id_for_vendor
+    and u.experiment_started_meta_by_type <= e.meta_received_at
+    and s.ftv_feature_usage_id = e.ftv_feature_usage_id
+    and e.ftv_did_update_render_model
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported` x
+    on u.id_for_vendor = x.id_for_vendor
+    and u.experiment_started_meta_by_type <= x.meta_received_at
+    and x.ftv_editing_session_id = e.ftv_editing_session_id
+    and e.meta_received_at <= x.meta_received_at
+group by 1,2,3,4,5,6
+order by 1,2,5,4

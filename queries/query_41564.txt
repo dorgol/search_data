@@ -1,0 +1,47 @@
+/*
+    Name: VL Android Onboarding check V3 Kinesis
+    Query ID: 41564
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-03T07:44:25.996Z
+    */
+    with questionnaire_lt_defacto as 
+(SELECT
+date(meta_received_at) as questionnaire_date,
+"videoleap" as application,
+farm_fingerprint (installation_id) as lt_defacto_id
+FROM `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_screen_visited`
+WHERE DATE(_PARTITIONTIME) >= "2022-07-01" 
+      and date(_PARTITIONTIME) <= date_add(current_date(), interval -1 day)
+      and screen_name = "questionnaire"
+group by 1,2,3)
+
+    , att_questionnaire as 
+(
+    select distinct 
+    u.app_name as application,
+    u.lt_defacto_id,
+    date(u.first_launch) as first_active_date,
+    case when qu.lt_defacto_id is null then 'no onboarding' else 'onboarding' end as onboarding
+from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as u
+left join questionnaire_lt_defacto qu
+on u.lt_defacto_id = qu.lt_defacto_id
+and date(first_active_dt) = questionnaire_date -- presented on day0
+where date(first_active_dt) >= "2022-07-01" and date(first_active_dt) < date(current_date())
+)
+
+select *
+from (
+        select *, 
+            sum (users) over (partition by day) as users_day, 
+            safe_divide(users, sum (users) over (partition by day))*100 as rate
+        from
+            (
+                select  date_trunc (first_active_date, day)  as day, 
+                        onboarding, count (distinct lt_defacto_id) as users
+                from att_questionnaire
+                where application = 'videoleap_android'
+                    and first_active_date >= '2023-01-01'
+                group by 1,2
+            )
+      )
+order by 1,2

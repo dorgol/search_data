@@ -1,0 +1,32 @@
+/*
+    Name: VL iOS - Remake exports by feed screen
+    Query ID: 41520
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-30T16:31:27.289Z
+    */
+    select
+    date_trunc(ex.meta_received_at, day) as dt,
+    case when '{{grouping}}' = 'see all screens' then ac.screen_name
+        else
+            case when lower(ac.screen_name) like '%category.recommended%' or ac.screen_name like '%for_you%' then 'Main Feed'
+                 when st.flow_name = "assets_first" then "assets_first"
+                 when lower(ac.screen_name) like '%discover.recommended%' then 'Discover Main Feed'
+                 when lower(ac.screen_name) like '%discover.%' then 'Discover Categories'
+                 when ac.screen_name like '%category.%' then 'Main Categories'
+                 when ac.screen_name like '%templates%' or ac.screen_name like '%liked%' or ac.screen_name like '%purchased%' then 'Profile'
+                 when ac.screen_name = 'post_details' or ac.screen_name = 'remakes' then 'Remake screen'
+                 when ac.screen_name like '%assets_first%' then 'assets_first'
+                 when ac.screen_name is null then "unknown"
+                 else ac.screen_name end 
+        end as screen_name,
+    count(distinct ex.export_id) as num_exports,
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as st
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac
+    on st.action_identifier = ac.action_id
+join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+    on st.open_project_id = exs.open_project_id
+    and exs.parent_template_id is not null
+join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+    on exs.export_id = ex.export_id
+where date_trunc(ex.meta_received_at, day) >= '2023-01-01'
+group by 1,2

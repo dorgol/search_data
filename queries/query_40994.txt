@@ -1,0 +1,64 @@
+/*
+    Name: (Joe) VL iOS - all users - day0 Conversion by App Version
+    Query ID: 40994
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-02T17:14:14.364Z
+    */
+    with installs as (
+    select 
+        d.id_for_vendor,
+        date(first_launch) as first_launch,
+        initial_version_code
+    from `ltx-dwh-prod-processed`.`devices`.`unified_devices` as d
+    where true
+        and date(first_launch) >= '2023-01-01'
+        and application = 'videoleap'
+        --and date_diff(date(current_date), date(d.first_launch), day) >7 -- out of trial period
+    )
+
+
+, subscriptions as (
+    select distinct 
+        i.id_for_vendor,
+        initial_version_code,
+        date(first_launch) as first_launch,
+        date_trunc(first_launch, {{Time granularity}}) as first_launch_dt,
+        date(ss.original_purchase_date) as original_purchase_date,
+        payments.revenue_so_far,
+        subscription.current_is_in_trial_period,
+        subscription.had_trial
+    from installs i
+    left join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions` ss
+        on ss.device.platform_device_id = i.id_for_vendor
+        and date(ss.original_purchase_date) >= first_launch
+        and license_applications ='videoleap'
+        --and days_until_subscription = 0
+        --and revenue_so_far >0
+        --and is_in_trial_period = false --only those out of trial period)
+        )
+
+, final as 
+    (select
+        --first_launch_dt,
+        initial_version_code,
+        count(distinct case when first_launch < date_sub(date_trunc(current_date(),day), interval {{conversion day}} day) then id_for_vendor end) as users,
+
+        count(distinct case when first_launch < date_sub(date_trunc(current_date(),day), interval {{conversion day}} day)
+                                 and date_diff(date(original_purchase_date), date(first_launch), day) <= {{conversion day}} then id_for_vendor end) as subs,
+        
+        count(distinct case when revenue_so_far >0 and current_is_in_trial_period = false and first_launch < date_sub(date_trunc(current_date(),day), interval {{conversion day}} day) 
+                                 and date_diff(date(original_purchase_date), date(first_launch), day) <= {{conversion day}} then id_for_vendor end) as paid_subs,
+                                 
+        count(distinct case when had_trial is true and current_is_in_trial_period = false and revenue_so_far > 0 then id_for_vendor end) as trial_paid_users,
+        count(distinct case when had_trial is true and current_is_in_trial_period is false then id_for_vendor end) as trial_users
+    from subscriptions
+    group by 1
+    )
+
+select
+    *,
+    safe_divide(subs, users)*100     as cvr,
+    safe_divide(paid_subs, users)*100     as paid_cvr,
+    safe_divide(trial_paid_users, trial_users)*100     as trial_to_paid
+from final
+where users > 10000  

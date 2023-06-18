@@ -1,0 +1,48 @@
+/*
+    Name: VL iOS & Android - SMBs - Total Users (all time)
+    Query ID: 40537
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-22T12:19:58.721Z
+    */
+    with users as (
+  select
+    'vl ios' as app_name,
+    u.platform_device_id
+    
+  from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and pq.app_name = 'videoleap'
+        and pq.origin_page_index = 0
+        and pq.origin_page_name = 'So, what brings you here?'
+    where origin_page_response like '%business%'
+        and u.app_name = 'videoleap'
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+
+UNION ALL
+
+  select
+    'vl android' as app_name,
+    u.installation_id as platform_device_id
+    
+  from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.installation_id = pq.installation_id
+        and pq.app_name = 'videoleap_android'
+        and pq.origin_page_index = 0
+        and pq.origin_page_name in ('So, what brings you here? v2', 'So, what brings you here?')
+    where origin_page_response like '%business%'
+    and u.app_name = 'videoleap_android'
+    qualify row_number() over (partition by u.installation_id order by pq.meta_received_at desc) = 1
+
+)
+
+select 
+    app_name,
+    count(distinct platform_device_id) as business_users,
+    (select count(distinct platform_device_id) from users) as total_business_users
+from users
+group by 1
+order by 2 desc

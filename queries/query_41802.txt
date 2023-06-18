@@ -1,0 +1,87 @@
+/*
+    Name: VL iOS - Effect Performance
+    Query ID: 41802
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-15T08:37:34.045Z
+    */
+    declare start_date date default '2023-01-01';
+
+with posts as (
+    select
+        post_id,
+        template_id,
+        parent_template_id is null as is_original,
+        split(requirements_flat, ".")[offset(0)] as effect_name,
+        requirements_flat as effect_full,
+        max(root_template_id) as root_template_id,
+        min(date(created_at)) as dt,
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`,
+        unnest(requirements) as requirements_flat
+    where date(created_at) > start_date
+        and app_name = "videoleap"
+    group by 1,2,3,4,5
+)
+
+, effects as (
+    select distinct
+        case when effect_full like "%transition%" then "transition"
+         when effect_full like "%soundEffect%" then "sound_effect"
+         when effect_full like "%voiceOver%" then "voice_over"
+         when effect_name in ("fishEye", "shake", "offset", "rays", "defocus", "crystal", "prism", "lensFlare", "colorfy", "vignette", "kaleidoscope","kaleidoscopeGrid", "filmGrain", "strobe" ) then "effects"
+         when effect_name in ("crt", "pixelate", "pulsar") then "glitch"
+         when effect_full like '%aiTransform%' then "AI_Transform"
+         when effect_name in ("adjust", "text", "clip", "sticker", "audio", "filters", "mixer", "toneLab", "canvas", "cutout") then effect_name
+        else "other" end as feature,
+        case when effect_name in ("crt", "pixelate", "pulsar","fishEye", "shake", "offset", "rays", "defocus", "crystal", "prism", "lensFlare", "colorfy", "vignette", "kaleidoscope","kaleidoscopeGrid", "filmGrain", "strobe" ) then effect_name
+        else 'other' end as effect,
+        is_original,
+        post_id
+    from posts p
+    where effect_name in ("crt", "pixelate", "pulsar","fishEye", "shake", "offset", "rays", "defocus", "crystal", "prism", "lensFlare", "colorfy", "vignette", "kaleidoscope","kaleidoscopeGrid", "filmGrain", "strobe" ) 
+),
+
+total_remakes as (
+
+    select distinct 
+        count(distinct post_id) as count_remakes
+    from effects
+
+),
+
+
+
+impressions as (
+
+    select distinct
+        post_id,
+        is_template,
+        distinct_total_impressions,
+        total_clicks,
+        distinct_export_started_feed
+    from 
+    `ltx-dwh-prod-processed.app.feed_posts_ratio_daily` f
+    
+    where dt >= start_date
+    and application = 'videoleap'
+)
+
+select 
+    feature,
+    effect,
+    t.count_remakes as total_remakes,
+    count(distinct post_id) as count_posts,
+    count(distinct case when is_template = 1 then post_id end) as count_remakes,
+    sum(distinct_total_impressions) as impressions,
+    sum(total_clicks) as clicks,
+    sum(distinct_export_started_feed) as exports,
+    (sum(distinct_export_started_feed)/sum(distinct_total_impressions))*100 as export_rate,
+    (count(distinct case when is_template = 1 then post_id end)/t.count_remakes)*100 as pct_remakes_containing_effect
+    
+
+from impressions
+inner join effects 
+    using (post_id)
+cross join total_remakes t
+where effect not in ('other')    
+
+group by 1,2,3

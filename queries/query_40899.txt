@@ -1,0 +1,76 @@
+/*
+    Name: VL iOS - Late CVR from users who started a project (original vs remake)
+    Query ID: 40899
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-05T08:43:53.467Z
+    */
+    with users as (
+    select distinct
+        'original' as project_type,
+        p.id_for_vendor,
+        p.meta_received_at
+    from  `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_project_created` p
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_ended` te
+        on te.open_project_id = p.project_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_device_info_log` d
+        on p.device_info_id = d.device_info_id
+    where (safe_cast(p.app_version as float64) < 2730 or safe_cast(p.app_version as float64) >2975)
+        and date_add(current_date(), interval -14 day) >= date(p.meta_received_at)
+        and te.open_project_id is null
+        and p.is_subscriber is false
+        and p.meta_received_at >= '2021-08-01'
+    
+    union all
+    
+    select distinct
+        'original' as project_type,
+        p.id_for_vendor,
+        p.meta_received_at
+    from  `ltx-dwh-playground.bi.ios_videoleap_project_created_backfill` p
+    left join  `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_project_created` pp
+        on pp.project_id=p.open_project_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_ended` te
+        on te.open_project_id = p.open_project_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_device_info_log` d
+        on pp.device_info_id = d.device_info_id
+    where date_add(current_date(), interval -14 day) >= date(p.meta_received_at)
+        and te.open_project_id is null
+        and pp.is_subscriber is false
+    
+        
+    union all
+    
+    select distinct
+        'remake' as project_type,
+        p.id_for_vendor,
+        p.meta_received_at
+    from  `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_project_created` p
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_ended` te
+        on te.open_project_id = p.project_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_device_info_log` d
+        on p.device_info_id = d.device_info_id
+    where date_add(current_date(), interval -14 day) >= date(p.meta_received_at)
+        and p.is_subscriber is false
+    )
+
+, final as (
+    select distinct
+        id_for_vendor,
+        meta_received_at
+    from users
+    where case when '{{project type}}' = 'all' then true else project_type = '{{project type}}' end)
+
+select
+    date_trunc(date(meta_received_at), week) as week,
+    count(distinct u.id_for_vendor) as num_users_created_project,
+    count(distinct ds.lt_subscription_id) as num_subscriptions,
+    count(distinct ds.lt_subscription_id) / count(distinct u.id_for_vendor) *100 as cvr,
+    count(distinct case when ds.revenue_so_far >0 then ds.lt_subscription_id end) / count(distinct u.id_for_vendor) *100 as paid_cvr
+
+from final u
+left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_state` ds
+    on u.id_for_vendor = ds.id_for_vendor
+    and ds.application = 'videoleap'
+    and date(ds.original_purchase_date) >= date(u.meta_received_at)
+    and date_diff(date(ds.original_purchase_date), date(u.meta_received_at), day) <= 14
+group by 1

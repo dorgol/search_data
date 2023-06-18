@@ -1,0 +1,58 @@
+/*
+    Name: VL iOS - Feed - Top Creators - Exports
+    Query ID: 41239
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-21T12:07:51.525Z
+    */
+    with creators as
+    (select
+        account_id,
+        post_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        template_id,
+        date(created_at) created_at
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where array_to_string(requirements, ",") not like "%feed_internal_testing%"
+            and account_id is not null)
+
+
+, exports as (
+    select distinct
+        pc.post_id,
+        pc.account_id,
+        pc.post_type,
+        date_trunc(date(pc.created_at), {{time granularity}}) as dt,
+        count(distinct ex.export_id) as num_exports
+    from creators pc
+    left join`ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` ex
+            on lower(ex.parent_template_id) = pc.template_id
+    where date(created_at) >= '{{from_date}}' and date(created_at) < current_date()
+    group by 1,2,3,4
+)
+
+, agg_per_creator as (
+    select
+        dt,
+        account_id,
+        count(distinct case when num_exports > {{post exports}} and post_type = 'Original'  then post_id end) as top_og_posts
+    from exports
+        inner join (select distinct dt as all_dt from exports) e
+            on all_dt >= dt
+    group by 1,2)
+    
+, post_metrics as (
+    select
+        dt,
+        count(distinct account_id) as all_creators,
+        count(distinct case when top_og_posts > 0 then account_id end) as top_og_creators
+    from agg_per_creator
+    group by 1
+    )
+    
+select
+    *,
+    safe_divide(top_og_creators,all_creators)*100 as top_og_creator_pct
+from post_metrics
+
+
+

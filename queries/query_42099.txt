@@ -1,0 +1,23 @@
+/*
+    Name: VL iOS - Post to Feed - Over Time
+    Query ID: 42099
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-22T12:12:15.164Z
+    */
+    -- VL Feed Funnel
+
+with users as (
+    select distinct
+        date_trunc(date(a.meta_received_at), {{period}}) as dt,
+        count(distinct a.platform_device_id) as post_to_feed_users,
+        
+        count(distinct case when parent_template_id is null then a.platform_device_id end) as post_to_feed_originals_users,
+        count(distinct case when parent_template_id is not null then a.platform_device_id end) as post_to_feed_remakes_users
+        
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_post_upload_ended` a
+    where date_trunc(date(a.meta_received_at), {{period}}) >= '2023-01-01' and date_trunc(date(a.meta_received_at), {{period}}) != date_trunc(date(current_date()), {{period}})
+    group by 1
+)
+
+
+select * from users

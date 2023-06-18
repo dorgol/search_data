@@ -1,0 +1,45 @@
+/*
+    Name: Projects Backfill Test
+    Query ID: 41169
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-19T14:57:37.277Z
+    */
+    with users as (
+    select distinct
+        'projects_created' as project_type,
+        p.id_for_vendor,
+        p.meta_received_at,
+        p.project_id as open_project_id,
+        case when date(p.meta_received_at) = date(ad.first_active_dt) then 'day0' else 'non-day0' end as day
+    from  `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_project_created` p
+    inner join `ltx-dwh-prod-processed`.`agg`.`app_device_date` as ad
+        on p.id_for_vendor = ad.platform_device_id
+    where p.meta_received_at >= '2021-08-01'
+    and (safe_cast(p.app_version as float64) < 2730 or safe_cast(p.app_version as float64) >2975)
+    and p.is_subscriber is false
+    
+    union all
+    
+    select distinct
+        'backfill' as project_type,
+        p.id_for_vendor,
+        p.meta_received_at,
+        p.open_project_id,
+        case when date(p.meta_received_at) = date(ad.first_active_dt) then 'day0' else 'non-day0' end as day
+    from  `ltx-dwh-playground.bi.ios_videoleap_project_created_backfill` p
+    inner join `ltx-dwh-prod-processed`.`agg`.`app_device_date` as ad
+        on p.id_for_vendor = ad.platform_device_id
+    left join  `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_project_created` pp
+        on pp.project_id=p.open_project_id
+    where pp.is_subscriber is false
+
+
+    )
+    
+select
+    date_trunc(date(meta_received_at), week) as dt,
+    day,
+    count(distinct open_project_id) as projects,
+    count(distinct id_for_vendor) as users
+from users
+group by 1,2

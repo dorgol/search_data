@@ -1,0 +1,44 @@
+/*
+    Name: Facetune Android: FrequentSubScreen - Sub Sources
+    Query ID: 42189
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-31T14:06:16.813Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.installation_id,
+        d.experiment_started_meta,
+        d.display_type,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+)
+
+
+select distinct
+    u.segmentation,
+    u.variant,
+    s.subscription_source,
+    count(distinct u.installation_id) over (partition by u.segmentation, u.variant, s.subscription_source) as users,
+    100*count(distinct u.installation_id) over (partition by u.segmentation, u.variant, s.subscription_source)/count(distinct u.installation_id) over (partition by u.segmentation, u.variant) as pct_of_subs,
+from users u 
+join `ltx-dwh-prod-processed.ab_test.raw_final_subs_and_variant` s
+    on u.experiment = s.experiment
+    and u.variant = s.variant
+    and u.segmentation = s.segmentation
+    and u.installation_id = s.installation_id
+    and s.original_purchase_date >= u.experiment_started_meta
+    and s.subscription_duration != 'l'
+    and s.product_category = 'subscription'
+

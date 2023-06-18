@@ -1,0 +1,40 @@
+/*
+    Name: Facetune Android: User Level SOL CVR by Version
+    Query ID: 40264
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-12T13:24:59.932Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(f.attribution_timestamp), {{period}}) as cohort_period,
+        attribution_user_id as user_id,
+        f.first_app_version,
+        s.lt_subscription_id is not null as is_subscriber,
+        floor(timestamp_diff(s.original_purchase_date,f.attribution_timestamp,hour)/24) as time_to_sub,
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user` f
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation` s
+        on s.application = 'facetune2_android'
+        and f.attribution_user_id = s.attribution.attribution_user_id
+        and date(s.original_purchase_date) >= date(f.attribution_timestamp)
+        and s.subscription.is_sol
+    where date_trunc(date(f.attribution_timestamp), {{period}}) >= date_sub(current_date(), interval 30 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(f.attribution_timestamp), {{period}})
+    and f.app_name = 'facetune2_android'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+
+)
+
+
+select
+    cohort_period,
+    first_app_version,
+    count(distinct user_id) as cohort_users,
+    count(distinct case when is_subscriber and time_to_sub = 0 then user_id end) as solsubs,
+    100*count(distinct case when is_subscriber and time_to_sub = 0 then user_id end)/nullif(count(distinct user_id),0) as sol_cvr,
+from users
+group by 1,2
+having cohort_users > 10000
+order by 1,2

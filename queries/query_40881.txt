@@ -1,0 +1,70 @@
+/*
+    Name: Facetune: AI Enhance V2 Experiment - Feature Cannibalisation
+    Query ID: 40881
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-04T09:40:13.872Z
+    */
+    with users as (
+    select
+        segmentation,
+        application,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else country end as country,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_device,
+        count(distinct id_for_vendor) over (partition by segmentation, experiment, variant) as total_users,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and case
+        when '{{countries}}' = 'Global' then true
+        when '{{countries}}' = 'Rest of the world' then country not in ('United States', 'China')
+        else country = '{{countries}}' end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%[FT-1088] AI Enhance V2%')
+    and display_type = 'entered_photo_editor'
+)
+
+select
+    segmentation,
+    variant,
+    country,
+    f.feature_name,
+    count(distinct f.id_for_vendor) as feature_users,
+    count(distinct e.id_for_vendor) as feature_accepters,
+    count(distinct e.id_for_vendor)/nullif(count(distinct f.id_for_vendor),0) as accepters_ratio,
+    count(distinct f.usage_id)  as feature_uses,
+    count(distinct e.usage_id)  as feature_accepts,
+    count(distinct e.usage_id)/nullif(count(distinct f.usage_id),0) as accept_ratio,
+    count(distinct e.usage_id)/nullif(count(distinct f.id_for_vendor),0) as accepts_per_user,
+    count(distinct i.editing_session_id)/nullif(count(distinct e.editing_session_id),0) as accept_export_rate,
+    count(distinct f.usage_id)/total_users as feature_uses_per_device,
+    100*count(distinct e.id_for_vendor)/total_users as pct_accepters,
+from users u
+join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` f
+    on u.id_for_vendor = f.id_for_vendor
+    and f.meta_received_at >= '2023-04-03'
+    and f.device_timestamp >= experiment_started_device
+    and feature_name in ('Looks', 'Retouch', 'Reshape', 'Paint', 'Face', 'Patch', 'Makeup', 'aiEnhance')
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_ended` e
+    on u.id_for_vendor = e.id_for_vendor
+    and e.usage_id = f.usage_id
+    and accepted
+    and e.meta_received_at >= '2023-04-03'
+    and e.device_timestamp >= experiment_started_device
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_image_exported` i
+    on u.id_for_vendor = i.id_for_vendor
+    and i.meta_received_at >= '2023-04-03'
+    and i.device_timestamp >= experiment_started_device
+    and e.editing_session_id = i.editing_session_id
+group by 1,2,3,4,total_users
+having feature_users > 100

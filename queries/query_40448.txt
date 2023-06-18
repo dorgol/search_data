@@ -1,0 +1,110 @@
+/*
+    Name: [FT-1057] Makeup LAM (Combined) - Conversion Timing
+    Query ID: 40448
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-20T10:47:40.472Z
+    */
+    with 
+users as (
+    select
+        u.*,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_displayed_users
+    from (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.country,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.display_type,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = '{{app}}'
+        and (
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Var%') or
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Var%')
+        )
+    ) u
+    where true
+    and display_type = '{{display_type}}'
+),
+
+first_makeup_entrance as (
+    select
+        u.id_for_vendor,
+        min(fs.device_timestamp) over (partition by u.id_for_vendor, segmentation, variant) first_makeup_entrance
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+        on fs.meta_received_at >= '2022-12-21'
+        and feature_name = 'Makeup'
+        and is_subscriber = false
+        and fs.meta_received_at >= experiment_started_meta
+        and fs.id_for_vendor = u.id_for_vendor
+),
+        
+subs as (
+    select
+        u.id_for_vendor,
+        s.revenue_so_far,
+        is_sol as sol_sub,
+        subscription_source,
+        first_subscription_duration as subscription_duration,
+        first_known_cancellation_date,
+        current_is_in_trial_period as is_in_trial_period,
+        had_trial,
+        original_purchase_date
+    from users u 
+    join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on true
+        and app_name = '{{app}}'
+        and s.original_purchase_date >= u.experiment_started_meta
+        and u.id_for_vendor = s.platform_device_id
+)
+
+select 
+    u.segmentation,
+    case when variant = 'Variant1' then 'Variant 1' else variant end as variant,
+    display_type,
+    count(distinct u.id_for_vendor) as num_subs,
+    count(distinct u.id_for_vendor)/max(total_displayed_users)*100 cvr,
+    
+    count(distinct case when first_makeup_entrance is null or original_purchase_date < first_makeup_entrance and subscription_source = 'firstTimeInInitialFlow' then u.id_for_vendor end)
+        /count(distinct u.id_for_vendor)*100 pct_convert_before_feature_usage_SOL,
+    count(distinct case when first_makeup_entrance is null or original_purchase_date < first_makeup_entrance and subscription_source != 'firstTimeInInitialFlow' then u.id_for_vendor end)
+        /count(distinct u.id_for_vendor)*100 pct_convert_before_feature_usage_non_SOL,
+    count(distinct case when original_purchase_date >= first_makeup_entrance and original_purchase_date <= timestamp_add(first_makeup_entrance, interval 7 day) then u.id_for_vendor end)
+        /count(distinct u.id_for_vendor)*100 pct_convert_after_feature_usage_before_LAM_end,
+    count(distinct case when original_purchase_date > timestamp_add(first_makeup_entrance, interval 7 day) and original_purchase_date <= timestamp_add(first_makeup_entrance, interval 14 day) then u.id_for_vendor end)
+        /count(distinct u.id_for_vendor)*100 pct_convert_after_LAM_end_7d,   
+    count(distinct case when original_purchase_date > timestamp_add(first_makeup_entrance, interval 14 day) then u.id_for_vendor end)
+        /count(distinct u.id_for_vendor)*100 pct_convert_after_LAM_end_14dplus,   
+    
+    -- of displayed
+    count(distinct case when (first_makeup_entrance is null or original_purchase_date < first_makeup_entrance) and subscription_source = 'firstTimeIninitialFlow' then u.id_for_vendor end)
+        /max(total_displayed_users)*100 pct_convert_before_feature_usage_SOL_of_displayed,
+    count(distinct case when (first_makeup_entrance is null or original_purchase_date < first_makeup_entrance) and subscription_source != 'firstTimeIninitialFlow' then u.id_for_vendor end)
+        /max(total_displayed_users)*100 pct_convert_before_feature_usage_non_SOL_of_displayed,
+    count(distinct case when original_purchase_date >= first_makeup_entrance and original_purchase_date <= timestamp_add(first_makeup_entrance, interval 7 day) then u.id_for_vendor end)
+        /max(total_displayed_users)*100 pct_convert_after_feature_usage_before_LAM_end_of_displayed,
+    count(distinct case when original_purchase_date > timestamp_add(first_makeup_entrance, interval 7 day) and original_purchase_date <= timestamp_add(first_makeup_entrance, interval 14 day) then u.id_for_vendor end)
+        /max(total_displayed_users)*100 pct_convert_after_LAM_end_7d_of_displayed,   
+    count(distinct case when original_purchase_date > timestamp_add(first_makeup_entrance, interval 14 day) then u.id_for_vendor end)
+        /max(total_displayed_users)*100 pct_convert_after_LAM_end_14dplus_of_displayed,   
+from users u
+left join first_makeup_entrance fm
+    on fm.id_for_vendor = u.id_for_vendor
+join subs s
+    on s.id_for_vendor = u.id_for_vendor
+where true
+group by 1,2,3
+order by 1,2,3

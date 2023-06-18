@@ -1,0 +1,19 @@
+/*
+    Name: Facetune Android: Home screen visits
+    Query ID: 42054
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-21T06:57:23.877Z
+    */
+    select distinct
+  home_screen_visits,
+  count(distinct installation_id) over (partition by home_screen_visits) as users,
+  count(installation_id) over (order by home_screen_visits desc)/count(distinct installation_id) over () as pct_users,
+from (
+  select
+      installation_id,
+      count(distinct screen_session_id) as home_screen_visits,
+  from `ltx-dwh-prod-raw.analytics.android_facetune2_home_screen_items_displayed`
+  where meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+  group by 1
+)
+order by 2 desc

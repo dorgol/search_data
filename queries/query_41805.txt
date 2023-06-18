@@ -1,0 +1,23 @@
+/*
+    Name: VL ios - experiments: num devices and subs over time (non US)
+    Query ID: 41805
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-12T08:24:41.250Z
+    */
+    select
+    days_from_first_day_of_experiment,
+    -- country,
+    sum(num_devices) as num_devices,
+    sum(num_subs) as num_subs,
+    sum(num_paid_subs) as num_paid_subs,
+from `ltx-dwh-prod-processed`.`ab_test`.`view_country_per_day`
+where true
+    and application = "videoleap"
+    and experiment = "feed_ios_recommendation_categories_02_20"
+    and display_type = "activated_for_device"
+    and country <> "US"
+    and segmentation = '{{segmentation}}'
+    and variant = "Baseline"
+    and days_from_first_day_of_experiment < 40
+group by 1
+order by 1,2

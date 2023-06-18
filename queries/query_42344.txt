@@ -1,0 +1,23 @@
+/*
+    Name: Facetune: Daily Feature Usage
+    Query ID: 42344
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-30T12:18:47.908Z
+    */
+    select
+    feature_name,
+    min(times_started) as min_daily_times_started,
+    avg(times_started) as avg_daily_times_started,
+    max(times_started) as max_daily_times_started,
+from (
+    select
+        date(meta_received_at) as dt,
+        feature_name,
+        count(distinct feature_usage_id) as times_started
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started`
+    where app_name = 'facetune2'
+    and date(meta_received_at) >= date_sub(current_date(), interval 30 day)
+    group by 1,2
+)
+group by 1
+order by 3 desc

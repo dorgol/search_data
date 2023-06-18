@@ -1,0 +1,28 @@
+/*
+    Name: FT iOS - Purchase Intent
+    Query ID: 41856
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-14T12:27:32.970Z
+    */
+    select
+    timestamp_trunc(se.meta_received_at, {{time_part}}) time_part,
+    count(distinct se.id_for_vendor) num_entered_sub_screen,
+    count(distinct se.event_id) num_times_entered_sub_screen,
+    count(distinct bp.event_id)/count(distinct se.event_id)*100 pct_clicked_subscribe_btn,
+    count(distinct case when sl.id_for_vendor is not null and sl.reason = 'PurchaseSucceeded' then bp.event_id end)/count(distinct se.event_id)*100 pct_clicked_subscribe_btn_and_succeed,
+    count(distinct case when sl.id_for_vendor is not null and sl.reason != 'PurchaseSucceeded' then bp.event_id end)/count(distinct se.event_id)*100 pct_clicked_subscribe_btn_and_fail,
+    -- Failures
+    -- count(distinct case when sl.id_for_vendor is not null and sl.reason = 'ByUser' then bp.event_id end)/count(distinct se.event_id)*100 pct_clicked_subscribe_btn_and_fail,
+
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_entered` se
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_subscribe_button_pressed` bp
+    on true
+    and date(bp.meta_received_at) >= date_sub(current_date(), interval {{days_back}} day)
+    and bp.store_session_id = se.store_session_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_left` sl
+    on true
+    and date(sl.meta_received_at) >= date_sub(current_date(), interval {{days_back}} day)
+    and sl.store_session_id = se.store_session_id
+where date(se.meta_received_at) >= date_sub(current_date(), interval {{days_back}} day)
+group by 1
+order by 1

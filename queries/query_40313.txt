@@ -1,0 +1,113 @@
+/*
+    Name: [FT-1071] AI Avatars Remove Banner - Editor funnel
+    Query ID: 40313
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-15T09:01:41.928Z
+    */
+    with users as (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            case when lower(experiment) like lower('%AI Avatars - Exp Baseline%') then 'Control' else d.variant end as variant,
+            d.segmentation,
+            d.country,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.display_type,
+            date(experiment_started_meta) as assignment_date,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        join `ltx-dwh-prod-raw.analytics_global.ltx_global_content_screen_presented`  hs
+            on d.id_for_vendor = hs.platform_device_id
+            and screen_name = 'home_screen'
+            and date(hs.meta_received_at) >= '2023-03-01'
+            and hs.meta_received_at > d.experiment_started_meta
+            and case when '{{period}}' = 'day0' then timestamp_diff(hs.meta_received_at, d.experiment_started_meta, day) <= 0
+                when '{{period}}' = 'day7' then timestamp_diff(hs.meta_received_at, d.experiment_started_meta, day) <= 7
+                when '{{period}}' = 'day14' then timestamp_diff(hs.meta_received_at, d.experiment_started_meta, day) <= 14
+                when '{{period}}' = 'day21' then timestamp_diff(hs.meta_received_at, d.experiment_started_meta, day) <= 21
+                when '{{period}}' = 'day28' then timestamp_diff(hs.meta_received_at, d.experiment_started_meta, day) <= 28
+                when '{{period}}' = 'day35' then timestamp_diff(hs.meta_received_at, d.experiment_started_meta, day) <= 35
+                when '{{period}}' = 'all' then true
+            end
+        where 
+        segmentation = '{{segmentation}}'
+        and  d.application = '{{app_name}}'
+        and (lower(d.experiment) like lower('%[FT-1071]%')
+            or lower(experiment) like lower('%AI Avatars - Exp Baseline%'))
+        and experiment_started_meta >= '{{first_day}}'
+        and display_type = '{{display_type}}'
+        and case when '{{period}}' = 'day0' then timestamp_diff(current_timestamp(), experiment_started_meta, day) > 0
+        when '{{period}}' = 'day7' then timestamp_diff(current_timestamp(), experiment_started_meta, day) > 7
+        when '{{period}}' = 'day14' then timestamp_diff(current_timestamp(), experiment_started_meta, day) > 14
+        when '{{period}}' = 'day21' then timestamp_diff(current_timestamp(), experiment_started_meta, day) > 21
+        when '{{period}}' = 'day28' then timestamp_diff(current_timestamp(), experiment_started_meta, day) > 28
+        when '{{period}}' = 'day35' then timestamp_diff(current_timestamp(), experiment_started_meta, day) > 35
+        when '{{period}}' = 'all' then true
+        end
+),
+
+data as (
+select
+    display_type,
+    segmentation,
+    variant,
+    count(distinct u.id_for_vendor) as users_reached_home_screen,
+    --count(distinct f.id_for_vendor) as reached_editor,
+    count(distinct f.id_for_vendor) as num_reached_editor,
+    count(distinct e.id_for_vendor) as num_exported_editor,
+    100* count(distinct f.id_for_vendor) / count(distinct u.id_for_vendor) as pct_reached_editor,
+    --count(distinct e.id_for_vendor) as exported_from_editor,
+    100* count(distinct e.id_for_vendor) / count(distinct u.id_for_vendor) as pct_exported_from_editor,
+from users u
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_started` f
+    on u.id_for_vendor = f.id_for_vendor
+    and date(f.meta_received_at) >= '2023-03-01'
+    and f.meta_received_at > u.experiment_started_meta
+    and case when '{{period}}' = 'day0' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 0
+        when '{{period}}' = 'day7' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 7
+        when '{{period}}' = 'day14' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 14
+        when '{{period}}' = 'day21' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 21
+        when '{{period}}' = 'day28' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 28
+        when '{{period}}' = 'day35' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 35
+        when '{{period}}' = 'all' then true
+        end
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_image_exported` e
+    on u.id_for_vendor = e.id_for_vendor
+    and date(e.meta_received_at) >= '2023-03-01'
+    and e.meta_received_at > u.experiment_started_meta
+    and case when '{{period}}' = 'day0' then timestamp_diff(e.meta_received_at, u.experiment_started_meta, day) <= 0
+        when '{{period}}' = 'day7' then timestamp_diff(e.meta_received_at, u.experiment_started_meta, day) <= 7
+        when '{{period}}' = 'day14' then timestamp_diff(e.meta_received_at, u.experiment_started_meta, day) <= 14
+        when '{{period}}' = 'day21' then timestamp_diff(e.meta_received_at, u.experiment_started_meta, day) <= 21
+        when '{{period}}' = 'day28' then timestamp_diff(e.meta_received_at, u.experiment_started_meta, day) <= 28
+        when '{{period}}' = 'day35' then timestamp_diff(e.meta_received_at, u.experiment_started_meta, day) <= 35
+        when '{{period}}' = 'all' then true
+        end
+group by 1,2,3
+)
+
+
+select
+    display_type,
+    segmentation,
+    users_reached_home_screen as num_total,
+    'Reached Editor' as milestone,
+    variant,
+    num_reached_editor as num,
+    pct_reached_editor as percentage
+from data
+
+union all
+
+select
+    display_type,
+    segmentation,
+    users_reached_home_screen as num_total,
+    'Exported From Editor' as milestone,
+    variant,
+    num_exported_editor as num,
+    pct_exported_from_editor as percentage
+from data
+
+order by 1,2,4,5

@@ -1,0 +1,18 @@
+/*
+    Name: PL iOS W1 Retention- Is Or Was Sub?
+    Query ID: 41372
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-26T11:58:19.495Z
+    */
+     SELECT date_trunc(cohort_date,week) as week,
+ is_or_was_sub,
+ sum(active_users) users_in_period,
+ sum(cohort_size) users_in_cohort,
+ sum(active_users)/sum(cohort_size)*100 as w1_retention
+ FROM `ltx-dwh-prod-processed.agg.usage_retention` WHERE 
+ app_name='editor'
+ and period_granularity='week'
+ and periods_from=1
+ and cohort_date>='2023-01-01'
+ group by 1,2
+ order by 1

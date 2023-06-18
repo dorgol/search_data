@@ -1,0 +1,27 @@
+/*
+    Name: Facetune: New Video Users
+    Query ID: 41110
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-18T09:20:59.229Z
+    */
+    select
+    count(distinct d.attribution_user_id) as new_users,
+    count(distinct case when v.id_for_vendor is not null then d.attribution_user_id end) as new_video_user,
+    100*count(distinct case when v.id_for_vendor is not null then d.attribution_user_id end)/count(distinct d.attribution_user_id) as new_video_pct,
+    count(distinct case when e.id_for_vendor is not null then d.attribution_user_id end) as new_video_exporter,
+    100*count(distinct case when e.id_for_vendor is not null then d.attribution_user_id end)/count(distinct d.attribution_user_id) as new_video_exporter_pct,
+from `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` d
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_hydra_video_chosen` v
+    on d.lt_defacto_id = farm_fingerprint('facetune2'||v.id_for_vendor)
+    -- and not v.is_subscriber
+    and v.meta_received_at <= timestamp_add(d.attribution_timestamp, interval 7 day)
+    and v.meta_received_at >= timestamp_sub(current_timestamp(), interval 60 day)
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_hydra_video_exported` e
+    on d.lt_defacto_id = farm_fingerprint('facetune2'||e.id_for_vendor)
+    -- and not v.is_subscriber
+    and e.meta_received_at <= timestamp_add(d.attribution_timestamp, interval 7 day)
+    and e.meta_received_at >= timestamp_sub(current_timestamp(), interval 60 day)
+where true
+and d.application = 'facetune2'
+and attribution_timestamp >= timestamp_sub(current_timestamp(), interval 60 day)
+and attribution_timestamp <= timestamp_sub(current_timestamp(), interval 7 day)

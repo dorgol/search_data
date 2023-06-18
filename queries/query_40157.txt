@@ -1,0 +1,37 @@
+/*
+    Name: Joe Test - PP - application
+    Query ID: 40157
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-08T11:17:12.658Z
+    */
+    select distinct
+    a.name,
+    date(a.created_at) as joined_date,
+    count(distinct case when 
+                ((pg.campaign_creator_match_id is null) or (ccm.invited_at is null)) 
+                                then pg.user_id end) as creators_applied,
+    count(distinct case when 
+            invited_at is not null
+                            then pg.user_id end) as creators_invited,
+                            
+    count(distinct pg.user_id) as total_creators,
+    count(distinct case when pg.accepted_at is not null then pg.user_id end) as total_accepted_creators,
+    
+    count(distinct case when pg.aasm_state = 'completed' then pg.user_id end) as creators_completed_campaign
+
+    
+from agencies a
+inner join merchants m
+    on m.agency_id = a.id
+left join campaigns c
+    on m.id = c.merchant_id
+left join paid_gigs pg
+    on pg.campaign_id = c.id
+    and pg.aasm_state not in ('replaced', 'cancelled')
+    and pg.accepted_at is not null
+left join campaign_creator_matches ccm
+        on ccm.id = pg.campaign_creator_match_id
+where true
+and a.name = 'Hometown'
+
+group by 1,2

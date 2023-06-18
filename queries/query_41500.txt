@@ -1,0 +1,66 @@
+/*
+    Name: 20230404 - [FT-1088] AI Enhance V2 - Feature Usage - Errors
+    Query ID: 41500
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-01T19:24:53.877Z
+    */
+    with 
+
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%[FT-1088] AI Enhance V2%')
+    and display_type = 'entered_photo_editor'
+    -- and variant = 'Variant 1'
+)
+
+select
+    * except(total_occurrances),
+    case 
+        when error_code = '-1001' then 'The request timed out.'
+        when error_code = '-1003' then 'A server with the specified hostname could not be found.'
+        when error_code = '-1004' then 'Could not connect to the server.'
+        when error_code = '-1005' then 'The network connection was lost.'
+        when error_code = '-1009' then 'The Internet connection appears to be offline.'
+        when error_code = '-1017' then 'cannot parse response'
+        when error_code = '-1020' then 'A data connection is not currently allowed.'
+        when error_code = '-1200' then 'An SSL error has occurred and a secure connection to the server cannot be made.'
+        when error_code = '-1205' then 'The server “storage.googleapis.com” did not accept the certificate.'
+        when error_code = '-999' then 'cancelled'
+        else error_code
+    end as error_code_description,
+    total_occurrances
+from (
+    select
+        segmentation,
+        case when variant = 'Variant1' then 'Variant 1' else variant end as variant,
+        ifnull(split(split(json_extract_scalar(sub_feature_state, '$.miscState.error'), 'NSURLErrorDomain Code=')[safe_offset(1)], ' ')[safe_offset(0)], json_extract_scalar(sub_feature_state, '$.miscState.error')) error_code,
+        -- json_extract_scalar(sub_feature_state, '$.miscState.error') error,
+        count(distinct fe.event_id) total_occurrances
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.app_name = 'facetune2'
+        and fe.meta_received_at >= '2022-12-21'
+        and fe.meta_received_at >= experiment_started_meta
+        and fe.platform_device_id = u.id_for_vendor
+        and feature_name = 'aiEnhance'
+    and json_extract_scalar(sub_feature_state, '$.miscState.error') is not null and json_extract_scalar(sub_feature_state, '$.miscState.error') <> ''
+    group by 1,2,3
+    order by 1,2,4 desc
+)

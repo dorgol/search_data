@@ -1,0 +1,22 @@
+/*
+    Name: VL iOS - Asset Bundles Purchase Query
+    Query ID: 41004
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-12T15:25:34.774Z
+    */
+     select distinct
+        en.reason,
+        count(distinct pos.platform_device_id) as purchase_started_users,
+        count(distinct pos.event_id) as purchase_started_events,
+        count(distinct en.platform_device_id) as purchase_ended_users,
+        count(distinct en.event_id) as purchase_ended_events,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_assets_purchase_order_summary` as pos, 
+    unnest(assets) as bundle_data
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_assets_purchase_ended` as en
+        on pos.flow_id = en.flow_id
+        --and en.reason = "success"
+    where true
+        and pos.app_name = "videoleap"
+        and pos.app_version_code <> "4001"
+        and date(pos.meta_received_at) >= "2023-04-02"
+    group by 1

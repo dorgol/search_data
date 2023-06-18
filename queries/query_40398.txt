@@ -1,0 +1,79 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1074] PN Provisional Access V2 - PN Status - By Session Number Since Start
+    Query ID: 40398
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-16T16:50:03.328Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        country
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%[FT-1074] PN Provisional Access V2%')
+    and display_type = '{{display}}'
+),
+
+-- In order to account for assignment and auth popup event timing, we are giving a buffer of 2 hr for the event send
+users_and_pn as (
+    select
+        *,
+        count(distinct id_for_vendor) over (partition by session_grouping,segmentation, variant) total_users,
+        count(distinct a_id_for_vendor) over (partition by session_grouping,segmentation, variant) total_users_auth
+    from (
+        select distinct
+            segmentation,
+            variant,
+            display_type,
+            u.id_for_vendor,
+            a.id_for_vendor as a_id_for_vendor,
+            first_value(permission_status) over (partition by segmentation, variant, u.id_for_vendor order by a.meta_received_at desc) as pn_status,
+            count(distinct d.session_id) over (partition by u.id_for_vendor, segmentation, variant) num_sessions_since_exp_start,
+            case when count(distinct d.session_id) over (partition by u.id_for_vendor, segmentation, variant) <= 1 then 'one session' else 'multiple sessions' end as session_grouping
+        from users u
+        left join `ltx-dwh-prod-processed`.`devices`.`unified_app_foregrounded` d
+            on u.id_for_vendor = d.id_for_vendor
+            and d.application = 'facetune2'
+            and d.meta_received_At >= timestamp_sub(experiment_started_meta, interval 2 hour)
+            and d.meta_received_At >= '2023-03-15'
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_authorization_status` a
+             on u.id_for_vendor = a.id_for_vendor
+             and a.meta_received_at >= timestamp_sub(experiment_started_meta, interval 2 hour)
+             and a.meta_received_at >= '2023-03-15'
+             and a.permission = 'push_notifications'
+    )
+)
+
+
+select 
+    segmentation,
+    variant,
+    display_type,
+    session_grouping,
+    max(total_users) as all_users,
+    max(total_users_auth) as all_users_auth,
+    count(distinct case when pn_status = 'provisional' then id_for_vendor end)/max(total_users)*100 as pct_provisional,
+    count(distinct case when pn_status = 'authorized' then id_for_vendor end)/max(total_users)*100 as pct_authorized,
+    count(distinct case when pn_status = 'denied' then id_for_vendor end)/max(total_users)*100 as pct_denied,
+    count(distinct case when pn_status = 'not_determined' then id_for_vendor end)/max(total_users)*100 as pct_not_determined,
+    count(distinct case when pn_status is null then id_for_vendor end)/max(total_users)*100 as pct_no_status,
+    count(distinct case when pn_status in ('provisional','authorized','denied','not_determined') or pn_status is null then id_for_vendor end)/max(total_users)*100 as pct_total_sum
+from users_and_pn
+group by 1,2,3,4
+order by 1,4,2,3

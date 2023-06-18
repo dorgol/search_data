@@ -1,0 +1,34 @@
+/*
+    Name: Facetune Android: Looks Accept Rates
+    Query ID: 41978
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-18T11:56:23.959Z
+    */
+    with sub_features as (
+    select
+        feature_usage_id,
+        sub_feature,
+        row_number() over (partition by feature_usage_id order by device_timestamp desc) as usage_order
+    from `ltx-dwh-prod-raw.analytics.android_facetune2_sub_feature_started` s
+    where true
+    and s.feature = 'LOOKS'
+    and s.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+
+
+)
+
+
+select
+    s.sub_feature,
+    count(distinct s.feature_usage_id) as sub_feature_uses,
+    count(distinct case when usage_order = 1 and e.accepted then e.feature_usage_id end) as accepts,
+    100*count(distinct case when usage_order = 1 and e.accepted then e.feature_usage_id end)/count(distinct s.feature_usage_id) as accept_rate
+from sub_features s
+join `ltx-dwh-prod-raw.analytics.android_facetune2_feature_ended` e
+    on e.feature = 'LOOKS'
+    and s.feature_usage_id = e.feature_usage_id
+    and e.is_subscriber
+    and e.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+where true
+group by 1
+order by 4 desc

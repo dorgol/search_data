@@ -1,0 +1,32 @@
+/*
+    Name: Facetune: Subscriptions per Period by type and new vs late
+    Query ID: 40060
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-07T07:41:07.629Z
+    */
+    with trans as (
+    select
+        date_trunc(date(original_purchase_date), {{period}}) as period,
+        round(count(distinct case when payments.month0_late = 'month0' and subscription.subscription_duration = '1y'  then lt_subscription_id end),0) as new_yearly_subs,
+        round(count(distinct case when payments.month0_late = 'month0' and subscription.subscription_duration = '1m' then  lt_subscription_id end),0) as new_monthly_subs,
+        round(count(distinct case when payments.month0_late != 'month0' and subscription.subscription_duration = '1y' then lt_subscription_id end),0) as late_yearly_subs,
+        round(count(distinct case when payments.month0_late != 'month0' and subscription.subscription_duration = '1m' then lt_subscription_id end),0) as late_monthly_subs,
+        round(count(distinct case when payments.month0_late = 'month0'  and subscription.subscription_duration = 'l' then lt_subscription_id end),0) as new_otp_subs,
+        round(count(distinct case when payments.month0_late != 'month0' and subscription.subscription_duration = 'l' then lt_subscription_id end),0) as late_otp_subs,
+        round(count(distinct case when subscription.product_category = 'asset' then lt_subscription_id end),0) as asset_subs,
+        round(count(distinct lt_subscription_id),0) as total_subs,
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation_cross_sell` t
+    where application = 'facetune2'
+    and date_trunc(date(original_purchase_date), {{period}}) >= date_sub(current_date(), interval 180 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(original_purchase_date), {{period}})
+    and projected.adjusted_revenue_so_far_alloc_cs > 0
+    and case 
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then subscription.current_subscription_store_country not in ('US','CN')
+        else subscription.current_subscription_store_country = '{{countries}}' end
+    group by 1
+)
+select
+    trans.*,
+from trans
+order by 1

@@ -1,0 +1,31 @@
+/*
+    Name: PL Heal time taken
+    Query ID: 41144
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-19T11:55:56.192Z
+    */
+    select distinct
+date_trunc(meta_received_at, day) as dt,
+--json_extract_scalar(process_details,"$.time_taken") as success,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.1 ) OVER(partition by date_trunc(meta_received_at, day)) as p10,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.2 ) OVER(partition by date_trunc(meta_received_at, day)) as p20,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.3 ) OVER(partition by date_trunc(meta_received_at, day)) as p30,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.4 ) OVER(partition by date_trunc(meta_received_at, day)) as p40,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.5 ) OVER(partition by date_trunc(meta_received_at, day)) as p50,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.6 ) OVER(partition by date_trunc(meta_received_at, day)) as p60,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.7 ) OVER(partition by date_trunc(meta_received_at, day)) as p70,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.8 ) OVER(partition by date_trunc(meta_received_at, day)) as p80,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.9 ) OVER(partition by date_trunc(meta_received_at, day)) as p90,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.25 ) OVER(partition by date_trunc(meta_received_at, day)) as p25,
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.75 ) OVER(partition by date_trunc(meta_received_at, day)) as p75,
+--count(distinct process_id),
+PERCENTILE_CONT (cast(json_extract_scalar(process_details,"$.time_taken") as float64), 0.98 ) OVER(partition by date_trunc(meta_received_at, day)) as p98,
+
+--process_details
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_process_ended`
+where app_name='editor'
+and meta_received_at>='2023-04-01'
+and process_name='remove_object_request'
+--and json_extract_scalar(process_details,"$.succeeded")='true'
+--and json_extract_scalar(process_details,"$.was_retry")='true'
+--group by 1,2

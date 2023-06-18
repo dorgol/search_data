@@ -1,0 +1,79 @@
+/*
+    Name: 20230404 - [FT-1088] AI Enhance V2 - Feature Usage - Loading Time Distribution - Comparison
+    Query ID: 41498
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-01T19:22:44.917Z
+    */
+    with 
+
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%[FT-1088] AI Enhance V2%')
+    and display_type = 'entered_photo_editor'
+    -- and variant = 'Variant 1'
+)
+
+select
+    segmentation,
+    variant,
+    -- reason,
+    case 
+        when processing_time between 0 and 1 then '0.0 - 1.0'
+        when processing_time between 1.1 and 2 then '1.1 - 2.0'
+        when processing_time between 2.1 and 3 then '2.1 - 3.0'
+        when processing_time between 3.1 and 4 then '3.1 - 4.0'
+        when processing_time between 4.1 and 5 then '4.1 - 5.0'
+        when processing_time between 5.1 and 6 then '5.1 - 6.0'
+        when processing_time between 6.1 and 7 then '6.1 - 7.0'
+        when processing_time between 7.1 and 8 then '7.1 - 8.0'
+        when processing_time between 8.1 and 9 then '8.1 - 9.0'
+        when processing_time between 9.1 and 10 then '9.1 - 10.0'
+        when processing_time > 10.1 then '> 10'
+        when is_network_available = 'false' then 'no network'
+        when selected_face = '' then 'no faces'
+        -- else sub_feature_state
+        else 'left before processing finished'
+    end as processing_time,
+    count(distinct event_id) num_uses,
+    count(distinct event_id)/ max(total_num_ended)*100 pct_total_uses
+from (
+    select
+        segmentation,
+        case when variant = 'Variant1' then 'Variant 1' else variant end as variant,
+        reason,
+        round(safe_cast(json_extract_scalar(sub_feature_state, '$.miscState.processingDurationInSeconds') as float64),1) processing_time,
+        json_extract_scalar(sub_feature_state, '$.miscState.selectedFace') selected_face,
+        json_extract_scalar(sub_feature_state, '$.deviceState.networkIsAvailable') is_network_available,
+        json_extract(sub_feature_state, '$.inputModels') inputModels,
+        u.id_for_vendor,
+        fe.event_id,
+        sub_feature_state,
+        count(distinct fe.event_id) over (partition by segmentation, variant, reason) total_num_ended
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.app_name = 'facetune2'
+        and fe.meta_received_at >= '2023-04-03'
+        and fe.meta_received_at >= experiment_started_meta
+        and fe.platform_device_id = u.id_for_vendor
+        and feature_name = 'aiEnhance'
+)
+where (inputModels is null or inputModels = '[]' or inputModels like '%sliderValue%')
+group by 1,2,3
+order by 1,3

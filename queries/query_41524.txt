@@ -1,0 +1,32 @@
+/*
+    Name: PL W1 Retention
+    Query ID: 41524
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-02T10:31:23.035Z
+    */
+    SELECT
+    date_trunc(date(first_active_dt),day) as cohort_date,
+    date_trunc(date(first_active_dt),week) as cohort_week,
+    'week' as period_granularity,
+dt,
+--attribution_user_id,
+
+--attribution.winning_lt_defacto_id,
+    date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week) as periods_from,
+    count(distinct attribution_user_id) as users,
+
+FROM
+ 
+    `ltx-dwh-prod-processed.agg.app_attribution_user_date`
+where true
+    and dt >= date_trunc(date_sub(date(current_date()), interval 3 year),week)
+    and dt < date_trunc(current_date() ,week)
+    and date(first_active_dt) >= date_trunc(date_sub(date(current_date()), interval 6 month),week)
+    and app_name='editor'
+ and     date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week)<=1
+and date(first_active_dt)in ('2023-04-01','2023-04-02')
+--    and date_trunc(date(attribution_timestamp),week)>= '2022-01-01' -- to delete
+--    and date_trunc(date(first_active_dt),week) = '2022-01-01' -- to delete
+--    and app_name = 'facetune2_android_china' -- to delete
+group by 1,2,3,4,5
+order by 1,4

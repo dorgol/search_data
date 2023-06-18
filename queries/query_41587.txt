@@ -1,0 +1,28 @@
+/*
+    Name: PL Avg Sessions Per User within day3
+    Query ID: 41587
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-03T16:34:51.872Z
+    */
+    SELECT 
+first_active_dt,
+count(distinct lt_defacto_id) as users,
+sum(cntd_sessions_foreground) as sessions,
+sum(sum_sessions_length) as session_length,
+sum(cntd_sessions_foreground)/count(distinct lt_defacto_id) as sessions_per_user,
+sum(sum_sessions_length)/sum(cntd_sessions_foreground) as avg_session_length
+
+ FROM `ltx-dwh-prod-processed.agg.app_device_date` 
+ WHERE 
+ --dt = "2023-05-03" 
+ --and 
+ app_name= '{{ app_name }}'
+ --'editor'
+ 
+ and first_active_dt >="2023-04-01"
+and date_diff( dt, first_active_dt, day)>=0
+and date_diff( dt, first_active_dt, day)<3
+and date_diff(current_date(), first_active_dt, day) >2
+group by 1
+order by 1
+ 

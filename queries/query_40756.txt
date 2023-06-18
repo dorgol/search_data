@@ -1,0 +1,207 @@
+/*
+    Name: Facetune: Monthly Only - [FT2-1051] Monthly Only With Trial Communication vs new baseline - New users - Normalized Revenue Breakdown - Manual
+    Query ID: 40756
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-29T15:40:58.769Z
+    */
+    create temp table usage_assignment_state_changed1 as (
+    select
+        r.variant,
+        case when l.last_platform_user_id = 'unknown' then l.platform_device_id else l.last_platform_user_id end as user_id,
+        l.platform_device_id as id_for_vendor,
+        l.lt_defacto_id,
+        r.experiment,
+        case when reason = 'Subscription Storyboard view controller appeared' then 'displayed' else reason end as reason,
+        min(l.first_session_icloud_app_ts) over (partition by case when l.last_platform_user_id = 'unknown' then l.platform_device_id else l.last_platform_user_id end) as first_launch,
+        min(r.device_timestamp) over (partition by l.platform_device_id, reason) as experiment_started_device,
+        min(r.meta_received_at) over (partition by l.platform_device_id, reason) as experiment_started_meta, 
+    from `ltx-dwh-prod-processed.agg.app_device` as l
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_assignment_state_changed` as r
+        on l.platform_device_id = r.id_for_vendor
+    where (r.experiment= '[FT2-1051] Monthly Only TC vs new baseline - new users') and r.reason in ( 'activated_for_device', 'displayed', 'Subscription Storyboard view controller appeared')
+    and r.meta_received_at >= '2022-11-27' 
+    and  l.app_name = 'facetune2'
+);
+
+create temp table first_experiment_date as (
+    select
+        min(first_day) as first_day
+    from (
+        select
+            timestamp_trunc(experiment_started_meta, hour) as first_day,
+            count(distinct id_for_vendor) as devices
+        from usage_assignment_state_changed1
+        group by 1
+        )
+    where devices > 10
+);
+
+create temp table usage_assignment_state_changed as (
+    select
+        l.*,
+        case when r.id_for_vendor is not null then true else false end as displayed_flag,
+        r.experiment_started_device as experiment_started_device_displayed,
+        r.experiment_started_meta as experiment_started_meta_displayed,
+        first_day
+    from usage_assignment_state_changed1 as l
+    left join usage_assignment_state_changed1 as r
+        on l.id_for_vendor = r.id_for_vendor
+        and r.reason = 'displayed'
+    cross join first_experiment_date
+    where l.reason = 'activated_for_device'
+);
+
+create temp table devices_and_variant_full as (
+    -- select 
+    --     '01 All Users' as segmentation,
+    --   variant,
+    --   usage_assignment_state_changed.id_for_vendor,
+    --   first_launch,
+    --   experiment_started_device,
+    --   experiment_started_meta,
+    --     experiment_started_device_displayed,
+    --   experiment_started_meta_displayed,
+    --   displayed_flag,
+    --   first_day
+    -- from usage_assignment_state_changed
+    
+    -- union all
+    
+    select 
+       'facetune2' as application,
+       'Facetune iOS' as app_real_world_name,
+       '02 New Users' as segmentation,
+       experiment,
+       variant,
+       usage_assignment_state_changed.id_for_vendor,
+       lt_defacto_id,
+       first_launch,
+       experiment_started_device,
+       experiment_started_meta,
+       experiment_started_device_displayed,
+       experiment_started_meta_displayed,
+       displayed_flag,
+      first_day
+    from  usage_assignment_state_changed
+    where first_launch >= first_day
+    and displayed_flag
+    -- union all
+    
+    -- select 
+    --     '03 Existing Users' as segmentation,
+    --   variant,
+    --   usage_assignment_state_changed.id_for_vendor,
+    --   first_launch,
+    --   experiment_started_device,
+    --   experiment_started_meta,
+    --     experiment_started_device_displayed,
+    --   experiment_started_meta_displayed,
+    --   displayed_flag,
+    --     first_day
+    -- from usage_assignment_state_changed
+    -- where first_launch < first_day    
+    
+);
+
+create temp table suspected_frauds as (
+    select distinct
+        d.id_for_vendor 
+    from devices_and_variant_full as d
+    join ltx-dwh-prod-processed.devices.facetune2_otid_idfv_pairs as l
+    	 on d.id_for_vendor = l.id_for_vendor
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_state` as r 
+        on l.original_transaction_id = r.original_transaction_id and num_of_lt_defacto_id > 10
+);
+
+create temp table multiple_variants as (
+	select
+		id_for_vendor,
+		count(distinct variant) as num_variant
+	from devices_and_variant_full
+	group by id_for_vendor
+	having count(distinct variant) > 1
+);
+
+-- create the clean devices and variant table
+create temp table devices_and_variant as (
+    select 
+        *
+    from devices_and_variant_full
+    where id_for_vendor not in 
+        (
+            select 
+                id_for_vendor 
+            from suspected_frauds 
+            where id_for_vendor is not null 
+            union distinct 
+            select 
+                id_for_vendor 
+            from multiple_variants 
+            where id_for_vendor is not null
+        ) 
+);
+
+drop table usage_assignment_state_changed;
+drop table usage_assignment_state_changed1;
+
+
+
+
+with transactions as
+
+(
+    select
+        date_trunc(date(purchase_date), {{period}}) as period,
+        
+        round(sum(case when variant = 'Variant4' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) = timestamp_trunc(original_purchase_date,month) and subscription_duration = '1y' then actual_proceeds end),0)*2/3 as v4_new_yearly_revenue,
+        round(sum(case when variant = 'Variant4' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) = timestamp_trunc(original_purchase_date,month) and subscription_duration = '1m' then actual_proceeds end),0)*2/3 as v4_new_monthly_revenue,
+        round(sum(case when variant = 'Variant4' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription_duration = '1y' then actual_proceeds end),0)*2/3 as v4_late_yearly_revenue,
+        round(sum(case when variant = 'Variant4' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription_duration = '1m' then actual_proceeds end),0)*2/3 as v4_late_monthly_revenue,
+        round(sum(case when variant = 'Variant4' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) = timestamp_trunc(original_purchase_date,month) and subscription_duration = 'l' then actual_proceeds end),0)*2/3 as v4_new_otp_revenue,
+        round(sum(case when variant = 'Variant4' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription_duration = 'l' then actual_proceeds end),0)*2/3 as v4_late_otp_revenue,
+        round(sum(case when variant = 'Variant4' and date(first_payment_date) != date(purchase_date) and subscription_duration = '1y' then actual_proceeds end),0)*2/3 as v4_renewal_yearly_revenue,
+        round(sum(case when variant = 'Variant4' and date(first_payment_date) != date(purchase_date) and subscription_duration = '1m' then actual_proceeds end),0)*2/3 as v4_renewal_monthly_revenue,
+        round(sum(case when variant = 'Variant4' then actual_proceeds end),0)*2/3 as v4_total_revenues,
+        
+        round(sum(case when variant = 'Variant5' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) = timestamp_trunc(original_purchase_date,month) and subscription_duration = '1y' then actual_proceeds end),0) as v5_new_yearly_revenue,
+        round(sum(case when variant = 'Variant5' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) = timestamp_trunc(original_purchase_date,month) and subscription_duration = '1m' then actual_proceeds end),0) as v5_new_monthly_revenue,
+        round(sum(case when variant = 'Variant5' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription_duration = '1y' then actual_proceeds end),0) as v5_late_yearly_revenue,
+        round(sum(case when variant = 'Variant5' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription_duration = '1m' then actual_proceeds end),0) as v5_late_monthly_revenue,
+        round(sum(case when variant = 'Variant5' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) = timestamp_trunc(original_purchase_date,month) and subscription_duration = 'l' then actual_proceeds end),0) as v5_new_otp_revenue,
+        round(sum(case when variant = 'Variant5' and date(first_payment_date) = date(purchase_date) and timestamp_trunc(attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription_duration = 'l' then actual_proceeds end),0) as v5_late_otp_revenue,
+        round(sum(case when variant = 'Variant5' and date(first_payment_date) != date(purchase_date) and subscription_duration = '1y' then actual_proceeds end),0) as v5_renewal_yearly_revenue,
+        round(sum(case when variant = 'Variant5' and date(first_payment_date) != date(purchase_date) and subscription_duration = '1m' then actual_proceeds end),0) as v5_renewal_monthly_revenue,
+        round(sum(case when variant = 'Variant5' then actual_proceeds end),0) as v5_total_revenues,
+    from (
+        select distinct
+            d.variant,
+            lt_subscription_id,
+            payments.first_payment_date,
+            purchase_date,
+            attribution.attribution_timestamp,
+            original_purchase_date,
+            subscription.subscription_duration,
+            payments.actual_proceeds,
+            subscription.product_category ,
+        from  `devices_and_variant` as d
+        join `ltx-dwh-prod-processed`.`ulei`.`ulei_att_user_groups_and_devices` g
+            on farm_fingerprint('facetune2'||d.id_for_vendor) = g.lt_defacto_id
+        left join
+         `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` as t
+          on d.application = t.application
+          and g.attribution_user_id = t.attribution.attribution_user_id
+        where true
+        and t.original_purchase_date>= d.experiment_started_meta_displayed
+        and t.purchase_date>= d.experiment_started_meta_displayed
+        and t.original_purchase_date >= '2022-11-27'
+        and timestamp_diff(current_timestamp (),d.experiment_started_meta_displayed,day) >= 0
+        and subscription.subscription_duration in ('1m','1y')
+    )
+    group by 1
+)
+
+
+select
+    *
+from transactions
+where true

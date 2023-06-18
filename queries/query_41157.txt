@@ -1,0 +1,48 @@
+/*
+    Name: Felix Onboarding - MRR (Transactions)
+    Query ID: 41157
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-25T17:10:55.084Z
+    */
+    declare start_date timestamp default '2018-01-01';
+
+with transactions as (
+    select distinct 
+        lt_transaction_id,
+        date_trunc(purchase_date, month) as purchase_date,
+        date_trunc(payments.first_payment_date, month) as subscription_start,
+        date_trunc(subscription.subscription_renewal_date_calc, month) as subscription_end,
+        subscription.subscription_duration,
+        case when subscription.subscription_duration = '1y' then payments.actual_proceeds/12 else payments.actual_proceeds end as proceeds
+    from 
+        `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions`
+    where purchase_date > start_date 
+        and license_applications in ('videoleap') -- videoleap_android
+
+),
+
+yearly_payments as (
+
+    select distinct 
+        month,
+        lt_transaction_id
+    from transactions
+        cross join (select distinct 
+                        subscription_start as month
+                    from transactions)
+    where subscription_duration = '1y'
+        and month >= subscription_start
+        and month <= subscription_end
+)
+
+select 
+    case when month is null then purchase_date else month end as month_year,
+    sum(proceeds) as mrr
+    from transactions 
+left join 
+    yearly_payments using (lt_transaction_id)
+group by 1    
+
+
+ 
+

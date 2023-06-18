@@ -1,0 +1,49 @@
+/*
+    Name: Felix - Revenue by Cohort (Onboarding)
+    Query ID: 41172
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-24T16:06:22.158Z
+    */
+    -- Revenue by installation cohort
+-- Revenue on a transaction level: purchase, payment , amount
+-- Cohort: payment - purchase, amount
+-- Month, Installation Cohort, proceeds, cumulative proceeds 
+
+with transactions as (
+    select 
+        lt_transaction_id,
+        date_trunc(device.install_time, month) as install_date,
+        date_trunc(purchase_date, month) as original_purchase_date,
+        payments.actual_proceeds,
+    from 
+        `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions`
+    where 
+        device.install_time > '2022-08-01'    
+        and license_applications = 'videoleap'
+),
+
+aggregation as (select 
+    install_date as install_month,
+    date_diff(date(original_purchase_date), date(install_date), month) as install_cohort,
+    count(distinct lt_transaction_id) as count_transactions,
+    sum(actual_proceeds) as sum_revenue
+    from 
+        transactions
+    group by 1,2     
+)
+
+select 
+    * ,
+    sum(sum_revenue) over (
+    partition by install_month
+    order by install_cohort) as cumulative_revenue
+from 
+    aggregation
+where install_cohort <= 5    
+order by 1 asc, 2 asc    
+
+    
+    
+
+
+

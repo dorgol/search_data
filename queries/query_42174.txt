@@ -1,0 +1,161 @@
+/*
+    Name: PL AI Export Success
+    Query ID: 42174
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-25T09:13:03.625Z
+    */
+    
+with base as
+(select distinct dt,
+platform_device_id
+from
+`ltx-dwh-prod-processed`.`agg`.`app_device_date`
+where
+dt >= "2023-05-09"
+    and dt < date_trunc(current_date, day)
+    and app_name = "editor"
+    and platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then dt = first_active_dt
+    when '{{Day}}' = "week0" then date_diff(dt, first_active_dt, day) <= 7
+        when '{{Day}}' = "non day0" then dt > first_active_dt
+        else true end
+)
+
+,
+
+bp as
+(select distinct
+date(bp.meta_received_at) as dt,
+platform_device_id,
+screen_name,
+button_identifier
+from
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` as bp
+ where
+     bp.app_name='editor'
+    and bp.screen_name in (
+    --'ai_scenes_preview_page','ai_scenes_photo_selection','ai_scenes_main',
+    'ai_rooms_preview_page','ai_rooms')
+    and bp.button_identifier in ('continue','start','save')
+    and date(bp.meta_received_at)>="2023-05-09"
+),
+
+
+
+fs as
+(select distinct
+date(efs.meta_received_at) as dt,
+platform_device_id,
+ case when efs.preset_name like ('Custom%') then 'Custom' else efs.preset_name end as preset_name,
+process_id as exports,
+open_project_id
+from
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` as efs
+ where
+     efs.app_name='editor'
+    and 
+    
+
+    
+        case  
+     when '{{ Feature }}'= 'Cars' then efs.export_source in ('ai_cars','ai_cars.es','ai_cars.es_carousel')
+ when '{{ Feature }}'= 'Scenes' then efs.export_source in ( 'ai_scenes','ai_scenes.es','ai_scenes.es_carousel')
+ when '{{ Feature }}'= 'Selfies' then efs.export_source in ( 'ai_selfies','ai_selfies.es','ai_selfies.es_carousel')
+ when '{{ Feature }}'= 'Rooms' then efs.export_source in ( 'ai_rooms','ai_rooms.es','ai_rooms.es_carousel')
+ when '{{ Feature }}'= 'Anime' then efs.export_source in ( 'ai_anime','ai_anime.es','ai_anime.es_carousel')
+ when '{{ Feature }}'= 'Tattoos' then  efs.export_source in ('ai_tattoos','ai_tattoos.es','ai_tattoos.es_carousel') end
+   and efs.meta_received_at>="2023-05-09"
+   and case when '{{ subscribed }}' = 'Subscribed' then is_subscriber= true
+        when '{{ subscribed }}' ='Non Subscribed' then is_subscriber= false
+        else true end 
+   --group by 1,2,3
+)
+,
+    
+
+  
+  sub_f as
+  (select distinct
+  --sub_feature_name
+  date(subf.meta_received_at) as dt,
+  platform_device_id,
+  feature_usage_id,
+  sub_feature_usage_id,
+  open_project_id,
+  --app_version_code,
+  case when sub_feature_name like ('Custom%') then 'Custom' else sub_feature_name end as sub_feature_name
+  from
+  `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_started` as subf
+    where subf.root_feature_name=
+    case  
+     when '{{ Feature }}'= 'Cars' then 'ai_cars'
+ when '{{ Feature }}'= 'Scenes' then 'ai_scenes'
+ when '{{ Feature }}'= 'Selfies' then 'ai_selfie'
+ when '{{ Feature }}'= 'Rooms' then 'ai_rooms'
+ when '{{ Feature }}'= 'Anime' then 'ai_anime'
+ when '{{ Feature }}'= 'Tattoos' then 'ai_tattoos' end
+    
+    and subf.app_name='editor'
+    and date(subf.meta_received_at)>="2023-05-09"
+    and sub_feature_name not in ('edit_screen','results','selection.custom')
+    and case when '{{ subscribed }}' = 'Subscribed' then is_subscriber= true
+        when '{{ subscribed }}' ='Non Subscribed' then is_subscriber= false
+        else true end 
+    and cast(app_version_code as int64)  >= 4490
+    )
+
+
+
+
+select *,
+safe_divide(users_exporting, users_generating)*100 as export_success_user_level,
+safe_divide(exports, generations)*100 as export_success_generation_level,
+from
+(
+--exported_users as (
+  select distinct
+ --   date(date_trunc(d.dt, {Time granularity}} )) as time,
+    --count( distinct d.platform_device_id) as users,
+    sub_f.sub_feature_name,
+   -- sub_f.app_version_code,
+    count(distinct sub_f.feature_usage_id) as feature_starts,
+    count(distinct sub_f.platform_device_id) as users_generating,
+    count(distinct sub_f.open_project_id) as generating_projects,
+    count(distinct sub_f.sub_feature_usage_id) as generations,
+    count(distinct efs.platform_device_id) as users_exporting,
+    count(distinct efs.open_project_id) as exporting_projects,
+    count(distinct efs.exports) as exports,
+  from base as d
+
+    --and efs.app_name='editor'
+    --and efs.feature_name in ('ai_cars', 'ai_scenes')
+   --and efs.meta_received_at>="2023-03-05"
+   left join sub_f
+   on d.platform_device_id = sub_f.platform_device_id
+    and d.dt = sub_f.dt
+    left join fs as efs
+    on sub_f.platform_device_id = efs.platform_device_id
+    and sub_f.dt = efs.dt  
+    and sub_f.sub_feature_name=efs.preset_name
+   
+  
+   /*left join 
+   `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_started` as im_s
+   on d.platform_device_id = im_s.platform_device_id
+    and d.dt = date(im_s.meta_received_at)
+    and im_s.app_name='editor'
+    and im_s.source in ('ai_scenes','ai_cars')
+    and im_s.meta_received_at>="2023-03-05"
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_ended` as im_e
+   on im_e.platform_device_id = im_s.platform_device_id
+   and im_e.process_id=im_s.process_id
+    and im_e.app_name='editor'
+    and im_e.reason='success'
+    and im_e.meta_received_at>="2023-03-05"
+    */
+where sub_f.sub_feature_name is not null
+   and  d.dt >= date_add(current_date(),interval -{{ last x days }} day)
+  group by 1
+--)
+)

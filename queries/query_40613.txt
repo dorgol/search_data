@@ -1,0 +1,21 @@
+/*
+    Name: Facetune: Web Payment % of New Month0 Paid Transactions
+    Query ID: 40613
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-27T06:04:35.364Z
+    */
+    select
+    -- license_applications,
+    timestamp_trunc(purchase_date,month) as period,
+    coalesce(payments.payment_origin,'app_store') as payment_origin,
+    count(distinct lt_transaction_id) as num_transactions,
+    sum(payments.actual_proceeds) as revs,
+from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation`
+where application = 'facetune2'
+and purchase_date >= timestamp_sub(timestamp_trunc(current_timestamp(), month), interval 365 day)
+and subscription.product_category = 'subscription'
+and payments.actual_proceeds > 0
+and purchase_date = payments.first_payment_date
+and timestamp_trunc(purchase_date, month) = timestamp_trunc(attribution.attribution_timestamp, month)
+group by 1,2
+order by 1,2,3

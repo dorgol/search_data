@@ -1,0 +1,30 @@
+/*
+    Name: Creators hashtags- trending hashtags (tags with more than 4 per day)
+    Query ID: 42521
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-06-06T08:20:34.862Z
+    */
+    with raw_hashtags as (
+    select
+        -- ex.template_description,
+        date(ex.meta_received_at) as dt,
+        words,
+        coalesce(p1.post_id, p.post_id) as post_id
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_post_upload_ended` as p
+        on ex.export_id = p.export_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` as p1
+        on ex.export_id = p1.export_id
+    left join unnest(split(ex.template_description, " ")) as words
+    where ex.template_description is not null 
+        and words like "#%"
+    and date(ex.meta_received_at) >= "2023-01-01"
+)
+
+select
+    dt,
+    words,
+    count(distinct post_id) as num_posts_with_hashtags
+from raw_hashtags
+group by 1,2
+having count(distinct post_id) > 4

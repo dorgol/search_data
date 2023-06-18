@@ -1,0 +1,229 @@
+/*
+    Name: 20230123 - FT2 iOS - Global Login - Dark Mode Logins - High Level Metrics
+    Query ID: 40052
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-15T13:06:19.179Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('globalLogin_10_2022')
+    and display_type = '{{display_type}}'
+),
+
+global_to_legacy as (
+    select distinct
+        lpg.session_id,
+        lp.app_session_id
+    from users u
+    -- global
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_presented` lpg
+        on lpg.app_name = 'facetune2' 
+        and variant <> 'FTGlobalLoginBaseline'
+        and lpg.platform_device_id = u.id_for_vendor
+        and lpg.meta_received_at >= '2023-01-23'
+        and lpg.meta_received_at >= experiment_started_meta
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_entered` lp
+        on lp.id_for_vendor = u.id_for_vendor
+        and lp.meta_received_at >= '2023-01-23'
+        and lp.meta_received_at >= experiment_started_meta
+        and timestamp_diff(lp.event_timestamp, lpg.event_timestamp, second) between -2 and 2
+),
+
+saw_login as (
+    select
+        l.*,
+        dm.event_timestamp as dm_event_timestamp,
+        is_dark_mode
+    from (
+        select distinct 
+            segmentation,
+            variant,
+            u.id_for_vendor,
+            coalesce(gtl.app_session_id, lp.app_session_id, lpg.session_id) app_session_id,
+            coalesce(lp.login_screen_session_id, lpg.flow_id) login_session_id,
+            coalesce(lp.event_id, lpg.event_id) event_id,
+            coalesce(lp.event_timestamp, lpg.event_timestamp) event_ts,
+            count(distinct coalesce(lpg.platform_device_id, lp.id_for_vendor)) over (partition by segmentation, variant) total_users_saw_login
+        from users u
+        -- global
+        left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_login_screen_presented` lpg
+            on lpg.app_name = 'facetune2' 
+            and variant <> 'FTGlobalLoginBaseline'
+            and lpg.platform_device_id = u.id_for_vendor
+            and lpg.meta_received_at >= '2023-01-23'
+            and lpg.meta_received_at >= experiment_started_meta
+        left join global_to_legacy gtl
+            on gtl.session_id = lpg.session_id
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_login_screen_started` lp
+            on lp.id_for_vendor = u.id_for_vendor
+            and lp.meta_received_at >= '2023-01-23'
+            and lp.meta_received_at >= experiment_started_meta
+    ) l
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_dark_mode_set` dm
+        on dm.app_session_id = l.app_session_id
+        and dm.event_timestamp < l.event_ts 
+    where l.app_session_id is not null
+    qualify row_number() over (partition by l.event_id order by dm_event_timestamp desc) = 1
+),
+
+logged_in as (
+    select distinct
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        lt_defacto_id,
+        experiment_started_meta,
+        coalesce(ld.event_id, ldg.event_id) event_id,
+        coalesce(ld.login_screen_session_id, ldg.flow_id) login_session_id,
+        case when ld.reason = 'Logged In' or ldg.reason = 'successful_login' then true else false end as did_log_in,
+        count(distinct case when ld.reason = 'Logged In' or ldg.reason = 'successful_login' then coalesce(ldg.platform_device_id, ld.id_for_vendor) end) over (partition by segmentation, variant) total_logged_in_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_login_screen_dismissed` ldg
+        on ldg.app_name = 'facetune2' 
+        and variant <> 'FTGlobalLoginBaseline'
+        and ldg.platform_device_id = u.id_for_vendor
+        and ldg.meta_received_at >= '2023-01-23'
+        and ldg.meta_received_at >= experiment_started_meta
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_login_screen_dismissed` ld
+        on ld.id_for_vendor = u.id_for_vendor
+        and ld.meta_received_at >= '2023-01-23'
+        and ld.meta_received_at >= experiment_started_meta
+),
+
+subs as (
+    select
+        u.id_for_vendor,
+        subs.revenue_so_far,
+        is_sol as sol_sub,
+        subscription_source,
+        first_subscription_duration as subscription_duration,
+        first_known_cancellation_date,
+        current_is_in_trial_period as is_in_trial_period,
+        had_trial
+    from logged_in u 
+    join `ltx-dwh-prod-processed`.`subscriptions`.`subscription_to_defacto` s
+            on s.application = 'facetune2'
+            and s.lt_defacto_id = u.lt_defacto_id
+            and original_purchase_date >= experiment_started_meta
+    left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` subs
+        using(original_transaction_id)
+    where did_log_in
+),
+
+exports as (
+    select
+        u.id_for_vendor,
+        count(distinct e.event_id) as num_exports,
+    from logged_in u 
+    join `ltx-dwh-prod-processed`.`devices`.`unified_app_export` e
+        on true
+        and e.application = '{{app}}'
+        and e.meta_received_at >= '{{first_day}}'
+        and u.id_for_vendor = e.id_for_vendor
+        and e.meta_received_at >= experiment_started_meta
+    where did_log_in
+    group by 1
+),
+retention as (
+    select
+        u.id_for_vendor,
+        max(case when date_diff(ad.dt, date(u.experiment_started_meta), day) = 1 then true else false end) as is_day1_retained,
+        max(case when date_diff(ad.dt, date(u.experiment_started_meta), day) between 1 and 7 then true else false end) as is_week0_retained,
+        max(case when date_diff(ad.dt, date(u.experiment_started_meta), day) between 8 and 14 then true else false end) as is_week1_retained
+    from logged_in u 
+    join `ltx-dwh-prod-processed`.`agg`.`app_device_date` ad
+        on true
+        and ad.app_name = '{{app}}'
+        and ad.dt >= '{{first_day}}'
+        and u.id_for_vendor = ad.platform_device_id
+        and ad.dt >= date(experiment_started_meta)
+        and cntd_foregrounds > 0
+    where did_log_in
+    group by 1
+)
+
+select 
+    u.segmentation,
+    u.variant,
+    u.display_type,
+    is_dark_mode,
+    count(distinct u.id_for_vendor) as num_devices,
+    count(distinct case when li.did_log_in then sl.id_for_vendor end) as num_users_logged_in,
+    sum(revenue_so_far) revs,
+    sum(revenue_so_far)/nullif(count(distinct u.id_for_vendor),0) as revenue_per_device_new_subs,
+    sum(case when s.id_for_vendor is not null and subscription_duration = '1y' then revenue_so_far end)/nullif(count(distinct u.id_for_vendor),0) as revenue_per_device_new_yearly_subs,
+    
+    count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as cvr,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as sol_cvr,
+    count(distinct case when s.id_for_vendor is not null and sol_sub is false then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as non_sol_cvr,
+    
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_cvr,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 and sol_sub is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_sol_cvr,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 and sol_sub is false then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_non_sol_cvr,
+    count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is false and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is false then u.id_for_vendor end),0)*100 as trial_to_paid_cvr,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 and subscription_duration = '1y' then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as paid_yearly_cvr,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 and subscription_duration = '1y' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and subscription_duration = '1y' then u.id_for_vendor end),0)*100 as paid_yearly_cvr_of_yearlies,
+    
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1y' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_yearly_subs,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1m' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_monthly_subs,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = 'l' then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as pct_otp_subs,
+    
+    count(distinct case when s.id_for_vendor is not null and first_known_cancellation_date is not null then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end),0)*100 as cancellation_rate,
+    count(distinct case when s.id_for_vendor is not null and first_known_cancellation_date is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as paid_cancellation_rate,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1y' and first_known_cancellation_date is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and subscription_duration = '1y' and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as paid_yearly_cancellation_rate,
+    count(distinct case when s.id_for_vendor is not null and subscription_duration = '1m' and first_known_cancellation_date is not null and revenue_so_far > 0 then u.id_for_vendor end)/nullif(count(distinct case when s.id_for_vendor is not null and subscription_duration = '1m' and revenue_so_far > 0 then u.id_for_vendor end),0)*100 as paid_monthly_cancellation_rate,
+    
+    count(distinct case when e.id_for_vendor is not null then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_exporters,
+    sum(num_exports)/nullif(count(distinct u.id_for_vendor),0) as exports_per_device,
+    
+    count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end) as num_subscribers,
+    count(distinct case when s.id_for_vendor is not null and revenue_so_far > 0 then u.id_for_vendor end) as num_paid_subscribers,
+    count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is true then u.id_for_vendor end) num_still_in_trial,
+    count(distinct case when s.id_for_vendor is not null and had_trial and is_in_trial_period is false then u.id_for_vendor end) num_finished_trial,
+    
+        -- day0, week0, week1 retention
+    count(distinct case when r.is_day1_retained is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_retained_day1,
+    count(distinct case when r.is_week0_retained is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_retained_week0,
+    count(distinct case when r.is_week1_retained is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_retained_week1,
+from users u
+join saw_login sl
+    on  sl.segmentation = u.segmentation
+    and sl.variant = u.variant
+    and sl.id_for_vendor = u.id_for_vendor
+join logged_in li
+    on  li.segmentation = u.segmentation
+    and li.variant = u.variant
+    and li.id_for_vendor = u.id_for_vendor
+    and li.login_session_id = sl.login_session_id
+    and li.did_log_in
+left join exports e
+    on e.id_for_vendor = u.id_for_vendor
+left join subs s
+    on s.id_for_vendor = u.id_for_vendor
+left join retention r
+    on r.id_for_vendor = u.id_for_vendor
+where true
+and timestamp_diff(current_timestamp(), u.experiment_started_meta, day) >= {{day_x}}
+group by 1,2,3,4
+having is_dark_mode is not null
+
+order by 1,2,3,4

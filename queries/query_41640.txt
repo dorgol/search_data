@@ -1,0 +1,16 @@
+/*
+    Name: new
+    Query ID: 41640
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-05T09:30:53.821Z
+    */
+        select distinct 
+        u.attribution_user_id,
+        --date(date_trunc(first_active_dt, day)) as first_active_dt,
+        date(date_trunc(first_active_dt, month)) as first_active_month,
+        date_diff(date(u.dt), date(first_active_dt), day) as day_n
+    from 
+        `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` u
+    where first_active_dt > date_sub(current_date(), interval 10 day)
+        and timestamp_diff(u.dt, first_active_dt, day) <= 5
+        and app_name = 'videoleap'

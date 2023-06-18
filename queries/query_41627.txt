@@ -1,0 +1,33 @@
+/*
+    Name: VL iOS - sub_prediction_experiment_2_2023 CVR
+    Query ID: 41627
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-04T10:41:12.209Z
+    */
+    with users as (select distinct
+case when variant like '%Baseline%' then 'Baseline'
+     when variant like '%Variant1%' then 'Variant1'
+     when variant like '%Variant2%' then 'Variant2' end as variant,
+id_for_vendor,
+first_launch
+from `ltx-dwh-prod-processed`.`agg`.`app_device` ad
+inner join `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    on d.id_for_vendor = ad.platform_device_id
+            and  d.application = 'videoleap'
+            and d.experiment = 'vl_prediction_promotion_experiment_2_2023'
+where ad.app_name = 'videoleap')
+            
+select
+date_trunc(first_launch, week) as dt,
+variant, 
+count(distinct u.id_for_vendor) as new_users,
+count(distinct s.device.platform_device_id) as day0_sub_users,
+safe_divide(count(distinct s.device.platform_device_id), count(distinct id_for_vendor))*100 as day0_cvr
+from users u
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` s
+        on s.device.platform_device_id = u.id_for_vendor
+        and date(first_launch) = date(original_purchase_date)
+        and s.license_applications = 'videoleap'
+where date(first_launch) between '2023-02-01' and '2023-05-01'
+group by 1,2
+having new_users > 100

@@ -1,0 +1,14 @@
+/*
+    Name: Post_create - num hourly new posts
+    Query ID: 40077
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-06T10:32:35.352Z
+    */
+    select distinct
+    timestamp_trunc(created_at, hour) as dt,
+    count(distinct post_id) as num_posts,
+from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+where app_name = "videoleap"
+    and date(created_at) > "2023-02-04" and date(created_at) <= current_date()
+    and parent_template_id is null
+group by 1

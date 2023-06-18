@@ -1,0 +1,76 @@
+/*
+    Name: VL iOS - Identifying SMBs - Weekly Usage Pattern (daily) - SEGMENTATION PT2
+    Query ID: 40915
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-06T14:04:46.928Z
+    */
+    with users as (
+  select distinct
+    dd.platform_device_id,
+    date(dd.first_active_dt) as first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` dd
+  where app_name = 'videoleap'
+  and date(first_active_dt) >= '2022-01-01'
+  and date(first_active_dt) < date_sub(date_trunc(current_date, week), interval 1 week)
+  )
+
+
+, usage as (
+    
+    select
+        platform_device_id,
+        first_active_dt,
+        count(distinct case when day = 'weekend' then session_id end) as weekend_sessions,
+        count(distinct session_id) as total_sessions,
+        safe_divide(count(distinct case when day = 'weekend' then session_id end), count(distinct session_id))*100 as we_pct_sessions
+    from (select distinct
+        u.platform_device_id,
+        u.first_active_dt,
+        case when extract(DAYOFWEEK from date (min(af.device_timestamp))) between 2 and 6 then 'weekday' else 'weekend' end as day,
+        session_id 
+    from users u
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_app_foregrounded` af
+        on af.id_for_vendor = u.platform_device_id
+        and date(af.device_timestamp) >= '2022-01-01' and date(af.device_timestamp) < date_trunc(current_date, week)
+    group by 1,2,4 )
+    
+    group by 1,2
+    )
+    
+select
+    date_trunc(first_active_dt, month) as dt,
+    count(distinct case when total_sessions >= 10 and we_pct_sessions < 25 then platform_device_id end) as weekday_user,
+    count(distinct case when total_sessions >= 10 and we_pct_sessions > 25 then platform_device_id end) as weekend_user,
+    count(distinct case when total_sessions < 10 then platform_device_id end) as unclassified_user
+from usage
+group by 1
+
+--, total_sessions as (
+--    select
+--        count(distinct session_id) as total_sessions
+--    from usage
+--    group by 1)
+--
+--, usage_agg as (
+--    select 
+--        u.response,
+--        --concat(u.session_ts,'-',session_hr_ts) as session_ts,
+--        --hour,
+--        case when day = 1 then 'Weekend'
+--             when day = 2 then 'Weekday'
+--             when day = 3 then 'Weekday'
+--             when day = 4 then 'Weekday'
+--             when day = 5 then 'Weekday'
+--             when day = 6 then 'Weekday'
+--             when day = 7 then 'Weekend' else 'error' end as day,
+--        ts.total_sessions,
+--        count(distinct u.session_id) as sessions
+--    from usage u
+--    inner join total_sessions ts
+--        on ts.response = u.response
+--    group by 1,2,3)
+--    
+--select
+--    *,
+--    safe_divide(sessions, total_sessions)*100 as pct_sessions
+--from usage_agg--

@@ -1,0 +1,63 @@
+/*
+    Name: 20230403 - FT2 iOS - [FT-1087] Material Makeup - Button and Lighting Widget Usage
+    Query ID: 41318
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-24T13:35:09.292Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' ) 
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%Material Makeup%')
+    and display_type = '{{display_type}}'
+    and variant != 'Baseline'
+)
+
+select
+    segmentation,
+    variant,
+    display_type,
+    count(distinct u.id_for_vendor) num_users,
+    count(distinct case when fs.platform_device_id is not null then fs.platform_device_id end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_used_material_makeup,
+    count(distinct case when sfs.platform_device_id is not null then sfs.platform_device_id end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_used_relighting,
+    count(distinct case when sfs.platform_device_id is not null then sfs.platform_device_id end)/nullif(count(distinct case when fs.platform_device_id is not null then fs.platform_device_id end),0)*100 as pct_used_relighting_of_entered_mm,
+    count(distinct case when bp.button_identifier = 'glossiness' then bp.platform_device_id end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_clicked_glossiness,
+    count(distinct case when bp.button_identifier = 'intensity' then bp.platform_device_id end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_clicked_back_to_intensity,
+from users u
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+    on true
+    and fs.app_name = 'facetune2'
+    and u.id_for_vendor = fs.platform_device_id
+    and fs.meta_received_at >= u.experiment_started_meta
+    and fs.feature_name = 'Material Makeup'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_started` sfs
+    on true
+    and sfs.app_name = 'facetune2'
+    and sfs.meta_received_at >= u.experiment_started_meta
+    and sfs.root_feature_name = 'Material Makeup'
+    and sfs.feature_usage_id = fs.feature_usage_id
+    and sub_feature_name = 'arcball'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` bp
+    on true
+    and bp.app_name = 'facetune2'
+    and bp.meta_received_at >= u.experiment_started_meta
+    and bp.flow_id = fs.feature_usage_id
+    and button_location = 'third_toolbar'
+group by 1,2,3
+order by 1,2,3

@@ -1,0 +1,23 @@
+/*
+    Name: Facetune: User Attribution
+    Query ID: 41078
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-17T11:13:13.100Z
+    */
+    select
+    *,
+    100*user/sum(user) over () as pct_users
+from(
+    SELECT  
+        attribution.network,
+        attribution.keywords,
+        attribution.campaign_name,
+        attribution.adset_name,
+        attribution.ad_name,
+        count(distinct attribution_user_id) as user
+    FROM `ltx-dwh-prod-processed.agg.app_attribution_user` 
+    WHERE attribution_timestamp >= timestamp_sub(current_timestamp(), interval 14 day)
+    and app_name = 'facetune2'
+    group by 1,2,3,4,5
+)
+order by pct_users desc

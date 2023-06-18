@@ -1,0 +1,88 @@
+/*
+    Name: PL W1 Retention By Main editor usage
+    Query ID: 41440
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-17T10:00:36.904Z
+    */
+    
+with base as
+(
+select *
+from
+(
+SELECT
+distinct
+--    date_trunc(date(first_active_dt),day) as cohort_date,
+    date_trunc(date(first_active_dt),week) as cohort_week,
+    'week' as period_granularity,
+    current_store_country,
+    is_or_was_sub,
+    is_or_was_paid_sub,
+attribution_user_id,
+
+attribution.winning_lt_defacto_id,
+    date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week) as periods_from,
+ max(date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week)) over (partition by attribution_user_id) as survived
+FROM
+
+    `ltx-dwh-prod-processed.agg.app_attribution_user_date`
+where true
+    and dt >= date_trunc(date_sub(date(current_date()), interval 3 month),week)
+    and dt < date_trunc(current_date() ,week)
+    and date(first_active_dt) >= date_trunc(date_sub(date(current_date()), interval 3 month),week)
+    and app_name='editor'
+ and     date_diff(date_trunc(date(dt), week), date_trunc(date(date(first_active_dt)),week), week)<=1
+--and date(first_active_dt)='2023-04-02'
+--    and date_trunc(date(attribution_timestamp),week)>= '2022-01-01' -- to delete
+--    and date_trunc(date(first_active_dt),week) = '2022-01-01' -- to delete
+--    and app_name = 'facetune2_android_china' -- to delete
+
+--order by attribution_user_id
+)
+where periods_from=0
+)
+
+
+select cohort_week,
+count(distinct base.winning_lt_defacto_id) as cohort_users,
+count(distinct case when survived=1  then base.winning_lt_defacto_id end) as retained,
+count(distinct case when survived=0  then base.winning_lt_defacto_id end) as churned,
+count(distinct case when survived=1  then base.winning_lt_defacto_id end)/count(distinct base.winning_lt_defacto_id)*100 as w1_retention,
+count(distinct case when survived=0  then iss.id_for_vendor end ) as churned_editor,
+count(distinct case when survived=1  then iss.id_for_vendor end ) as survived_editor,
+count(distinct case when survived=0  then iss.flow_id end ) as churned_editor_flow_starts,
+count(distinct case when survived=1  then iss.flow_id end ) as survived_editor_flow_starts,
+count(distinct iss.id_for_vendor) as editor_flow_starter,
+count(distinct iss.flow_id) as editor_flow_starts,
+safe_divide(count(distinct case when survived=0  then iss.flow_id end ),count(distinct case when survived=0  then iss.id_for_vendor end )) as churned_flow_starts_user,
+safe_divide(count(distinct case when survived=1  then iss.flow_id end ),count(distinct case when survived=1  then iss.id_for_vendor end )) as survived_flow_starts_user,
+safe_divide(count(distinct iss.id_for_vendor),count(distinct base.winning_lt_defacto_id))*100 as editor_flow_start_pct,
+safe_divide(count(distinct case when survived=1  then iss.id_for_vendor end ),count(distinct iss.id_for_vendor))*100 as w1_retention_for_main_editor_flow_starter,
+count(distinct case when survived=0  then exp.id_for_vendor end ) as churned_exporter,
+count(distinct case when survived=1  then exp.id_for_vendor end ) as survived_exporter,
+count(distinct case when survived=0  then exp.export_id end ) as churned_exports,
+count(distinct case when survived=1  then exp.export_id end ) as survived_exports,
+count(distinct exp.id_for_vendor) as exporter,
+count(distinct exp.export_id) as exports,
+safe_divide(count(distinct case when survived=0  then exp.export_id end ),count(distinct case when survived=0  then iss.id_for_vendor end )) as churned_exports_per_user,
+safe_divide(count(distinct case when survived=1  then exp.export_id end ),count(distinct case when survived=1  then iss.id_for_vendor end )) as survived_exports_per_user,
+safe_divide(count(distinct exp.id_for_vendor),count(distinct base.winning_lt_defacto_id))*100 as exporter_pct,
+safe_divide(count(distinct case when survived=1  then exp.id_for_vendor end ),count(distinct exp.id_for_vendor))*100 as w1_retention_for_main_editor_exporter,
+count(distinct case when survived=0  then edit.id_for_vendor end ) as churned_edit_starter,
+count(distinct case when survived=1  then edit.id_for_vendor end ) as survived_edit_starter,
+count(distinct edit.id_for_vendor) as edit_starter,
+safe_divide(count(distinct edit.id_for_vendor),count(distinct base.winning_lt_defacto_id))*100 as edit_start_pct,
+safe_divide(count(distinct case when survived=1  then edit.id_for_vendor end ),count(distinct edit.id_for_vendor))*100 as w1_retention_for_main_editor_starter
+from
+base
+ left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_editor_flow_started` iss
+        on farm_fingerprint('editor'|| iss.id_for_vendor) = base.winning_lt_defacto_id
+        and date_trunc(date(iss.meta_received_at),week)=base.cohort_week
+        
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_editor_exported` as exp
+        on farm_fingerprint('editor'|| exp.id_for_vendor) = base.winning_lt_defacto_id
+        and date_trunc(date(exp.meta_received_at),week)=base.cohort_week
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_editor_editing_started` as edit
+        on farm_fingerprint('editor'|| edit.id_for_vendor) = base.winning_lt_defacto_id
+        and date_trunc(date(edit.meta_received_at),week)=base.cohort_week
+group by 1

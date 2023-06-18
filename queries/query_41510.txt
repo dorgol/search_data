@@ -1,0 +1,50 @@
+/*
+    Name: 20230329 - [FT-1081] Feature Touchpoint Subscription - Show All Plans Usage
+    Query ID: 41510
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-02T12:29:48.204Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        timestamp_diff(current_timestamp(), experiment_started_meta, day) days_since_start,
+        country,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%FT-1081%')
+    and display_type = '{{display}}'
+)
+
+select
+    segmentation,
+    variant,
+    count(distinct event_id) num_presentations,
+    count(distinct case when presentation_type = 'Show all plans' then event_id end) num_show_all_plans,
+    count(distinct case when presentation_type = 'Show all plans' then event_id end)/nullif(count(distinct event_id),0)*100 pct_show_all_plans_of_total
+from users u
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_entered` se
+    on true
+    and se.meta_received_at >= '2023-03-29'
+    and se.meta_received_at >= experiment_started_meta
+    and se.id_for_vendor = u.id_for_vendor
+    and source = 'acceptedVIPFeature'
+    -- not neccessarily true, fix this!
+    -- and case when segmentation = '02 New Users' then presentation_type != 'fullScreen' else true end
+group by 1,2
+order by 1,2

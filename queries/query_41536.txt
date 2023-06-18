@@ -1,0 +1,59 @@
+/*
+    Name: 20230329 - [FT-1081] Feature Touchpoint Subscription - Subscription Sources - Configs
+    Query ID: 41536
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-02T12:32:36.482Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+    and display_type = '{{display}}'
+)
+
+select
+    segmentation,
+    variant,
+    configuration_identifier,
+    max(total_subs) total_subs,
+    count(distinct id_for_vendor) num_subs,
+    count(distinct id_for_vendor) / max(total_subs)*100 pct_total_subs
+from (
+        select
+            segmentation,
+            variant,
+            u.id_for_vendor,
+            se.configuration_identifier,
+            count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_subs
+        from users u
+        join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+            on app_name = 'facetune2'
+            and s.platform_device_id = u.id_for_vendor
+            and original_purchase_date >= experiment_started_meta
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_user_subscribed` us
+            on true
+            and us.meta_received_at >= '2023-03-29'
+            and us.meta_received_at >= experiment_started_meta
+            and u.id_for_vendor = us.id_for_vendor
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_entered` se
+            on se.store_session_id = us.store_session_id
+        where true
+)
+group by 1,2,3
+order by 1,2,5 desc

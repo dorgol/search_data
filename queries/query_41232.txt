@@ -1,0 +1,44 @@
+/*
+    Name: PL iOS: Conversions By Country
+    Query ID: 41232
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-03T15:38:14.169Z
+    */
+    select
+    f.app_real_world_name,
+        case when f.app_store_country in ('ID','US','MY') then f.app_store_country else 'ROW' end as country,
+    date_trunc(f.first_launch,{{ date }}) as hour,
+   -- count(distinct f.lt_defacto_id) as installs,
+    count(distinct f.id_for_vendor) as installs,
+    count(distinct sub.id_for_vendor) as conversions,
+    count(distinct case when paid.revenue_so_far>0 then paid.id_for_vendor end) as paid_conversions,
+    count(distinct case when had_trial =true then paid.id_for_vendor end) as trials,
+    count(distinct case when had_trial =true and is_in_trial_period =false then paid.id_for_vendor end) as trials_completed,
+    count(distinct case when had_trial =true and is_in_trial_period =false and revenue_so_far>0 then paid.id_for_vendor end) as paid_trials,
+    count(distinct case when sub.source='SubscriptionPageSourceOnboardingPromotion' then sub.id_for_vendor end) as sol_conversions,
+    count(distinct case when sub.source in ('ai_scenes.rate_limiter','ai_scenes','ai_scenes.pro_filter') then sub.id_for_vendor end) as ai_scenes_conversions,
+    safe_divide(count(distinct sub.id_for_vendor), count(distinct f.id_for_vendor))*100 as cvr,
+    safe_divide(count(distinct case when sub.source='SubscriptionPageSourceOnboardingPromotion' then sub.id_for_vendor end), count(distinct f.id_for_vendor))*100 as sol_cvr,
+    safe_divide(count(distinct case when paid.revenue_so_far>0 then paid.id_for_vendor end), count(distinct f.id_for_vendor))*100 as paid_cvr,
+    safe_divide(count(distinct case when had_trial =true and is_in_trial_period =false and revenue_so_far>0 then paid.id_for_vendor end), count(distinct case when had_trial =true and is_in_trial_period =false then paid.id_for_vendor end))*100 as trial_2_paid,
+    safe_divide(count(distinct case when sub.source in ('ai_scenes.rate_limiter','ai_scenes','ai_scenes.pro_filter') then sub.id_for_vendor end), count(distinct f.id_for_vendor))*100 as ai_scenes_cvr,
+from `ltx-dwh-prod-processed`.`devices`.`unified_devices` f
+left join `ltx-dwh-prod-raw.analytics.ios_editor_subscription_purchase_succeeded` as sub
+on f.id_for_vendor=sub.id_for_vendor
+and date(f.first_launch)=date(sub.meta_received_at)
+left join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_state` as paid
+on paid.original_transaction_id=sub.original_transaction_id
+and paid.id_for_vendor=sub.id_for_vendor
+and paid.application='editor'
+
+
+
+
+
+where f.application in ('editor'
+--, 'editor_android'
+)
+and first_launch >= '2023-04-17'
+group by 1,2,3
+order by 1,2,3
+

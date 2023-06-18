@@ -1,0 +1,11 @@
+/*
+    Name: FT iOS - Missing Screen Recording IDs
+    Query ID: 40000
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-02T10:50:12.767Z
+    */
+    select
+    count(distinct editing_session_id) num_esid,
+    count(distinct screen_recording_id) num_screen_recording_id
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_screen_recording_started` srs
+where date(srs.meta_received_at) >= date_sub(current_date(),interval 6 month)

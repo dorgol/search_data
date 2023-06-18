@@ -1,0 +1,75 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1076] Your photo showcase - Late Assignment Showcase Seen - Distribution
+    Query ID: 40412
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-19T01:05:09.011Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1076] Your photo showcase')
+    and display_type = '{{display_type}}'
+)
+
+select
+    *,
+    sum(pct_total_users) over (partition by segmentation, variant order by minutes_before_exp_start asc) cumul_pct_total_users
+from (
+select
+    segmentation,
+    variant,
+    start_status,
+    minutes_before_exp_start,
+    count(distinct id_for_vendor)/max(total_users)*100 pct_total_users,
+    count(distinct id_for_vendor) num_users
+from (
+        select
+            *,
+            count(distinct id_for_vendor) over (partition by segmentation, variant,start_status) total_users
+        from (
+            select
+                segmentation,
+                variant,
+                u.id_for_vendor,
+                experiment_started_meta,
+                case 
+                    when qp.meta_received_at >= timestamp_sub(experiment_started_meta,interval 1 minute) then 'Questionnaire after exp. start'
+                    when qp.meta_received_at < timestamp_sub(experiment_started_meta,interval 1 minute) then 'Questionnaire before exp. start'
+                end as start_status,
+                timestamp_diff(experiment_started_meta, qp.meta_received_at, minute) minutes_before_exp_start,
+            from users u
+            join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` qp
+                on qp.app_name = 'facetune2' 
+                and qp.platform_device_id = u.id_for_vendor
+                and qp.meta_received_at >= '2023-03-15'
+        )
+        where start_status = 'Questionnaire before exp. start'
+        and variant <> 'Baseline'
+    ) u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pt
+        on pt.app_name = 'facetune2' 
+        and pt.platform_device_id = u.id_for_vendor
+        and pt.meta_received_at >= '2023-03-15'
+        -- and `origin_page_name` like '%selfie%'
+    group by 1,2,3,4
+)
+order by 1,2,3,4

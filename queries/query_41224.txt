@@ -1,0 +1,50 @@
+/*
+    Name: PL android: CVR Per Hour By Country
+    Query ID: 41224
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-03T16:32:31.837Z
+    */
+    select
+    f.app_real_world_name,
+        case when country in ('ID','US','MY','KH','MM') then country else 'ROW' end as country,
+    date_trunc(f.first_launch,{{ date }}) as hour,
+    count(distinct f.lt_defacto_id) as installs,
+    count(distinct f.installation_id) as installs_alt,
+    count(distinct pe.installation_id) as conversions,
+    count(distinct case when paid.revenue_so_far>0 then paid.installation_id end) as paid_conversions,
+    count(distinct case when had_trial =true then paid.installation_id end) as trials,
+    count(distinct case when had_trial =true and is_in_trial_period =false then paid.installation_id end) as trials_completed,
+    count(distinct case when had_trial =true and is_in_trial_period =false and revenue_so_far>0 then paid.installation_id end) as paid_trials,
+    count(distinct case when pre.reason='first_launch' then  pe.installation_id end) as sol_conversions,
+    count(distinct case when pre.reason='' then  pe.installation_id end) as scenes_conversions,
+    safe_divide(count(distinct pe.installation_id),count(distinct f.lt_defacto_id))*100 as cvr,
+    safe_divide(count(distinct case when paid.revenue_so_far>0 then paid.installation_id end),count(distinct f.lt_defacto_id))*100 as paid_cvr,
+    safe_divide(count(distinct case when had_trial =true and is_in_trial_period =false and revenue_so_far>0 then paid.installation_id end),count(distinct case when had_trial =true and is_in_trial_period =false then paid.installation_id end))*100 as trial_2_paid,
+    safe_divide(count(distinct case when pre.reason='first_launch' then  pe.installation_id end),count(distinct f.lt_defacto_id))*100 as sol_cvr,
+    safe_divide(count(distinct case when pre.reason='' then  pe.installation_id end),count(distinct f.lt_defacto_id))*100 as scenes_cvr,
+
+from `ltx-dwh-prod-processed`.`devices`.`unified_devices` f
+
+left join `ltx-dwh-prod-raw.analytics_global.ltx_global_subscription_screen_presented` as pre
+on pre.installation_id=f.installation_id
+and pre.app_name='editor_android'
+and date(pre.meta_received_at)=date(f.first_launch)
+and pre.screen_type!='asset_purchase'
+left join `ltx-dwh-prod-raw.analytics_global.ltx_global_subscription_purchase_ended` as pe
+on pre.flow_id=pe.flow_id
+and pe.app_name='editor_android'
+and pe.reason='success'
+left join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_state` as paid
+on 
+--paid.original_transaction_id=pe.original_transaction_id
+--and 
+paid.installation_id=pe.installation_id
+and paid.application='editor_android'
+
+where f.application in (
+--'editor'
+ 'editor_android'
+)
+and first_launch >= '2023-04-17'
+group by 1,2,3
+order by 1,2,3

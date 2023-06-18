@@ -1,0 +1,47 @@
+/*
+    Name: VL iOS - Subscriptions - Trial to Paid Rate by Network v2
+    Query ID: 42338
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-30T10:56:35.154Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(a.first_session_id_ts), {{period}}) as cohort_period,
+        a.attribution.network,
+        attribution_user_id as user_id,
+        us.lt_subscription_id is not null as is_subscriber,
+        floor(timestamp_diff(us.original_purchase_date,a.first_session_id_ts,hour)/24) as time_to_sub,
+        payments.revenue_so_far
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user` a
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation` as us
+      on a.attribution_user_id = us.attribution.attribution_user_id
+      and us.application = 'videoleap'
+      and subscription.subscription_duration = '1y'
+      and subscription.had_trial
+      and subscription.current_is_in_trial_period = false
+    where true
+    and date_trunc(date(a.first_session_id_ts), {{period}}) >= '2022-10-01'
+    and date_trunc(date(a.first_session_id_ts), {{period}}) < date_sub(current_date(), interval 1 {{period}})
+    and date_trunc(date(a.first_session_id_ts), {{period}}) < date_sub(current_date(), interval 7 day)
+    and a.app_name = 'videoleap'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then a.current_store_country not in ('US','CN')
+        else a.current_store_country = '{{countries}}' end
+
+)
+
+
+select
+    cohort_period,
+    network,
+    count(distinct user_id) as cohort_users,
+    count(distinct case when time_to_sub >= 0 then user_id end) post_trial_subs,
+    count(distinct case when time_to_sub >= 0 and revenue_so_far > 0 then user_id end) paid_post_trial_subs,
+    count(distinct case when time_to_sub = 0 and revenue_so_far > 0 then user_id end)/ nullif(count(distinct case when time_to_sub = 0 then user_id end),0)*100 as trial_to_paid_rate_day0,
+    
+    count(distinct case when time_to_sub > 0 and revenue_so_far > 0 then user_id end)/ nullif(count(distinct case when time_to_sub > 0 then user_id end),0)*100 as trial_to_paid_rate_nonday0,
+from users
+group by 1,2
+having post_trial_subs >= 500
+order by 1 desc

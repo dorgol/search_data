@@ -1,0 +1,53 @@
+/*
+    Name: VL iOS- Landing Screen Experiment - Remake Exporters by Feed Screen
+    Query ID: 42368
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-31T06:21:17.816Z
+    */
+    with experiment_users as (
+    select distinct
+        variant,
+        id_for_vendor,
+        experiment_started_device,
+        experiment_started_meta
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and experiment = 'vl_landing_screen_experiment_05_2023_local'
+        --and variant not like "%Baseline"
+        and case when '{{segments}}' = 'All Users' then segmentation = "01 All Users"
+                 when '{{segments}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segments}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+)
+
+, remake_exports as (
+    select
+    variant,
+    case when '{{grouping}}' = 'see all screens' then ac.screen_name
+        else
+            case when lower(ac.screen_name) like '%category.recommended%' or ac.screen_name like '%for_you%' then 'Main Feed'
+                 when st.flow_name = "assets_first" then "assets_first"
+                 when ac.screen_name like '%landing_screen.%' then 'Landing Screen'
+                 when lower(ac.screen_name) like '%discover.recommended%' then 'Discover Main Feed'
+                 when lower(ac.screen_name) like '%discover.%' then 'Discover Categories'
+                 when ac.screen_name like '%category.%' then 'Main Categories'
+                 when ac.screen_name like '%templates%' or ac.screen_name like '%liked%' or ac.screen_name like '%purchased%' then 'Profile'
+                 when ac.screen_name = 'post_details' or ac.screen_name = 'remakes' then 'Remake screen'
+                 when ac.screen_name like '%assets_first%' then 'assets_first'
+                 when ac.screen_name is null then "unknown"
+                 else ac.screen_name end 
+        end as screen_name,
+    count(distinct ex.export_id) as num_exports,
+from experiment_users u
+join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as st
+    on u.id_for_vendor = st.id_for_vendor
+    and st.meta_received_at >= u.experiment_started_meta
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started` as ac
+    on st.action_identifier = ac.action_id
+join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+    on st.open_project_id = exs.open_project_id
+    and exs.parent_template_id is not null
+join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+    on exs.export_id = ex.export_id
+group by 1,2)
+
+select * from remake_exports

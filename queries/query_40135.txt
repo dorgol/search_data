@@ -1,0 +1,71 @@
+/*
+    Name: FT2 iOS - Num. Exports in 14d - Of exporters
+    Query ID: 40135
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-28T07:45:47.182Z
+    */
+    with 
+users as (
+    select distinct
+        d.attribution_user_id,
+        lt_defacto_id,
+        first_session_id_ts,
+        count(distinct d.attribution_user_id) over () total_users
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` d
+    left join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` a
+        on a.application = 'facetune2'
+        and d.attribution_user_id = a.attribution_user_id
+    where true
+    and d.app_name = 'facetune2'
+    and dt >= date_sub(current_date(), interval {{start_x_days_back}} day) 
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then d.current_store_country not in ('US','CN')
+        else d.current_store_country = '{{countries}}' end
+),
+
+exports as (
+    select
+        attribution_user_id,
+        total_users,
+        total_exporters,
+        max(num_14d_exports) max_num_14d_exports
+    from
+    (
+        select
+            u.attribution_user_id,
+            total_users,
+            count(distinct attribution_user_id) over () total_exporters,
+            -- 14d = 14*24*60*60 = 1209600 seconds
+            count(event_id) over (partition by attribution_user_id order by UNIX_seconds(device_timestamp) asc range between current row and (1209600) following) as num_14d_exports,
+        from users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` e
+            on u.lt_defacto_id = farm_fingerprint('facetune2' || platform_device_id)
+            and date_trunc(date(device_timestamp), day) >= date_sub(current_date(), interval {{start_x_days_back}} day) 
+    )
+    group by 1,2,3
+)
+
+select
+    max_num_14d_exports,
+    total_users,
+    num_total_exporters,
+    num_exporters_in_group,
+    pct_exporters_of_total_users,
+    pct_group_of_total_users,
+    pct_group_of_total_exporters,
+    sum(pct_group_of_total_users) over (order by max_num_14d_exports asc) cumul_sum_pct_exports_of_total,
+    sum(pct_group_of_total_exporters) over (order by max_num_14d_exports asc) cumul_sum_pct_exports
+from (
+    select
+        max_num_14d_exports,
+        max(total_users) total_users,
+        max(total_exporters) num_total_exporters,
+        max(total_exporters)/max(total_users)*100 pct_exporters_of_total_users,
+        count(distinct attribution_user_id)/max(total_exporters)*100 pct_group_of_total_exporters,
+        count(distinct attribution_user_id)/max(total_users)*100 pct_group_of_total_users,
+        count(distinct attribution_user_id) num_exporters_in_group
+    from exports
+    group by 1
+)
+order by 1

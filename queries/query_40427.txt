@@ -1,0 +1,51 @@
+/*
+    Name: VL iOS - Feature set experiment - Existing users CVR/PCVR by time in app
+    Query ID: 40427
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-19T15:24:10.043Z
+    */
+    with experiment_users as (
+    select distinct
+        experiment,
+        variant,
+        id_for_vendor,
+        install_time,
+        experiment_started_device,
+        experiment_started_meta,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and experiment = "vl_feature_set_v3_01_2023"
+        and segmentation = "03 Existing Users"
+        and display_type like '{{display_type}}%'
+)
+
+, raw as (
+    select distinct
+        case when ex.variant like "%Baseline" then "Baseline" else "Variant1" end as variant,
+        timestamp_diff(ex.experiment_started_device, ex.install_time, day) as days_in_app,
+        ex.id_for_vendor as all_users,
+        sub.id_for_vendor as subs,
+        case when revenue_so_far > 0 then sub.id_for_vendor end as paid_subs
+    from experiment_users as ex
+    left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` as sub
+        on ex.id_for_vendor = sub.id_for_vendor
+        and ex.experiment = sub.experiment
+        and sub.original_purchase_date >= ex.experiment_started_device     -- became subs after experiment
+)
+
+select
+    variant,
+    case when days_in_app <= 14 then "1. week0-1"
+         when days_in_app <= 28 then "2. week1-3"
+         when days_in_app <= 42 then "3. week3-5"
+         when days_in_app <= 180 then "4. until 6 month"
+         when days_in_app <= 360 then "5. until 1 year"
+         else "6. more than 1 year" end as segmentation,
+    count(distinct all_users) as num_users,
+    count(distinct subs) as num_subs,
+    count(distinct paid_subs) as num_paid_subs,
+    count(distinct subs) / count(distinct all_users) * 100 as CVR,
+    count(distinct paid_subs) / count(distinct all_users) * 100 as PCVR,
+from raw
+group by 1,2
+order by 2,1

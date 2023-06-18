@@ -1,0 +1,54 @@
+/*
+    Name: Felix - New Sub Offer Revenue(2023-04-26)
+    Query ID: 41371
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-02T10:08:13.240Z
+    */
+    declare start_date timestamp default '2022-05-01';
+
+with combined as (
+
+    select distinct
+        date_trunc(date(meta_received_at), month) as event_timestamp_month,
+        date_trunc(date(meta_received_at), week) as event_timestamp_week,
+        date_trunc(date(meta_received_at), day) as event_timestamp_day,
+        offer.id_for_vendor,
+        init.id_for_vendor as init_id,
+        succ.id_for_vendor as succ_id,
+        actual_proceeds 
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_offer_presented` offer
+    left join (select distinct 
+                    id_for_vendor,
+                    date_trunc(date(meta_received_at), day) as event_timestamp_day
+                from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_purchase_initiated` 
+                ) init on init.id_for_vendor = offer.id_for_vendor and date_trunc(date(offer.meta_received_at), day) = event_timestamp_day
+    left join (select distinct 
+                    id_for_vendor,
+                    original_transaction_id,
+                    date_trunc(date(meta_received_at), day) as event_timestamp_day
+                from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_purchase_succeeded`
+                ) succ on succ.id_for_vendor = offer.id_for_vendor and succ.event_timestamp_day = date_trunc(date(offer.meta_received_at), day)
+    left join (select  subscription.original_transaction_id as transaction_id,
+                       sum(payments.actual_proceeds) as actual_proceeds
+               from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions`
+               group by 1) tran on original_transaction_id = tran.transaction_id -- Direct revenue from transaction dtiven by subscription offer. Not all subsequent revenue. Which one?
+
+    where meta_received_at > '2022-01-08'
+    
+)
+
+
+select 
+    --case when event_timestamp_month <= '2022-07-01' then 'Before Termination' else 'After Termination' end as offer_state,
+    event_timestamp_month,
+    count(distinct id_for_vendor) as total_offers,
+    count(distinct init_id) as count_init,
+    count(distinct succ_id) as count_succ,
+    (count(distinct init_id)/count(distinct id_for_vendor))*100 as payment_init_rate,
+    (count(distinct succ_id)/count(distinct id_for_vendor))*100 as payment_succ_rate,
+    sum(actual_proceeds) as rev --changing from original_transaction to transaction decreases rev figure substantially 
+from combined
+group by 1
+order by 1 asc
+
+

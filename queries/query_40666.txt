@@ -1,0 +1,64 @@
+/*
+    Name: FT2 iOS - Avg. Exports per Week - Free Users - Histograms
+    Query ID: 40666
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-28T11:22:17.271Z
+    */
+    with 
+users as (
+    select distinct
+        d.attribution_user_id,
+        date_trunc(dt, week) week,
+        lt_defacto_id,
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` d
+    left join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` a
+        on a.application = 'facetune2'
+        and d.attribution_user_id = a.attribution_user_id
+    where true
+    and d.app_name = 'facetune2'
+    and dt >= date_sub(current_date(), interval {{start_x_days_back}} day) 
+    and date_trunc(dt, week) != date_trunc(current_date(), week)
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then d.current_store_country not in ('US','CN')
+        else d.current_store_country = '{{countries}}' end
+),
+
+exports as 
+(
+    select
+        week,
+        attribution_user_id,
+        num_exports,
+        count(distinct attribution_user_id) over (partition by week) total_users
+    from (
+        select 
+            week,
+            attribution_user_id,
+            count(distinct e.event_id) num_exports,
+        from users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` e
+            on u.lt_defacto_id = farm_fingerprint('facetune2' || platform_device_id)
+            and date_trunc(date(device_timestamp), week) = week
+            and is_subscriber = false
+        group by 1,2
+    )
+)
+
+select
+    week,
+    case
+        when num_exports > 10 then '10+'
+        else format("%02d", num_exports)
+    end as num_exports,
+    sum(pct_total_weekly_exporters) pct_total_weekly_exporters
+from (
+    select
+        week,
+        num_exports,
+        count(distinct attribution_user_id)/max(total_users)*100 pct_total_weekly_exporters
+    from exports
+    group by 1,2
+)
+group by 1,2 
+order by 1

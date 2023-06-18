@@ -1,0 +1,150 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 - Posts Purchases and Revenue by Variant
+    Query ID: 41880
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-23T07:45:47.305Z
+    */
+    
+with users as
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and lower(d.experiment) not like lower('%AU_UK%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        group by 1,2,3,4,5,6,7,8
+),
+
+posts as (
+    select distinct
+        post_id,
+        title,
+        row_number() over (partition by post_id order by server_timestamp desc) as row_num
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where true
+    and app_name = 'facetune'
+    and account_id is not null
+    and requirements[offset(0)] like 'beauty%'
+    qualify row_number() over (partition by post_id order by server_timestamp desc) = 1
+),
+
+usage as (
+select distinct
+    u.variant,
+    feed_type,
+    platform_device_id,
+    post_id,
+    --session_id, --commenting out session id and run_id until the unnested table will have these fields - currently they are null some of the time, causing duplicates and partial data.
+    --run_id,
+    feed_id,
+    position,
+    actions,
+    action_id
+from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` as f
+join users u
+    on u.id_for_vendor = f.platform_device_id
+where true
+and application = 'facetune2'
+and date(meta_received_at) >= '{{start_date}}'
+--and safe_cast(app_version_code as int64) >= {{since_version}}
+and date(meta_received_at) >= date_sub(current_date(), interval 1 month)
+and feed_type like '%beauty%'
+),
+
+ 
+usage_with_purchases as (   
+    select
+        u.variant,
+        u.feed_type,
+        u.platform_device_id,
+        u.post_id,
+        --u.session_id,  --commenting out session id and run_id until the unnested table will have these fields - currently they are null some of the time, causing duplicates and partial data.
+        --u.run_id,
+        u.feed_id,
+        u.actions,
+        u.action_id,
+        count(distinct f.event_id) as num_flows_started,
+        count(distinct s.event_id) as num_attempts,
+        count(distinct w.event_id) as num_purchases
+    from usage u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_flow_started` f
+        on true
+        and f.app_name = '{{app_name}}'
+        and f.platform_device_id = u.platform_device_id
+        and safe_cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '{{start_date}}'
+        and f.product_type = 'consumable_item'
+        and f.source like 'beauty%'
+        and ends_with(f.flow_id, u.action_id)
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_store_view_presented` s
+        on true
+        and s.app_name = '{{app_name}}'
+        and s.platform_device_id = u.platform_device_id
+        and cast(s.app_version_code as int64) >= {{since_version}}
+        and date(s.meta_received_at) >= '{{start_date}}'
+        and s.view_name = 'beautyFeed_payment_drawer'
+        and s.flow_id = f.flow_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_purchase_process_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = f.platform_device_id
+        and safe_cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.flow_id = f.flow_id
+        and result = 'success'
+    group by 1,2,3,4,5,6,7--,8,9
+)
+
+
+select 
+    category,
+    title,
+    v2_impressions,
+    v3_impressions,
+    -- v2_attempts,
+    -- v3_attempts,
+    -- v2_purchases,
+    -- v3_purchases,
+    100* safe_divide(v2_purchases , v2_impressions) as v2_purchases_per_100_imps,
+    100* safe_divide(v2_attempts, v2_impressions) as v2_attempts_per_100_imps,
+    100* safe_divide(v2_purchases , v2_attempts) as v2_purchases_per_100_saves,
+    
+    100* safe_divide(v3_purchases , v3_impressions) as v3_purchases_per_100_imps,
+    100* safe_divide(v3_attempts, v3_impressions) as v3_attempts_per_100_imps,
+    100* safe_divide(v3_purchases , v3_attempts) as v3_purchases_per_100_saves,
+from (
+select
+    case when '{{level}}' in ('category','post in category') then u.feed_type else 'all' end as category,
+    case when '{{level}}' = 'category' then 'all' else p.title end as title,
+    count(distinct case when variant = 'Variant2' then concat(u.platform_device_id,'-',u.post_id,'-',u.feed_id) end) as v2_impressions,
+    count(distinct case when variant = 'Variant3' then concat(u.platform_device_id,'-',u.post_id,'-',u.feed_id) end) as v3_impressions,
+    sum(case when variant = 'Variant2' then num_flows_started end) as v2_flows_started,
+    sum(case when variant = 'Variant3' then num_flows_started end) as v3_flows_started,
+    sum(case when variant = 'Variant2' then num_attempts end) as v2_attempts,
+    sum(case when variant = 'Variant3' then num_attempts end) as v3_attempts,
+    sum(case when variant = 'Variant2' then num_purchases end) as v2_purchases,
+    sum(case when variant = 'Variant3' then num_purchases end) as v3_purchases,
+from usage_with_purchases u
+left join posts p
+    on p.post_id = u.post_id
+group by 1,2--,3
+)
+where (v2_impressions >= {{minimum_impressions}} or v3_impressions >= {{minimum_impressions}})
+order by 7 desc

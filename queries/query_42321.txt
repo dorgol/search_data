@@ -1,0 +1,56 @@
+/*
+    Name: 20230530 - FT2 iOS - [FT-1102] Features Gestures - Data Validation - Saw SF for the First Time
+    Query ID: 42321
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-30T07:37:38.090Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%[FT-1102] Features Gestures%')
+    and display_type = 'activated_for_device'
+),
+
+first_subfeature_usage as (
+    select
+        segmentation,
+        variant,
+        sub_feature_path,
+        u.id_for_vendor,
+        experiment_started_meta,
+        min(meta_received_at) first_usage_ts
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_sub_feature_started` sf
+        on true
+        and sf.id_for_vendor = u.id_for_vendor
+        and feature in ('Retouch', 'Reshape')
+        and sub_feature_path in ('Reshape', 'Refine', 'Smooth', 'Smoother')
+    group by 1,2,3,4,5
+)
+
+select
+    segmentation,
+    variant,
+    count(distinct case when first_usage_ts > experiment_started_meta then id_for_vendor end) num_saw_sf_first_time_after_exp_start,
+    -- == "display rate"
+    count(distinct case when first_usage_ts > experiment_started_meta then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_sf_first_time_after_exp_start
+from first_subfeature_usage
+group by 1,2
+order by 1,2

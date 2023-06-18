@@ -1,0 +1,80 @@
+/*
+    Name: 20230221 - FT2 iOS - [FT-1069] First Import Flow V2 - Days to ARO Off - Cumulative
+    Query ID: 40075
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-06T10:19:06.361Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        timestamp_diff(current_timestamp(), experiment_started_meta, day) days_since_start,
+        country,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and (
+        lower(d.experiment) = lower('[FT-1069] First import flow V2')
+    )
+    and display_type = '{{display}}'
+),
+
+subs as (
+    select
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        s.revenue_so_far,
+        is_sol as sol_sub,
+        subscription_source,
+        first_subscription_duration as subscription_duration,
+        first_known_cancellation_date,
+        timestamp_diff(`first_auto_renewal_disabling_date`,s.original_purchase_date, day) days_to_aro_off,
+        current_is_in_trial_period as is_in_trial_period,
+        had_trial,
+        original_purchase_date,
+        experiment_started_meta,
+        count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_subs
+    from users u 
+    join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on true
+        and app_name = 'facetune2'
+        and u.id_for_vendor = s.platform_device_id
+        and s.original_purchase_date >= u.experiment_started_meta
+        and current_is_in_trial_period is false
+        and first_subscription_duration = '1y'
+)
+    
+select
+    segmentation,
+    variant,
+    days_to_aro_off,
+    pct_total_subs,
+    num_subs,
+    sum(pct_total_subs) over (partition by segmentation, variant order by days_to_aro_off asc) cumul_pct_total
+from (
+    select
+        segmentation,
+        case when variant = 'Variant1' then 'Variant 1' when variant = 'baseline' then 'Baseline' else variant end as variant,
+        days_to_aro_off,
+        count(distinct id_for_vendor) num_subs,
+        count(distinct id_for_vendor) / max(total_subs)*100 as pct_total_subs
+    from subs s
+    group by 1,2,3
+    having days_to_aro_off is not null
+)
+order by 1,2,3

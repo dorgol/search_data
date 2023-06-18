@@ -1,0 +1,45 @@
+/*
+    Name: Facetune: Monthly Post Trial
+    Query ID: 40644
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-09T12:05:15.742Z
+    */
+    with subs as (
+    select
+        attribution.attribution_user_id,
+        subscription.had_trial,
+        subscription.subscription_duration,
+        payments.revenue_so_far > 0 as paid,
+        payments.number_of_payments,
+        original_purchase_date,
+        subscription.current_is_active,
+        row_number() over (partition by attribution.attribution_user_id order by original_purchase_date asc) as sub_number,
+        lead(subscription.had_trial) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_had_trial,
+        lead(subscription.subscription_duration) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_subscription_duration,
+        lead(payments.revenue_so_far) over (partition by attribution.attribution_user_id order by original_purchase_date asc) > 0 as next_paid,
+        lead(payments.number_of_payments) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_number_of_payments,
+        lead(original_purchase_date) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_original_purchase_date,
+        lead(subscription.current_is_active) over (partition by attribution.attribution_user_id order by original_purchase_date asc) as next_current_is_active,
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation`
+    where application = 'facetune2'
+)
+
+select distinct
+    -- next_current_is_active,
+    count(distinct attribution_user_id) over () as number_subscribers,
+    avg(next_number_of_payments) over () as avg_payments,
+    percentile_cont(next_number_of_payments, 0.5) over () as med_payments,
+    percentile_cont(next_number_of_payments, 0.25) over () as q1_payments,
+    percentile_cont(next_number_of_payments, 0.75) over () as q3_payments,
+    percentile_cont(next_number_of_payments, 0.90) over () as p90_payments,
+from subs
+where true
+and sub_number = 1
+and had_trial
+and subscription_duration = '1y'
+and not current_is_active
+and not next_had_trial
+and next_subscription_duration = '1m'
+and next_paid
+and next_original_purchase_date >= '2021-10-01'
+and next_original_purchase_date <= '2022-03-01'

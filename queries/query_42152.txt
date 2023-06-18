@@ -1,0 +1,27 @@
+/*
+    Name: Videoleap iOS - Churn - Yearly Auto Renew Off
+    Query ID: 42152
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-23T09:27:37.306Z
+    */
+    select
+    timestamp_trunc(s.original_purchase_date, {{period}}) purchase_date,
+    --subscription.subscription_duration,
+    count(distinct coalesce(subscription.original_transaction_id, subscription.payment_source_id)) num_subscriptions,
+    count(distinct case when timestamp_diff(payments.first_auto_renewal_disabling_date, original_purchase_date, day) = 0 then coalesce(subscription.original_transaction_id, subscription.payment_source_id) end) num_auto_renew_off_on_day_0,
+    safe_divide(count(distinct case when timestamp_diff(payments.first_auto_renewal_disabling_date, original_purchase_date, day) = 0 then coalesce(subscription.original_transaction_id, subscription.payment_source_id) end), count(distinct coalesce(subscription.original_transaction_id, subscription.payment_source_id)))*100 pct_auto_renew_off_on_day_0,
+    safe_divide(count(distinct case when timestamp_diff(payments.first_auto_renewal_disabling_date, original_purchase_date, day) = 0 and subscription.subscription_duration='1y' then coalesce(subscription.original_transaction_id, subscription.payment_source_id) end), count(distinct case when subscription.subscription_duration='1y' then  coalesce(subscription.original_transaction_id, subscription.payment_source_id) end))*100  day0_pct_auto_renew_off,
+    safe_divide(count(distinct case when timestamp_diff(payments.first_auto_renewal_disabling_date, original_purchase_date, day) <= 3 and subscription.subscription_duration='1y' then coalesce(subscription.original_transaction_id, subscription.payment_source_id) end), count(distinct case when subscription.subscription_duration='1y' then  coalesce(subscription.original_transaction_id, subscription.payment_source_id) end))*100  day3_pct_auto_renew_off,
+    safe_divide(count(distinct case when timestamp_diff(payments.first_auto_renewal_disabling_date, original_purchase_date, day) <= 5 and subscription.subscription_duration='1y' then coalesce(subscription.original_transaction_id, subscription.payment_source_id) end), count(distinct case when subscription.subscription_duration='1y' then  coalesce(subscription.original_transaction_id, subscription.payment_source_id) end))*100  day5_pct_auto_renew_off,
+    safe_divide(count(distinct case when timestamp_diff(payments.first_auto_renewal_disabling_date, original_purchase_date, day) <= 7 and subscription.subscription_duration='1y' then coalesce(subscription.original_transaction_id, subscription.payment_source_id) end), count(distinct case when subscription.subscription_duration='1y' then  coalesce(subscription.original_transaction_id, subscription.payment_source_id) end))*100  day7_pct_auto_renew_off,
+from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation_cross_sell` s
+where true
+and application = 'videoleap'
+and date(original_purchase_date) >= date_sub(current_date(), interval 6 month)
+--and subscription.subscription_duration='1y'
+/*and case when '{{ Source }}'='web_payments' then payments.payment_origin='web_payments'
+        when  '{{ Source }}'='app_store' then payments.payment_origin !='web_payments'
+        when  '{{ Source }}'='all' then true end*/
+group by 1
+having num_subscriptions >= 0
+order by 1

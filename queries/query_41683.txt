@@ -1,0 +1,40 @@
+/*
+    Name: Facetune Android: Video Capable Devices 30 days
+    Query ID: 41683
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-08T11:33:49.528Z
+    */
+    select
+    case when gpu_renderer in ("Mali-G76",
+                          "Mali-G76 MC16",
+                          "Mali-G76 MP12",
+                          "Mali-G76 MP10",
+                          "Mali-G77",
+                          "Mali-G77 MP11",
+                          "Mali-G78",
+                          "Mali-G78 MP14",
+                          "Mali-G78 MP12",
+                          "Mali-G78 MP20",
+                          "Mali-G78 MP24",
+                          "Adreno (TM) 630",
+                          "Adreno (TM) 640",
+                          "Adreno (TM) 650",
+                          "Adreno (TM) 660",
+                          "Adreno (TM) 730",
+                          "Adreno (TM) 740",
+                          "ANGLE (Samsung Xclipse 920) on Vulkan 1.1.179",
+                          "Mali-G610 MC6",
+                          "Mali-G710 MC10",
+                          "Mali-G710",
+                          "Mali-G72",
+                          "Mali-G76 MC4",
+                          "Adreno (TM) 618",
+                          "Adreno (TM) 619",
+                          "Adreno (TM) 620",
+                          "Adreno (TM) 642L",
+                          "Adreno (TM) 642") then 'video capable'
+                  else 'non-video capable' end as device_status,
+    count(distinct installation_id) as devices
+from `ltx-dwh-prod-raw.analytics.android_facetune2_device_info_log`
+where meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+group by 1

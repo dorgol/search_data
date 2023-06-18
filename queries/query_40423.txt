@@ -1,0 +1,97 @@
+/*
+    Name: 20230316 - FT2 iOS - [FT-1078] Voluntary AR Off churn prevention - 30d pre-experiment Activity - Renewal Rates
+    Query ID: 40423
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-19T10:32:49.516Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1078] Voluntary AR Off churn prevention')
+    and display_type = 'activated_for_device'
+),
+
+activity_30d_before_experiment as (
+    select
+        d.attribution_user_id,
+        id_for_vendor,
+        segmentation,
+        variant,
+        max(experiment_started_meta) experiment_started_meta,
+        max(case when date_diff(date(experiment_started_meta), dt, day) between 1 and 29 then true else false end) was_active_within_30d_of_exp_start
+    from users u
+    left join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` a
+        on a.application = 'facetune2'
+        and u.lt_defacto_id = a.lt_defacto_id
+    left join `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` d
+        on d.app_name = 'facetune2'
+        and d.attribution_user_id = a.attribution_user_id
+    where true
+    group by 1,2,3,4
+  
+),
+
+transactions as (
+    select distinct
+        segmentation,
+        case when variant = 'baseline' then 'Baseline' else variant end as variant,
+        u.attribution_user_id,
+        lt_subscription_id,
+        experiment_started_meta,
+        t.transaction.is_trial_period,
+        was_active_within_30d_of_exp_start,
+        row_number() over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) transaction_num_in_exp_range,
+        case when lag(t.transaction.is_trial_period) over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) is true then true else false end as did_follow_trial,
+        case when lag(t.payments.actual_proceeds) over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) > 0 then true else false end as did_pay_prev,
+        lag(t.purchase_date) over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) as prev_purchase_date,
+        lag(t.transaction.expiration_date) over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) as prev_expiration_date,
+        case when date_diff(date(t.purchase_date), date(experiment_started_meta), day) >= 0 then true else false end as is_after_exp_start,
+        t.purchase_date
+    from activity_30d_before_experiment u
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation` t
+        on t.application = 'facetune2'
+        and t.attribution.attribution_user_id = u.attribution_user_id
+        and t.payments.was_refund is not true
+)
+
+select
+    segmentation,
+    variant,
+    case when was_active_within_30d_of_exp_start then 'active with 30d' else 'inactive' end as activity_within_30d_of_exp,
+    count(distinct case when transaction_num_in_exp_range > 1 then t.lt_subscription_id end) / count(distinct t.lt_subscription_id)*100 as renewal_rate,
+    count(distinct case when transaction_num_in_exp_range > 1 and is_after_exp_start then t.lt_subscription_id end) / count(distinct t.lt_subscription_id)*100 as renewal_rate_after_exp_start,
+    count(distinct case when transaction_num_in_exp_range > 1 and is_after_exp_start and date_diff(purchase_date,prev_expiration_date, day) <= 16 then t.lt_subscription_id end) / count(distinct t.lt_subscription_id)*100 as renewal_rate_after_exp_start_in_grace_pd,
+    count(distinct case when transaction_num_in_exp_range > 1 and did_follow_trial = false and did_pay_prev then t.lt_subscription_id end) / count(distinct case when (did_follow_trial = false or is_trial_period is false) then t.lt_subscription_id end)*100 as renewal_rate_wo_trials,
+    count(distinct t.lt_subscription_id) num_expiring_subscriptions,
+    count(distinct case when transaction_num_in_exp_range > 1 then t.lt_subscription_id end) num_renewed_inc_trial,
+    --- breakdown ---
+    
+    -- non-trial regular subscription
+    count(distinct case when transaction_num_in_exp_range > 1 and did_follow_trial = false and did_pay_prev then t.lt_subscription_id end)/count(distinct t.lt_subscription_id)*100 as non_trial_reg_sub,
+    -- trial before exp start
+    count(distinct case when transaction_num_in_exp_range > 1 and did_follow_trial = true and prev_purchase_date < experiment_started_meta then t.lt_subscription_id end)/count(distinct t.lt_subscription_id)*100 as trial_before_exp_start,
+    -- trial after exp start
+    count(distinct case when transaction_num_in_exp_range > 1 and did_follow_trial = true and prev_purchase_date >= experiment_started_meta then t.lt_subscription_id end)/count(distinct t.lt_subscription_id)*100 as trial_after_exp_start,
+        -- trial after exp start
+    count(distinct case when transaction_num_in_exp_range > 1 then t.lt_subscription_id end)/count(distinct t.lt_subscription_id)*100 as non_trial_reg_sub,
+    
+from transactions t
+group by 1,2,3
+order by 3,2,1

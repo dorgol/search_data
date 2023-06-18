@@ -1,0 +1,44 @@
+/*
+    Name: VL iOS - Subscription Offer Churn Rates
+    Query ID: 41523
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-02T11:29:16.842Z
+    */
+    with active_users as (
+
+    select distinct 
+        date_trunc(date(dt), month) as month, 
+        count(distinct d.platform_device_id) as count_active_users
+
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date` d
+    where 
+        date(dt) >= '2023-01-01'
+        and date_trunc(date(dt), month) < '2023-05-01'  
+        and app_name = 'videoleap'
+    group by 1              
+),
+
+subscriptions as (
+
+    select distinct 
+        date_trunc(date(last_expiration_date_or_renewal_date), month) as month, 
+        count(distinct s.lt_subscription_id) as count_leaving_subscribers
+    from `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+                    
+    where 
+        current_is_auto_renew_status_on is False
+        and current_is_active is False
+        and app_name = 'videoleap'
+        and date(last_expiration_date_or_renewal_date) >= '2023-01-01'
+        and date_trunc(date(last_expiration_date_or_renewal_date), month) < '2023-05-01'  
+        group by 1
+)    
+
+select 
+    *,
+    (count_leaving_subscribers/count_active_users)*100 as subscription_termination_rate
+    
+from active_users     
+left join subscriptions 
+    using(month)
+order by 1    

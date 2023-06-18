@@ -1,0 +1,290 @@
+/*
+    Name: VL iOS - Branded Templates Master - Funnel (Simply - TooShy NEW VERSION)
+    Query ID: 40544
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-06T12:01:17.346Z
+    */
+    
+with bt_users as (
+    select distinct
+        dav.id_for_vendor,
+        dav.experiment_started_meta
+        
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_app_foregrounded` af
+    inner join `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+        on af.id_for_vendor = dav.id_for_vendor
+        and dav.experiment in ('IOS Feed Branded Campaign 11.22', 'IOS Feed Branded Campaign 01.23')
+        and segmentation = '01 All Users'
+        and display_type = 'activated_for_device'
+    --where date(dav.experiment_started_meta) >= '2023-03-21'
+)
+
+, actions as (
+
+  --select 'All Users' as action,
+  -- 1 as order_sort,
+  --    u.*
+  --from bt_users u
+  --
+  -- union all
+    
+    select 'Post Seen' as action,
+     2 as order_sort,
+        u.*
+    from bt_users u
+    join `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.actions = 'become_ready'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+                
+    union all
+    
+    select 'Start Collab Pressed' as action,
+     3 as order_sort,
+        u.*
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+    union all
+    
+    select 'Context Screen Presented' as action,
+     4 as order_sort,
+        u.*
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+    
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+        
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+        and date(mp.meta_received_at) >= '2023-03-21'
+        
+    
+       union all
+    
+    select 'Import Screen Triggered' as action,
+     5 as order_sort,
+        u.*
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+    
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+        
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+        and date(mp.meta_received_at) >= '2023-03-21'
+        
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` bp
+        on u.id_for_vendor = bp.platform_device_id
+        and bp.open_project_id = te.open_project_id
+        and button_location = 'collab_context_screen'
+        and date(bp.meta_received_at) >= '2023-03-21'
+        and button_identifier in ('continue','collab_add_yours','add_clips')
+   
+   union all
+   
+   
+       select 'Import Screen Presented' as action,
+     6 as order_sort,
+        u.*
+    from bt_users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+             
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+        
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+        and date(mp.meta_received_at) >= '2023-03-21'
+
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_import_wizard_screen_presented` sp
+        on u.id_for_vendor = sp.id_for_vendor
+        and te.template_editing_flow_id = sp.template_editing_flow_id
+        and date(sp.meta_received_at) >= '2023-03-21'
+  
+  
+
+   union all
+    
+    select 'Mini Editor Presented' as action,
+     7 as order_sort,
+        u.*
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+        
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+        and date(mp.meta_received_at) >= '2023-03-21'
+        
+    --join `ltx-dwh-prod-raw.analytics.ios_videoleap_import_wizard_screen_presented` sp
+    --    on u.id_for_vendor = sp.id_for_vendor
+    --    and te.template_editing_flow_id = sp.template_editing_flow_id
+    --    and date(sp.meta_received_at) >= '2023-03-21'
+   
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editor_presented` ep
+        on u.id_for_vendor = ep.id_for_vendor
+        and ((ep.open_project_id = ui.open_project_id) or (ep.open_project_id = te.open_project_id))
+        and date(ep.meta_received_at) >= '2023-03-21'
+        
+        
+    union all
+
+    
+    select 'Mini Editor Closed - Submit' as action,
+     8 as order_sort,
+        u.*
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+        
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+        and date(mp.meta_received_at) >= '2023-03-21'
+    
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editor_presented` ep
+        on u.id_for_vendor = ep.id_for_vendor
+        and date(ep.meta_received_at) >= '2023-03-21'
+        and ((ep.open_project_id = ui.open_project_id) or (ep.open_project_id = te.open_project_id))
+        
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported` sr
+        on u.id_for_vendor = sr.id_for_vendor
+        and ep.open_project_id = sr.open_project_id
+        and sr.reason = 'template editor submit button pressed'
+        and date(sr.meta_received_at) >= '2023-03-21'
+        
+    union all
+    
+    select 'Save & Submit - Submission Screen' as action,
+     9 as order_sort,
+        u.*
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+        
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+        and date(mp.meta_received_at) >= '2023-03-21'
+   
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editor_presented` ep
+        on u.id_for_vendor = ep.id_for_vendor
+        and date(ep.meta_received_at) >= '2023-03-21'
+        and ((ep.open_project_id = ui.open_project_id) or (ep.open_project_id = te.open_project_id))
+
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported` sr
+        on u.id_for_vendor = sr.id_for_vendor
+        and sr.open_project_id = ep.open_project_id
+        and sr.reason = 'template editor submit started'
+        and date(sr.meta_received_at) >= '2023-03-21'
+        
+    union all
+    
+    select 'Submission Success Presented' as action,
+     10 as order_sort,
+        u.*
+    from bt_users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+        
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and ((mp.open_project_id = ui.open_project_id) or (mp.open_project_id = te.open_project_id))
+        and mp.message_name = 'collab_context_screen'
+        and date(mp.meta_received_at) >= '2023-03-21'
+    
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editor_presented` ep
+        on u.id_for_vendor = ep.id_for_vendor
+        and date(ep.meta_received_at) >= '2023-03-21'
+        and ((ep.open_project_id = ui.open_project_id) or (ep.open_project_id = te.open_project_id))
+
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported` sr
+        on u.id_for_vendor = sr.id_for_vendor
+        and sr.open_project_id = ep.open_project_id
+        and sr.reason = 'template editor submit started'
+        and date(sr.meta_received_at) >= '2023-03-21'
+        
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented` mp2
+        on u.id_for_vendor = mp2.id_for_vendor
+        and mp2.open_project_id = te.open_project_id
+        and mp2.message_name = 'collab_submission_success'
+        and date(mp2.meta_received_at) >= '2023-03-21'
+    )
+    
+    
+    select
+        action,
+        order_sort,
+        count (distinct a.id_for_vendor) as users
+    from actions a
+    group by 1,2
+    order by order_sort asc

@@ -1,0 +1,74 @@
+/*
+    Name: VL Product Data Glossary - ARPPU
+    Query ID: 41424
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-03T16:29:20.453Z
+    */
+    with users_install as (
+
+    select distinct
+        attribution_user_id,
+        date(date_trunc(attribution_timestamp, day)) as first_active_date,
+        date(date_trunc(attribution_timestamp, month)) as first_active_month,
+        date(date_trunc(purchase_date, day)) as purchase_date,
+        sum(projected_revenue) as revenue
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user`    
+    inner join (select 
+                    attribution.attribution_user_id,
+                    purchase_date,
+                    sum(projected.adjusted_actual_proceeds_alloc) as projected_revenue
+                from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation`
+                where application = 'videoleap'
+                group by 1,2) using (attribution_user_id)
+    where date(attribution_timestamp) >= date_sub(current_date(), interval 365 day)
+        and app_name = 'videoleap'
+    group by 1,2,3,4
+
+),
+
+cohort_size as (
+
+    select 
+        first_active_month,
+        count(distinct attribution_user_id) as count_users
+    from 
+        users_install
+    group by 1    
+
+),
+
+day_segment as (
+
+    select distinct 
+        first_active_month,
+        date_diff(date(purchase_date), date(first_active_date), day) as day_diff
+    from users_install
+
+),
+
+revenues as (
+
+select 
+    day_segment.first_active_month,
+    day_diff,
+    sum(case when date_diff(date(purchase_date),date(first_active_date), day) <= day_diff then revenue end) as revenue
+    from day_segment
+    inner join users_install
+        using (first_active_month)
+    group by 1,2        
+
+)
+
+select 
+    revenues.first_active_month,
+    count_users,
+    day_diff,
+    sum(revenue) as total_rev,
+    sum(revenue)/count_users as ARPU
+from revenues
+left join cohort_size
+    using (first_active_month)
+where day_diff in (0,7,30)
+group by 1,2,3
+order by 1,2,3
+

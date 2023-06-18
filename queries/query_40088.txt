@@ -1,0 +1,48 @@
+/*
+    Name: Eror
+    Query ID: 40088
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-06T12:12:56.185Z
+    */
+    with post_effects as
+    (
+    select distinct
+        post_id,
+        account_id, 
+        creation_date, 
+        template_id, 
+        effect_unnest
+    from `ltx-dwh-playground.bi.post_create`, unnest (effects) as effect_unnest
+    )
+
+, effect_imp as 
+    (
+    select
+     effect_unnest,
+     sum(impressions) as impressions
+    from post_effects pe
+        left join (select post_id, sum(impressions) as impressions from `ltx-dwh-playground.bi.imp_post_per_day` group by 1) as i
+            on i.post_id = pe.post_id
+    group by 1)
+    
+, effect_performance as 
+    (
+    select distinct
+        pe.effect_unnest,
+        i.impressions,
+    from post_effects pe
+    left join effect_imp as i
+        on i.effect_unnest = pe.effect_unnest
+    group by 1,2)
+        
+--select 
+--    *
+--from effect_performance
+--order by 2 desc--
+
+select 
+    *
+    --effect_unnest,
+    --count(distinct pe.post_id) as posts,
+    --sum(impressions) as impressions
+from effect_performance ep

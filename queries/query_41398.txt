@@ -1,0 +1,29 @@
+/*
+    Name: VL Product Data Glossary - First Month Export Participation Over Time
+    Query ID: 41398
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-09T09:48:43.047Z
+    */
+    -- Find percentage of users who exported a project on month0 over time
+
+-- attribution_user_id, by date of launch. Whether they exported a project in month 0
+
+declare start_date date default '2022-08-01';
+
+with all_ as (
+
+    select 
+        date_trunc(first_active_dt, month) as first_launch_month,
+        count(distinct attribution_user_id) as count_users,
+        count(distinct case when cntd_exports > 0 and date_diff(date_trunc(date(dt), day),date_trunc(date(first_active_dt), day), day) <= 31 then attribution_user_id end) as first_month_exports
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date`
+    where date(first_active_dt) > '2022-08-01'
+        and lower(app_name) in ('videoleap')        
+    group by 1
+
+)
+
+select 
+*,
+(first_month_exports/count_users)*100 as first_month_export_rate
+from all_

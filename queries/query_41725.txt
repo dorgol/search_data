@@ -1,0 +1,57 @@
+/*
+    Name: VL iOS Feed - All features performance in feed
+    Query ID: 41725
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-10T09:41:30.252Z
+    */
+    with posts as (
+    select
+        post_id,
+        template_id,
+        parent_template_id is null as is_original,
+        split(requirements_flat, ".")[offset(0)] as effect_name,
+        requirements_flat as effect_full,
+        max(root_template_id) as root_template_id,
+        min(date(created_at)) as dt,
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`,
+        unnest(requirements) as requirements_flat
+    where date(created_at) > "2022-05-20"
+        and date(created_at) <= current_date()
+        and app_name = "videoleap"
+    group by 1,2,3,4,5
+)
+, total_posts as (
+    select
+        is_original,
+        count(distinct post_id) as total_posts
+    from posts
+    where true
+        and dt >= "2022-07-01"
+    group by 1
+)
+
+, effects_count as (
+    select
+        case when effect_full like "%transition%" then "transition"
+         when effect_full like "%soundEffect%" then "sound_effect"
+         when effect_full like "%voiceOver%" then "voice_over"
+         when effect_name in ("fishEye", "shake", "offset", "rays", "defocus", "crystal", "prism", "lensFlare", "colorfy", "vignette", "kaleidoscope","kaleidoscopeGrid", "filmGrain", "strobe" ) then "effects"
+         when effect_name in ("crt", "pixelate", "pulsar") then "glitch"
+         when effect_name in ("adjust", "text", "clip", "sticker", "audio", "filters", "mixer", "toneLab", "canvas", "cutout") then effect_name
+        else "other" end as effect_name,
+        is_original,
+        total_posts,
+        count(distinct post_id) as num_posts_with_effect,
+    from posts
+    left join total_posts as t
+        using(is_original)
+    where true
+        and dt >= "2022-07-01"
+    group by 1,2,3
+)
+
+select
+    *,
+    (num_posts_with_effect/total_posts)*100 as pct_usage
+    
+    from effects_count

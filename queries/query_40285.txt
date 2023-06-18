@@ -1,0 +1,56 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Exports - Sub State
+    Query ID: 40285
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-13T08:44:46.790Z
+    */
+    with users as (
+    select
+        *
+    from (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.country,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.display_type,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = 'facetune2'
+        and lower(d.experiment) like lower('[FT-1072]Lama Inpainting')
+    )
+    where true
+    and display_type = 'entered photo editor'
+)
+
+
+select
+    segmentation,
+    variant,
+    count(distinct e.event_id) num_exports,
+    count(distinct e.event_id)/count(distinct u.id_for_vendor) exports_per_device,
+    count(distinct e.platform_device_id)/count(distinct u.id_for_vendor)*100 pct_exporters
+from users u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+    on fs.app_name = 'facetune2'
+    and fs.meta_received_at >= '2023-03-01'
+    and fs.meta_received_at >= experiment_started_meta
+    and fs.platform_device_id = u.id_for_vendor
+    and fs.is_subscriber
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_ended` e
+    on e.app_name = 'facetune2'
+    and e.meta_received_at >= '2023-03-01'
+    and e.meta_received_at >= experiment_started_meta
+    and e.platform_device_id = u.id_for_vendor
+group by 1,2
+order by 1,2
+

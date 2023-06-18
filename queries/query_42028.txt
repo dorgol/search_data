@@ -1,0 +1,107 @@
+/*
+    Name: Screenshot Block Tracker
+    Query ID: 42028
+    Created By: Felix Ambrose
+    Last Updated At: 2023-06-07T08:38:11.794Z
+    */
+    with message_presented as (
+
+select distinct timestamp_trunc(s.meta_received_at, day) as dt,
+                s.id_for_vendor as platform_device_id,
+                timestamp_trunc(s.meta_received_at, hour) as time,
+                case when mp.platform_device_id is not null then 'presented' end as if_presented
+
+
+from  
+    `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_screen_capture_and_play` s
+    
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+    on s.id_for_vendor = mp.platform_device_id and timestamp_trunc(s.meta_received_at, hour) = timestamp_trunc(mp.meta_received_at, hour)
+    and message_type = 'popup'
+    and message_name = 'screen_capture'
+    and message_source = 'screen_capture'
+    and message_id = '7F899B64-D0EF-4521-AC58-F3B746F6A3D7'
+    and app_name = 'videoleap'
+where date(s.meta_received_at) > date_sub(current_date(), interval 10 day)
+    
+),
+
+
+message_dismissed as (
+
+    select 
+            platform_device_id,
+           timestamp_trunc(meta_received_at, hour) as time
+    from  `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` md    
+    where message_destination = 'subscription'
+          and app_name = 'videoleap'
+          and reason = 'button_tapped'
+          and app_name = 'videoleap'
+          and date(meta_received_at) > date_sub(current_date(), interval 10 day)
+          
+),
+
+
+flow_started as (
+
+select distinct   
+    platform_device_id,
+    timestamp_trunc(meta_received_at, hour) as time,
+    timestamp_trunc(meta_received_at, day) as time_day
+    
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_flow_started`
+where source = 'ScreenCaptureViolation'
+and app_name = 'videoleap'
+and date(meta_received_at) > date_sub(current_date(), interval 10 day) 
+
+
+
+
+),
+
+transaction as (
+
+select
+    platform_device_id,
+    timestamp_trunc(purchase_date, day) as time_day,
+    timestamp_trunc(purchase_date, hour) as time,
+    payments.actual_proceeds
+    
+from `ltx-dwh-prod-processed.subscriptions.unified_transactions`
+    where date(purchase_date) > date_sub(current_date(), interval 10 day)
+    and license_applications = 'videoleap'
+    and license_platforms = 'ios'
+    and payments.actual_proceeds > 0
+),
+
+
+unified as (
+    select 
+        mp.*,
+        case when md.platform_device_id is not null then 'dismissed_to_subscription' end as if_dismissed_to_sub,
+        case when f.platform_device_id is not null then 'flow_started' end as if_flow,
+        --case when t.platform_device_id is not null then 'purchased'end as if_purchased,
+        t.actual_proceeds
+    
+    from message_presented mp
+    left join message_dismissed md 
+        using (time, platform_device_id)
+    left join flow_started f 
+        on f.platform_device_id = md.platform_device_id and f.time = md.time
+    left join transaction t 
+        on t.platform_device_id = f.platform_device_id and t.time_day = f.time_day
+
+)
+
+
+select 
+    dt,
+    count(if_presented) as if_presented, 
+    count(if_dismissed_to_sub) as if_dismissed, 
+    count(if_flow) as if_flow_started, 
+    count(actual_proceeds) as count_transactions,
+    sum(actual_proceeds) as rev
+from unified
+where date(dt) < current_date()
+group by 1
+order by 1

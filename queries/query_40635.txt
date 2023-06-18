@@ -1,0 +1,64 @@
+/*
+    Name: [FT-1062] Toolbar Categories V2 - Full Flows - Of Export Sessions
+    Query ID: 40635
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-27T12:24:51.886Z
+    */
+    with users as (
+    select
+        segmentation,
+        application,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else country end as country,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and case
+        when '{{countries}}' = 'Global' then true
+        when '{{countries}}' = 'Rest of the world' then country not in ('US', 'CN')
+        else country = '{{countries}}' end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%FT-1062%')
+    and display_type = 'displayed'
+    and variant != 'Baseline'
+)
+
+select
+    segmentation,
+    variant,
+    'main_toolbar.retouch' || ' > ' || all_buttons_clicked as flow,
+    count(distinct bp.editing_session_id) num_times_done,
+    count(distinct bp.editing_session_id)/max(total_users)*100 pct_total_flows,
+from (
+    select 
+        segmentation,
+        variant,
+        bp.editing_session_id,
+        bp.id_for_vendor,
+        string_agg(button_identifier, ' > ') all_buttons_clicked,
+        count(distinct bp.editing_session_id) over (partition by segmentation, variant) total_users
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_button_pressed` bp
+        on bp.id_for_vendor = u.id_for_vendor
+        and bp.meta_received_at >= '2023-01-24'
+        and bp.device_timestamp >= experiment_started_meta
+        and lower(bp.button_identifier) like lower('%main_toolbar%')
+    group by 1,2,3,4
+) bp
+join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_image_exported` i
+    on bp.editing_session_id = i.editing_session_id
+group by 1,2,3
+order by 5 desc
+limit 1000

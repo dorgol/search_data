@@ -1,0 +1,57 @@
+/*
+    Name: VL iOS - ARPPU
+    Query ID: 41159
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-19T12:56:22.015Z
+    */
+    with installs as (
+    select 
+        d.id_for_vendor,
+        d.lt_defacto_id,
+        date(first_launch) as first_launch
+    from `ltx-dwh-prod-processed`.`devices`.`unified_devices` as d
+    where d.first_launch >= '2022-01-02'
+    and application = 'videoleap'
+    --and date_diff(date(current_date), date(d.first_launch), day) >7 -- out of trial period
+    )
+
+
+, transactions as (
+    select distinct 
+        i.id_for_vendor,
+        first_launch,
+        ss.original_transaction_id,
+        lt_transaction_id,
+        date(ss.original_purchase_date) as original_purchase_date,
+        date(ss.purchase_date) as purchase_date,
+        ss.actual_proceeds
+    from installs i
+    join `ltx-dwh-prod-processed.subscriptions.unified_transactions_state` ss
+        on ss.lt_defacto_id = i.lt_defacto_id
+        and date(ss.purchase_date) >= first_launch
+        and application ='videoleap'
+        --and days_until_subscription = 0
+        --and revenue_so_far >0
+        --and is_in_trial_period = false --only those out of trial period)
+        )
+
+, final as 
+    (select
+        date_trunc(first_launch,{{time granularity}}) as first_launch_week,
+        count(distinct id_for_vendor) as new_users,
+        sum( case when original_transaction_id is not null and date_diff(date(purchase_date), date(first_launch), day) = 0 then   actual_proceeds end) as new_user_rev_day0,
+        sum( case when original_transaction_id is not null and date_diff(date(purchase_date), date(first_launch), day) <= 7 then  actual_proceeds end) as new_user_rev_wk0,
+        sum( case when original_transaction_id is not null and date_diff(date(purchase_date), date(first_launch), day) <= 14 then actual_proceeds end) as new_user_rev_wk1,
+        sum( case when original_transaction_id is not null and date_diff(date(purchase_date), date(first_launch), day) <= 30 then actual_proceeds end) as new_user_rev_mnth0
+    from transactions
+    group by 1
+    )
+
+select
+    *,
+    case when first_launch_week < date_trunc(current_date(),{{time granularity}}) then (new_user_rev_day0/ new_users) else null end as arpu_day0,
+    case when first_launch_week < date_sub(date_trunc(current_date(),{{time granularity}}), interval 7 day) then (new_user_rev_wk0/ new_users)   else null end as arpu_wk0,
+    case when first_launch_week < date_sub(date_trunc(current_date(),{{time granularity}}), interval 14 day) then (new_user_rev_wk1/ new_users)   else null end as arpu_wk1,
+    case when first_launch_week < date_sub(date_trunc(current_date(),{{time granularity}}), interval 30 day) then (new_user_rev_mnth0/ new_users) else null end as arpu_mnth0
+from final
+    

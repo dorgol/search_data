@@ -1,0 +1,159 @@
+/*
+    Name: VL Android - Interest Experiment V2 - Feed Funnel (variant)
+    Query ID: 40791
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-31T13:25:11.013Z
+    */
+    -- VL Feed Funnel
+
+
+with users1 as (
+    select distinct
+        dav.installation_id as platform_device_id,
+        dav.variant,
+        dav.segmentation,
+        dav.display_type,
+        dav.experiment_started_meta
+        
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+    where dav.experiment = 'interest_based_funnel_v2'
+        and variant = 'variant1'
+        and case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'No Segmentation' then segmentation = '01 All Users'
+                else true end
+        and case 
+                when '{{display}}' = 'Activated' then display_type = 'activated_for_device'
+                when '{{display}}' = 'Displayed' then display_type = 'displayed' -- change this when we know the name
+                else true end
+)
+
+, users as (
+    select
+        u.platform_device_id,
+        u.variant,
+        u.segmentation,
+        u.display_type,
+        u.experiment_started_meta,
+        case when    pt.origin_page_response is null then                'No answer'
+                when pt.origin_page_response like '%business%' then 'Promoting a business' 
+                when pt.origin_page_response like '%myself%' then 'Editing for myself' 
+                when pt.origin_page_response like '%friends%' then 'Sharing with friends/family'
+                when pt.origin_page_response like '%influencer%' then 'I’m an influencer'
+                when pt.origin_page_response like '%creator%' then 'I’m a creator'
+                when pt.origin_page_response like '%Other%' then 'Other'
+                else pt.origin_page_response end as response,  
+                
+                
+                
+                
+        case when    pt2.origin_page_response is null then          'No answer'
+                when pt2.origin_page_response like '%fashion%' then 'fashion' 
+                when pt2.origin_page_response like '%health%' then  'health and fitness' 
+                when pt2.origin_page_response like '%travel%' then  'travel'
+                when pt2.origin_page_response like '%other%' then   'Other' 
+                else pt2.origin_page_response end as response2
+                
+                
+                
+    from users1 u 
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_presented` qp
+        on u.platform_device_id = qp.installation_id
+        and qp.app_name = 'videoleap_android'
+        and qp.meta_received_at >= u.experiment_started_meta
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pt
+        on qp.installation_id = pt.installation_id
+        and pt.app_name = 'videoleap_android'
+        and pt.origin_page_index = 0
+        and pt.origin_page_name in ('So, what brings you here? v2', 'So, what brings you here?')
+        and pt.meta_received_at >= u.experiment_started_meta
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pt2
+        on qp.installation_id = pt2.installation_id
+        and pt2.app_name = 'videoleap_android'
+        and pt2.origin_page_index = 2
+        and pt2.origin_page_name = 'How would you describe the topic of your videos?'
+        and pt2.meta_received_at >= u.experiment_started_meta
+    )
+
+
+, actions as (
+        
+        
+        select 
+            'Activated' as action,
+            u.*
+        from users u 
+        
+        
+            
+        union all
+       
+        
+        select
+            'Feed Presented' as action,
+            u.*
+        from users u 
+        inner join 
+        
+        (select ui.platform_device_id, ui.meta_received_at
+          from ltx-dwh-prod-processed.app.feed_unnested_items_info as ui
+          where ui.application = 'videoleap_android'
+          
+          union all
+          
+         select sp.installation_id as platform_device_id, sp.meta_received_at
+          from ltx-dwh-prod-raw.analytics_global.ltx_global_app_feed_screen_presented as sp
+          where sp.app_name = 'videoleap_android') ui
+            
+        on ui.platform_device_id = u.platform_device_id
+        and ui.meta_received_at > u.experiment_started_meta
+          
+        
+        union all
+        
+        select 
+            'Use Template Clicked' as action,
+            u.*
+        from users u 
+        inner join ltx-dwh-prod-raw.analytics.android_videoleap_template_editing_started as te
+            on u.platform_device_id = te.installation_id
+            and te.meta_received_at >= u.experiment_started_meta
+            
+        union all
+        
+    
+        select 
+            'Video Asset Imported' as action,
+            u.*
+        from users u
+        inner join `ltx-dwh-prod-raw.analytics.android_videoleap_import_wizard_screen_dismissed` as sd
+            on u.platform_device_id = sd.installation_id
+            and sd.reason = 'next button pressed'
+            and sd.meta_received_at > u.experiment_started_meta
+        
+        union all
+        
+        
+        select 
+            'Remake Exported' as action,
+            u.*
+        from users u
+        inner join `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_media_exported` as ex
+            on u.platform_device_id = ex.installation_id
+        inner join `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_template_editing_ended` as te
+            on ex.project_id = te.project_id
+            and ex.meta_received_at > u.experiment_started_meta
+ 
+        )
+    
+        
+    select
+        action,
+        count (distinct a.platform_device_id) as users
+    from actions a
+    where case when '{{response}}' != 'All' then response = '{{response}}' else true end
+    group by 1
+    
+    

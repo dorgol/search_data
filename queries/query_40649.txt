@@ -1,0 +1,13 @@
+/*
+    Name: VLA - RecSys in categories experiment - assignment to variants
+    Query ID: 40649
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-27T22:42:38.831Z
+    */
+    select distinct
+    variant,
+    count(distinct installation_id)
+from `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_assignment_state_changed`
+where date(meta_received_at) >= "2023-03-01"
+    and experiment = "VLA Feed RecSys Categories 02 2023"
+group by 1

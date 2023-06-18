@@ -1,0 +1,19 @@
+/*
+    Name: Revenue Change YoY 2021-2022
+    Query ID: 40172
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-09T07:58:09.440Z
+    */
+    select
+    *,
+    100*(revs/nullif(lag(revs) over (partition by application order by year),0) - 1) as yoy_growth,
+from (
+    select
+        application,
+        extract(year from purchase_date) as year,
+        sum(payments.actual_proceeds) as revs
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation`
+    where purchase_date >= '2021-01-01'
+    group by 1,2
+)
+where year in (2021, 2022)

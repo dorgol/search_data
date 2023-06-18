@@ -1,0 +1,88 @@
+/*
+    Name: VL iOS - ARPS BI Query - SMBs
+    Query ID: 41518
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-02T09:14:10.190Z
+    */
+    with dates as
+(
+  select dt,days_from
+  from
+    (
+    select GENERATE_DATE_ARRAY (date_trunc(date_add(current_date() , interval -3 year),day), current_date(),interval 1 day) as dt
+    ),unnest(dt) as dt
+    cross join
+      (
+    select * from unnest([0,7,14,30]) as days_from
+      )
+)
+
+, min_purchase_date_trs as 
+(
+  select 
+    t.lt_subscription_id,
+    min(t.purchase_date) as original_purchase_date
+  from `ltx-dwh-prod-processed.subscriptions.unified_transactions` as t
+  where license_applications = 'videoleap'
+  group by 1
+)
+
+,transactions as 
+(
+    select
+    t.lt_subscription_id,
+      t.attribution.attribution_timestamp,
+      t.purchase_date,
+      m.original_purchase_date,
+      t.payments.month0_late_or_renewal,
+      t.subscription.subscription_duration,
+      t.vertical,
+      t.payments.purchase_platform,
+      t.attribution.attribution_user_id,
+      t.projected.adjusted_actual_proceeds,
+      t.payments.actual_proceeds,
+      case when s.payments.revenue_so_far > 0 then true else false end as is_paid
+  from
+      `ltx-dwh-prod-processed.subscriptions.unified_transactions` t
+  left join min_purchase_date_trs as m
+      on true
+      and m.lt_subscription_id = t.lt_subscription_id
+  join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions` s
+      on t.lt_subscription_id = s.lt_subscription_id
+      -- and s.payments.revenue_so_far > 0
+  where true 
+      -- and t.projected.adjusted_actual_proceeds > 0
+      and t.license_applications = 'videoleap'
+)
+
+select
+    date_trunc(dates.dt,month) as cohort_date,
+    dates.days_from as days_from_attribution_date,
+    -- case when date_trunc(date(t.attribution_timestamp),month) = date_trunc(date(t.original_purchase_date),month) then 'month0' else 'late' end as month0_late,
+    is_paid,
+    -- t.month0_late_or_renewal,
+    -- t.subscription_duration,
+    t.vertical,
+    t.purchase_platform,
+    count(distinct t.lt_subscription_id) cohort_size,
+    -- count(distinct t.attribution_user_id) cohort_size,
+    sum(t.adjusted_actual_proceeds) as total_revenue_until_day_x,
+    safe_divide(sum(t.adjusted_actual_proceeds),count(distinct t.lt_subscription_id)) as arps
+from
+    dates
+join
+   transactions t
+    on true
+    and date_diff(current_date(),date(t.original_purchase_date),day)>dates.days_from -- only for users that reached dayx+1
+    -- condition to include only payning
+    -- and t.actual_proceeds > 0
+    and dates.days_from >= date_diff(date(t.purchase_date),date(t.original_purchase_date),day) -- all purchases until dayx including
+    and dates.dt = date(t.original_purchase_date)
+where true
+    and is_paid is true
+    -- and vertical = 'Facetune'
+    -- and purchase_platform = 'ios'
+    -- and case when date_trunc(date(t.attribution_timestamp),month) = date_trunc(date(t.original_purchase_date),month) then 'month0' else 'late' end = 'late'
+    -- and date_trunc(dates.dt,month) = '2022-07-01'
+group by 1,2,3,4,5--,6--,7
+order by 1,2,3,4,5,6--,7

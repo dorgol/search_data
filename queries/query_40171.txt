@@ -1,0 +1,19 @@
+/*
+    Name: Install Change YoY 2021-2022
+    Query ID: 40171
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-09T07:54:37.569Z
+    */
+    select
+    *,
+    100*(users/lag(users) over (partition by app_name order by year) - 1) as yoy_growth,
+from (
+    select
+        app_name,
+        extract(year from attribution_timestamp) as year,
+        count(distinct attribution_user_id) as users
+    from `ltx-dwh-prod-processed.agg.app_attribution_user`
+    where attribution_timestamp >= '2021-01-01'
+    group by 1,2
+)
+where year in (2021, 2022)

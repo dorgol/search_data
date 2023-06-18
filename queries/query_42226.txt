@@ -1,0 +1,46 @@
+/*
+    Name: VL iOS - Renewals vs Churned
+    Query ID: 42226
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-25T15:30:58.131Z
+    */
+    with
+renewed_paid_subs as (
+    select distinct
+        date_trunc(date(purchase_date),{{period}}) as dt,
+        count(distinct lt_subscription_id) as renewed_paid_subs
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation_cross_sell`
+    where date_trunc(date(purchase_date),{{period}}) >= '2022-01-01'
+        and date(purchase_date) < date_sub(date_trunc(date(current_date), week), interval 1 week)
+        and application = 'videoleap'
+        and platform = 'ios'
+        and payments.month0_late_or_renewal = 'renewal'
+        --and subscription.subscription_renewal_date_calc is not null
+        --and date(subscription.subscription_renewal_date_calc) <= date_add(current_date(), interval 30 day)
+   group by 1
+)
+
+, churned_paid_subs as (
+   select distinct
+       date_trunc(date(payments.last_expiration_date),{{period}}) as dt,
+        count(distinct lt_subscription_id) as churned_paid_subs
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation_cross_sell` ss
+    where date_trunc(date(payments.last_expiration_date),{{period}}) >= '2022-01-01'
+        and date(payments.last_expiration_date) < date_sub(date_trunc(date(current_date), week), interval 1 week)
+        and ss.application = 'videoleap'
+        and ss.platform = 'ios'
+        and payments.revenue_so_far_alloc_cs > 0
+        --and subscription.subscription_renewal_date_calc is not null
+        --and date(subscription.subscription_renewal_date_calc) <= date_add(current_date(), interval 30 day)
+   group by 1
+   
+   )
+  
+  select
+    r.dt,
+    renewed_paid_subs,
+    churned_paid_subs*-1 as churned_paid_subs,
+    safe_divide(churned_paid_subs, churned_paid_subs+renewed_paid_subs)*100 as churn_rate
+from renewed_paid_subs r
+left join churned_paid_subs c
+    on c.dt = r.dt

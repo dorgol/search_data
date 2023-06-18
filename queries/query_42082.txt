@@ -1,0 +1,686 @@
+/*
+    Name: AI avatar high level funnel Day0 - person vs pets vs couples
+    Query ID: 42082
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-22T07:58:51.738Z
+    */
+    with
+users as
+(
+
+    select distinct
+        w.platform_device_id,
+        date(w.meta_received_at) as dt,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+    join `ltx-dwh-prod-processed`.`ulei`.`ulei_att_user_groups_and_devices` u
+        on farm_fingerprint('facetune2'||w.platform_device_id) = u.lt_defacto_id
+        and w.meta_received_at < u.next_attribution_user_group_timestamp
+        and date(w.meta_received_at) = date(u.attribution_timestamp)
+    where w.app_name = '{{app_name}}'
+    and w.screen_name = 'ai_avatar_welcome'
+    and cast(w.app_version_code as int64) >= {{since_version}}
+
+),
+
+funnel as (
+
+    select
+        '04 - Reached Welcome Screen' as stage,
+        dt,
+        count(distinct platform_device_id) num_users
+    from users u
+    group by 1,2
+    
+    union all
+    
+    select
+        '05 - Reached Photo Selection Screen' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name like 'ai_avatar_photo_selection_start%'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1 ,2
+    
+    union all
+    
+    select
+        '05a - Reached Photo Selection Screen - person' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_photo_selection_start'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1 ,2  
+    
+    union all
+    
+    select
+        '05b - Reached Photo Selection Screen - pet' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_photo_selection_start_pet'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '05c - Reached Photo Selection Screen - couple - yourself' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_photo_selection_start_couple_yourself'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '05d - Reached Photo Selection Screen - couple - someone else' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_photo_selection_start_couple_someone_else'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '06 - Reached Photo Import Screen' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name like 'ai_avatar_photo_import%'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '06a - Reached Photo Import Screen - person' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_photo_import'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+        select
+        '06b - Reached Photo Import Screen - pet' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_photo_import_pet'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+        select
+        '06c - Reached Photo Import Screen - couple - yourself' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_photo_import_couple_yourself'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '06d - Reached Photo Import Screen - couple - someone else' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_photo_import_couple_someone_else'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '07 - Reached Gender Select Screen' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name like 'ai_avatar_gender_selection%'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+        union all
+        
+    select
+        '07a - Reached Gender Select Screen - person' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_gender_selection'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+        union all
+        
+    select
+        '07b - Reached Gender Select Screen - pet' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_gender_selection_pet'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+        
+    select
+        '07c - Reached Gender Select Screen - couple - yourself' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_gender_selection_couple_yourself'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+        
+    select
+        '07d - Reached Gender Select Screen - couple - someone else' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_gender_selection_couple_someone_else'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+        union all
+    
+    select
+        '08 - Reached Bundle Sub Screen' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name like 'ai_avatar_bundle_size%'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+
+        union all
+    
+        select
+        '08a - Reached Bundle Sub Screen - person' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_size'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+
+        union all
+        
+    select
+        '08b - Reached Bundle Sub Screen - pet' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_size_pet'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+        
+    select
+        '08c - Reached Bundle Sub Screen - couple' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_size_couple'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+
+        union all
+        
+    select
+        '09 - Initiated Bundle Purchase' as stage,
+        u.dt,
+        count(distinct p.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_started` p
+        on true
+        and p.app_name = '{{app_name}}'
+        and p.product_id like('%YouniverseCoin%')
+        and p.platform_device_id = u.platform_device_id
+        and cast(p.app_version_code as int64) >= {{since_version}}
+        and date(p.meta_received_at) = u.dt
+    group by 1  ,2
+    
+        union all
+        
+    select
+        '09a - Initiated Bundle Purchase - person' as stage,
+        u.dt,
+        count(distinct p.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_size'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_started` p
+        on true
+        and p.app_name = '{{app_name}}'
+        and p.product_id like '%YouniverseCoin%'
+        and p.platform_device_id = w.platform_device_id
+        and cast(p.app_version_code as int64) >= {{since_version}}
+        and p.device_timestamp > w.device_timestamp
+        and date(p.meta_received_at) = u.dt
+        --and p.flow_id = w.feature_usage_id
+        --and p.editing_session_id = w.editing_session_id
+    group by 1   ,2
+    
+        union all
+        
+    select
+        '09b - Initiated Bundle Purchase - pet' as stage,
+        u.dt,
+        count(distinct p.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_size_pet'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_started` p
+        on true
+        and p.app_name = '{{app_name}}'
+        and p.product_id like '%YouniverseCoin%'
+        and p.platform_device_id = w.platform_device_id
+        and cast(p.app_version_code as int64) >= {{since_version}}
+        and p.device_timestamp > w.device_timestamp
+        and date(p.meta_received_at) = u.dt
+        --and p.flow_id = w.feature_usage_id
+        --and p.editing_session_id = w.editing_session_id
+    group by 1   ,2
+    
+    
+    union all
+        
+    select
+        '09c - Initiated Bundle Purchase - couple' as stage,
+        u.dt,
+        count(distinct p.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_size_couple'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_started` p
+        on true
+        and p.app_name = '{{app_name}}'
+        and p.product_id like '%YouniverseCoin%'
+        and p.platform_device_id = w.platform_device_id
+        and cast(p.app_version_code as int64) >= {{since_version}}
+        and p.device_timestamp > w.device_timestamp
+        and date(p.meta_received_at) = u.dt
+        --and p.flow_id = w.feature_usage_id
+        --and p.editing_session_id = w.editing_session_id
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '10 - Successful Bundle Purchase' as stage,
+        u.dt,
+        count(distinct p.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_ended` p
+        on true
+        and p.app_name = '{{app_name}}'
+        and p.product_id like '%YouniverseCoin%'
+        and p.reason='success'
+        and p.platform_device_id = u.platform_device_id
+        and cast(p.app_version_code as int64) >= {{since_version}}
+        and date(p.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '10a - Successful Bundle Purchase - person' as stage,
+        u.dt,
+        count(distinct p.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_size'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_ended` p
+        on true
+        and p.app_name = '{{app_name}}'
+        and p.product_id like '%YouniverseCoin%'
+        and p.reason='success'
+        and p.platform_device_id = w.platform_device_id
+        and cast(p.app_version_code as int64) >= {{since_version}}
+        and p.device_timestamp > w.device_timestamp
+        and date(p.meta_received_at) = u.dt
+        --and p.flow_id = w.feature_usage_id
+        --and p.editing_session_id = w.editing_session_id
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '10b - Successful Bundle Purchase - pet' as stage,
+        u.dt,
+        count(distinct p.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_size_pet'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_ended` p
+        on true
+        and p.app_name = '{{app_name}}'
+        and p.product_id like('%YouniverseCoin%')
+        and p.reason='success'
+        and p.platform_device_id = w.platform_device_id
+        and cast(p.app_version_code as int64) >= {{since_version}}
+        and p.device_timestamp > w.device_timestamp
+        and date(p.meta_received_at) = u.dt
+        --and p.flow_id = w.feature_usage_id
+        --and p.editing_session_id = w.editing_session_id
+    group by 1   ,2
+    
+    
+    union all
+    
+    select
+        '10c - Successful Bundle Purchase - couple' as stage,
+        u.dt,
+        count(distinct p.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_size_couple'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_ended` p
+        on true
+        and p.app_name = '{{app_name}}'
+        and p.product_id like('%YouniverseCoin%')
+        and p.reason='success'
+        and p.platform_device_id = w.platform_device_id
+        and cast(p.app_version_code as int64) >= {{since_version}}
+        and p.device_timestamp > w.device_timestamp
+        and date(p.meta_received_at) = u.dt
+        --and p.flow_id = w.feature_usage_id
+        --and p.editing_session_id = w.editing_session_id
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '12 - Reached Pack Results Screen' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_results'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+    union all
+    
+    select
+        '13 - Opened Bundle' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.screen_name = 'ai_avatar_bundle_export'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+     union all
+    
+    select
+        '14 - Exported Result' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and export_source like 'ai_avatar%'
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+         union all
+    
+    select
+        '14a - Exported Result - person' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and export_source like ('ai_avatar%')
+        and (split(replace(export_source, 'ai_avatar_',''),'_')[safe_offset(4)] like '%Female%'
+        or split(replace(export_source, 'ai_avatar_',''),'_')[safe_offset(4)] like '%Male%')
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1   ,2
+    
+             union all
+    
+    select
+        '14b - Exported Result - pet' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and export_source like ('ai_avatar%')
+        and (split(replace(export_source, 'ai_avatar_',''),'_')[safe_offset(4)] like '%Dog%'
+        or split(replace(export_source, 'ai_avatar_',''),'_')[safe_offset(4)] like '%Cat%')
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1  ,2
+    
+    union all
+    
+    select
+        '14c - Exported Result - couple' as stage,
+        u.dt,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and export_source like ('ai_avatar%')
+        and (split(replace(export_source, 'ai_avatar_',''),'_')[safe_offset(4)] like '%FF%'
+        or split(replace(export_source, 'ai_avatar_',''),'_')[safe_offset(4)] like '%MF%'
+        or split(replace(export_source, 'ai_avatar_',''),'_')[safe_offset(4)] like '%MM%')
+        and w.platform_device_id = u.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) = u.dt
+    group by 1  ,2
+
+    )
+
+
+
+select
+    *
+from funnel
+where case when '{{category}}' = 'pets' then stage in (
+                '04 - Reached Welcome Screen',
+                '05b - Reached Photo Selection Screen - pet',
+                '06b - Reached Photo Import Screen - pet',
+                '07b - Reached Gender Select Screen - pet',
+                '08b - Reached Bundle Sub Screen - pet',
+                '09b - Initiated Bundle Purchase - pet',
+                '10b - Successful Bundle Purchase - pet',
+                '14b - Exported Result - pet'
+                )
+            when '{{category}}' = 'people' then stage in (
+                '04 - Reached Welcome Screen',
+                '05a - Reached Photo Selection Screen - person',
+                '06a - Reached Photo Import Screen - person',
+                '07a - Reached Gender Select Screen - person',
+                '08a - Reached Bundle Sub Screen - person',
+                '09a - Initiated Bundle Purchase - person',
+                '10a - Successful Bundle Purchase - person',
+                '14a - Exported Result - person'
+                )
+            when '{{category}}' = 'couples' then stage in (
+                '04 - Reached Welcome Screen',
+                '05c - Reached Photo Selection Screen - couple - yourself',
+                '05d - Reached Photo Selection Screen - couple - someone else',
+                '06c - Reached Photo Import Screen - couple - yourself',
+                '06d - Reached Photo Import Screen - couple - someone else',
+                '07c - Reached Gender Select Screen - couple - yourself',
+                '07d - Reached Gender Select Screen - couple - someone else',
+                '08c - Reached Bundle Sub Screen - couple',
+                '09c - Initiated Bundle Purchase - couple',
+                '10c - Successful Bundle Purchase - couple',
+                '14c - Exported Result - couple'
+                )
+            when '{{category}}' = 'all' then stage in (
+                '04 - Reached Welcome Screen',
+                '05 - Reached Photo Selection Screen',
+                '06 - Reached Photo Import Screen',
+                '07 - Reached Gender Select Screen',
+                '08 - Reached Bundle Sub Screen',
+                '09 - Initiated Bundle Purchase',
+                '10 - Successful Bundle Purchase',
+                '14 - Exported Result'
+                )
+            else true
+            end

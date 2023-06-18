@@ -1,0 +1,80 @@
+/*
+    Name: 20230528 - FT2 iOS - [FT-1101] AI Selfies - Times Generated Before Leaving
+    Query ID: 42497
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-05T12:06:28.633Z
+    */
+    with 
+
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1101]AI Selfies Exp')
+    and display_type = 'entered_photo_editor'
+    and variant != 'Baseline'
+),
+
+selfies_processing as (
+    select
+        segmentation,
+        variant,
+        feature_usage_id,
+        max( total_usage_sessions) total_usage_sessions,
+        count(distinct ended_event_id) num_generations
+    from (
+        select distinct
+            segmentation,
+            variant,
+            fe.feature_usage_id,
+            pe.event_id as ended_event_id,
+            json_extract_scalar(sub_feature_state, '$.miscState.numberOfFaces') num_faces,
+            count(distinct fe.feature_usage_id) over (partition by segmentation, variant) total_usage_sessions
+        from users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+            on fe.app_name = 'facetune2'
+            and fe.meta_received_at >= '2023-05-20'
+            and fe.meta_received_at >= experiment_started_meta
+            and fe.platform_device_id = u.id_for_vendor
+            and feature_name = 'aiSelfies' 
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_started` ps
+            on ps.app_name = 'facetune2'
+            and ps.meta_received_at >= '2023-05-20'
+            and ps.meta_received_at >= experiment_started_meta
+            and ps.platform_device_id = u.id_for_vendor
+            and ps.source_flow_id = fe.feature_usage_id
+            and ps.process_name = 'ai_selfies_cloud_processing'
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_ended` pe
+            on pe.app_name = 'facetune2'
+            and pe.meta_received_at >= '2023-05-20'
+            and pe.meta_received_at >= experiment_started_meta
+            and pe.process_id = ps.process_id
+    )
+    where num_faces != '0'
+    group by 1,2,3
+)
+
+select
+    segmentation,
+    variant,
+    num_generations,
+    count(distinct feature_usage_id) num_usage_sessions,
+    count(distinct feature_usage_id)/max(total_usage_sessions)*100 pct_of_total_usage_sessions
+from selfies_processing
+group by 1,2,3
+order by 1,2,3

@@ -1,0 +1,58 @@
+/*
+    Name: Facetune - Image immediate editing following export
+    Query ID: 40545
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-23T10:08:59.643Z
+    */
+    with first_video_export as (
+select 
+    ve.id_for_vendor,
+    ve.device_timestamp,
+    ve.meta_received_at,
+    ve.editing_session_id
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_image_exported` ve
+qualify row_number() over (partition by id_for_vendor order by meta_received_at asc) = 1
+),
+
+
+first_next_editing_sessions as (
+select 
+    ve.id_for_vendor,
+    ve.device_timestamp,
+    ve.meta_received_at,
+    ve.editing_session_id,
+    min(case when f.device_timestamp is not null then f.device_timestamp else '2099-01-01' end) as first_next_photo_editing_ts,
+    max(e.id_for_vendor is not null) as exported,
+from first_video_export ve
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_started` f
+    on ve.id_for_vendor = f.id_for_vendor
+    and date(f.meta_received_at) > '2022-11-01' 
+    and f.device_timestamp > ve.device_timestamp
+    and f.editing_session_id <> ve.editing_session_id
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_exported` e
+    on ve.id_for_vendor = e.id_for_vendor
+    and date(e.meta_received_at) > '2022-11-01' 
+    and f.editing_session_id = e.editing_session_id
+where date(ve.meta_received_at) > '2022-11-01' 
+group by 1,2,3,4
+)
+
+
+
+select 
+    case when photo_time <= 1 then 'immediate'
+    else 'not_immediate' end as time_to_next_editing_ts,
+    exported,
+    count(distinct id_for_vendor) as num_users
+from (
+select 
+id_for_vendor,
+device_timestamp,
+meta_received_at,
+editing_session_id,
+first_next_photo_editing_ts,
+exported,
+timestamp_diff(first_next_photo_editing_ts, device_timestamp, minute) as photo_time,
+from first_next_editing_sessions f
+)
+group by 1,2

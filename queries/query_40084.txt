@@ -1,0 +1,54 @@
+/*
+    Name: Photoleap - Day0 - CVR By App version
+    Query ID: 40084
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-06T11:15:23.932Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(f.first_launch), {{period}}) as cohort_period,
+        f.first_app_version,
+        case when f.last_platform_user_id = 'unknown' then f.platform_device_id else f.last_platform_user_id end as user_id,
+        s.lt_subscription_id is not null as is_subscriber,
+        floor(timestamp_diff(s.original_purchase_date,f.first_launch,hour)/24) as time_to_sub,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` f
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`subscription_to_defacto` d
+        on f.platform_device_id = d.id_for_vendor
+        and d.application = 'editor'
+    left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on d.lt_subscription_id = s.lt_subscription_id
+        and date(s.original_purchase_date) >= date(f.first_launch)
+        and s.app_name = 'editor'
+    where date_trunc(date(f.first_launch), {{period}}) >= date_sub(current_date(), interval 90 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(f.first_launch), {{period}})
+    and f.app_name = 'editor'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+order by 3
+--limit 100
+
+)
+
+
+select
+    first_app_version,
+    count(distinct user_id) as cohort_users,
+    count(distinct case when time_to_sub = 0 then user_id end) as day0subs,
+    --count(distinct case when time_to_sub <= 7 then user_id end) as day7subs,
+    --count(distinct case when time_to_sub <= 30 then user_id end) as day30subs,
+    100*count(distinct case when time_to_sub = 0 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 0 then user_id end),0) as day0cvr,
+    --100*count(distinct case when time_to_sub <= 7 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 7 then user_id end),0) as day7cvr,
+    --100*count(distinct case when time_to_sub <= 30 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 30 then user_id end),0) as day30cvr,
+    --100*count(distinct case when time_to_sub <= 50 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 50 then user_id end),0) as day50cvr,
+    --((count(distinct case when time_to_sub <= 7 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 7 then user_id end),0)) -
+     --   (count(distinct case when time_to_sub = 0 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 0 then user_id end),0)))*100 as day7_pecent_increase,
+    --((count(distinct case when time_to_sub <= 30 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 30 then user_id end),0)) -
+     --   (count(distinct case when time_to_sub <= 7 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 7 then user_id end),0)))*100 as day30_pecent_increase,
+from users
+where first_app_version !='2.23'
+group by 1
+ 
+having day0cvr > 0 and day0subs>200
+order by 1

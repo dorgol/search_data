@@ -1,0 +1,70 @@
+/*
+    Name: Facetune Android: User Day 1 Retention by App Version
+    Query ID: 40260
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-12T13:15:16.161Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(attribution_timestamp), {{period}}) as cohort_period,
+        date_diff(current_date(), date(attribution_timestamp), {{period}}) as total_periods,
+        attribution_user_id as user_id,
+        first_app_version,
+    from `ltx-dwh-prod-processed.agg.app_attribution_user` f
+    where date_trunc(date(attribution_timestamp), {{period}}) >= date_sub(current_date(), interval 60 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(attribution_timestamp), {{period}})
+    and f.app_name = 'facetune2_android'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+
+)
+
+, user_per_period as (
+    select distinct
+        cohort_period,
+        first_app_version,
+        total_periods,
+        periods,
+        count(distinct user_id) over (partition by cohort_period,first_app_version) as total_users_for_period
+    from users
+    join unnest(generate_array(0,60)) as periods
+    where periods <= total_periods
+)
+
+, usage as (
+    select
+        date_trunc(date(attribution_timestamp), {{period}}) as cohort_period,
+        date_diff(dt, date(attribution_timestamp), {{period}}) as active_period,
+        first_app_version,
+        count(distinct attribution_user_id) as active_users,
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` f
+    where date_trunc(date(attribution_timestamp), {{period}}) >= date_sub(current_date(), interval 60 {{period}})
+    and dt is not null
+    and date_trunc(current_date(), {{period}}) != date_trunc(dt, {{period}})
+    and f.app_name = 'facetune2_android'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+    group by 1,2,3
+)
+
+
+select distinct
+    format_date('%y-%m-%d', user_per_period.cohort_period) as cohort_period,
+    user_per_period.first_app_version,
+    active_period,
+    '{{period}} ' || cast (active_period as string) || ' retention' as period_name,
+    active_users,
+    total_users_for_period,
+    round(100*active_users/total_users_for_period,2) as retention
+from user_per_period
+join usage
+    on user_per_period.periods = usage.active_period
+    and user_per_period.cohort_period = usage.cohort_period
+    and user_per_period.first_app_version = usage.first_app_version
+where active_period = 1
+and total_users_for_period >= 1000
+order by 1,2

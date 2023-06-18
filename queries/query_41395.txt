@@ -1,0 +1,130 @@
+/*
+    Name: 20230106 - FT2 iOS - Quickstart V2 - Used Another VIP Subfeature after VIP Chosen - By QS Choice
+    Query ID: 41395
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-27T08:52:40.061Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1058] Import Quickstart V2')
+    and display_type = 'displayed'
+    and variant <> 'baseline'
+),
+
+first_editing_session as (
+    select
+        *
+    from 
+    (
+        select
+            *,
+            row_number() over (partition by id_for_vendor, segmentation, variant order by es_started asc) num_editing_session
+        from (
+            select
+                u.segmentation,
+                u.variant,
+                display_type,
+                u.id_for_vendor,
+                u.experiment_started_meta, 
+                fs.is_subscriber,
+                fs.editing_session_id,
+                min(device_timestamp) es_started
+            from users u 
+            join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+                on true
+                and fs.meta_received_at >= '{{first_day}}'
+                and u.id_for_vendor = fs.id_for_vendor
+                and fs.meta_received_at >= experiment_started_meta
+            where true
+            group by 1,2,3,4,5,6,7
+        )
+    )
+    where num_editing_session = 1 
+),
+
+
+vip_sf_chosen as (
+    select
+        u.*,
+        qsd.feature as qs_feature,
+        qsd.sub_feature as qs_subfeature,
+        concat(feature, '.',sub_feature) qs_choice
+    from first_editing_session u
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_to_editor` qte
+        on u.editing_session_id = qte.editing_session_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_appeared` qsa
+        on qte.quickstart_screen_id = qsa.quickstart_screen_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_dismissed` qsd
+        on qsd.quickstart_screen_id = qsa.quickstart_screen_id
+    where true
+    and qsd.reason is not null 
+    and qsd.reason not like '%skip%'
+    and qsd.is_subscriber = false
+    and reason = 'feature_chosen'
+    -- is VIP subfeature chosen
+    and concat(feature, '.',sub_feature) in (
+        'Retouch.smoother',
+        'Retouch.heal',
+        'Patch.patch',
+        'Patch.vanish',
+        'Touch Up.eyeBags',
+        'Touch Up.glow',
+        'Hair.recolor',
+        'Clothes.prints',
+        'Backdrop.backdrop',
+        'Eyes.redEye'
+    )
+),
+next_subfeatures as (
+    select
+        editing_session_id,
+        variant,
+        qs_feature,
+        max(case when is_same_feature and is_vip and sf_usage_order > 1 and lower(split(sub_feature_path, '.')[offset(0)]) != qs_subfeature then true else false end) used_vip_sf_in_same_feature
+    from (
+        select distinct
+            v.editing_session_id,
+            variant,
+            sfs.event_id,
+            case when sfs.feature = v.qs_feature then true else false end as is_same_feature,
+            is_vip,
+            qs_feature,
+            qs_subfeature,
+            sub_feature_path,
+            row_number() over (partition by v.editing_session_id, variant order by device_timestamp asc) sf_usage_order
+        from vip_sf_chosen v
+        join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_sub_feature_started` sfs
+            on true
+            and sfs.meta_received_at >= '{{first_day}}'
+            and v.editing_session_id = sfs.editing_session_id
+        where true
+    )
+    group by 1,2,3
+)
+
+select
+    variant,
+    qs_feature,
+    count(distinct editing_session_id) num_chose_in_qs,
+    count(distinct case when used_vip_sf_in_same_feature then editing_session_id end)/count(distinct editing_session_id)*100 pct_used_vip_sf_in_same_feature
+from next_subfeatures
+group by 1,2
+order by 1,2

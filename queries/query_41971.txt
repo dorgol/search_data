@@ -1,0 +1,44 @@
+/*
+    Name: VL - Click and Export Rate Over Time
+    Query ID: 41971
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-17T10:09:29.891Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        template_id,
+        parent_template_id,
+        root_template_id,
+        app_name,
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where app_name = "videoleap"
+        --and requirements_flat like '%aiTransform%'
+)
+
+, stats as (
+    select
+        p.post_id,
+        dt,
+        parent_template_id,
+        distinct_total_impressions,
+        total_clicks,
+        distinct_export_started_feed,
+        distinct_export_rate_feed
+    from posts p
+    inner join `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily` rd
+        on rd.post_id = p.post_id
+        and dt >= '2023-03-01' and dt != current_date()
+        )
+
+
+select
+    dt,
+    --case when parent_template_id is null then 'Original' else 'Remake' end as if_original,
+    sum(distinct_total_impressions) as impressions,
+    sum(total_clicks) as clicks,
+    sum(distinct_export_started_feed) as exports,
+    safe_divide(sum(distinct_export_started_feed),sum(distinct_total_impressions))*100 as export_rate,
+from stats
+group by 1
+order by 1,2

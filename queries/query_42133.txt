@@ -1,0 +1,59 @@
+/*
+    Name: Statistical Functions Attempt 2 - T Test
+    Query ID: 42133
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-13T07:08:12.449Z
+    */
+    with users as (
+    select
+        segmentation,
+        experiment,
+        country,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_device,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where true
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%Material Makeup%')
+    and display_type = 'entered_photo_editor'
+    and segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+),
+
+data as (
+select
+    segmentation, variant, revenue
+from (
+    select distinct
+        u.segmentation,
+        u.variant,
+        u.id_for_vendor,
+        ifnull(s.revenue_so_far, 0) as revenue
+    from users u
+    left join `ltx-dwh-prod-processed.agg.subscriptions` s
+        on u.id_for_vendor = s.platform_device_id
+        and s.app_name = 'facetune2'
+        and s.original_purchase_date >= u.experiment_started_device
+    )
+),
+
+data_pivoted as (
+    select
+        *
+    from data
+    pivot(array_agg(revenue ignore nulls) for variant in ('Baseline', 'Variant 1'))
+)
+
+select
+    segmentation,
+    t_result.t_value,
+    t_result.dof,
+    `ltx-dwh-playground.bi.jstat_t_value_to_probability`(t_result.t_value, t_result.dof+1, 2) probability
+from (
+    select
+        segmentation,
+        bqutil.fn.t_test(`Baseline`, `Variant 1`) t_result
+    from data_pivoted
+)
+order by 1

@@ -1,0 +1,38 @@
+/*
+    Name: FT iOS - Screenshot Blocking Subscribers - Questionnaire Q1 Answers
+    Query ID: 41791
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-11T12:33:04.477Z
+    */
+    with
+q_answers as (
+    select distinct
+        id_for_vendor,
+        current_page_response as response,
+    from `ltx-dwh-prod-raw.analytics.ios_facetune2_intro_questionnaire_transition` pq
+    where true
+        and current_page_index = 1
+        and destination_page_index = 2
+    qualify row_number() over (partition by id_for_vendor order by meta_received_at desc) = 1
+)
+
+select
+    case when response is null then 'Skip' else response end as response,
+    count(distinct p.platform_device_id) num_users_presented,
+    count(distinct p.event_id) num_times_presented,
+    count(distinct case when d.reason = 'PurchaseSucceeded' then p.event_id end) num_purchased,
+    count(distinct case when d.reason = 'PurchaseSucceeded' then p.event_id end) /count(distinct p.event_id)*100 as purchase_rate
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_presented` p
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_dismissed` d
+    on d.app_name = 'facetune2'
+    and d.meta_received_at >= '{{since_date}}'
+    and d.flow_id = p.flow_id
+join q_answers q
+    on q.id_for_vendor = p.platform_device_id
+where true
+and p.app_name = 'facetune2'
+and p.meta_received_at >= '{{since_date}}'
+and p.reason = 'contentScreenshotAlert'
+group by 1
+having num_users_presented > 200
+order by purchase_rate desc

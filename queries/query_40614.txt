@@ -1,0 +1,47 @@
+/*
+    Name: VL iOS: New vs Late vs Renewals Subs (wrong)
+    Query ID: 40614
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-27T07:29:48.721Z
+    */
+    with installs as (
+        select 
+            d.id_for_vendor,
+            timestamp_trunc(d.first_launch, {{time granularity}}) as install_dt,
+         from `ltx-dwh-prod-processed`.`devices`.`unified_devices` as d
+         where d.application = 'videoleap'
+         )
+
+, subscriptions as
+    (select 
+               i.id_for_vendor,
+               i.install_dt,
+               s.lt_subscription_id,
+               timestamp_trunc(s.original_purchase_date, {{time granularity}}) as subscription_dt,
+               is_renewing
+           from installs i
+           inner join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_state` s
+               on i.id_for_vendor = s.id_for_vendor
+               and s.application = 'videoleap'
+           where date(s.original_purchase_date) >= date(i.install_dt) -- some have sub dates before install date
+            and date(s.original_purchase_date) >= '2022-01-01'
+    )
+    
+, sub_cohorts as (
+    select
+        subscription_dt,
+        count(distinct id_for_vendor) as total_subs,
+        count(distinct case when is_renewing is true then id_for_vendor end) as renewal_subs,
+        count(distinct case when is_renewing is false and install_dt = subscription_dt then id_for_vendor end) as new_subs,
+        count(distinct case when is_renewing is false and install_dt < subscription_dt then id_for_vendor end) as late_subs
+from subscriptions
+    group by 
+        1)
+        
+        
+select
+    *,
+    safe_divide(renewal_subs, total_subs)*100 as renewal_subs_pct,
+    safe_divide(new_subs, total_subs)*100 as new_subs_pct,
+    safe_divide(late_subs, total_subs)*100 as late_subs_pct
+from sub_cohorts

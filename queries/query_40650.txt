@@ -1,0 +1,52 @@
+/*
+    Name: VL iOS - RecSys in categories experiment - exports per variant
+    Query ID: 40650
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-23T07:35:50.942Z
+    */
+    with experiment_users as (
+    select distinct
+        experiment,
+        variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = "videoleap"
+        and experiment = "feed_ios_recommendation_categories_02_20"
+        and display_type like "displayed%"
+        and case when '{{segmentation}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segmentation}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segmentation}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                end
+        and variant <> "Overrides"
+)
+
+select
+    *,
+    num_exporters / num_users_in_variant * 100 as pct_exporters,
+    num_originals_exporters / num_users_in_variant * 100 as pct_originals_exporters,
+    num_remakes_exporters / num_users_in_variant * 100 as pct_remakes_exporters,
+    num_exports / num_users_in_variant as exports_per_device,
+    num_originals_exports / num_users_in_variant as originals_exports_per_device,
+    num_remakes_exports / num_users_in_variant as remakes_exports_per_device,
+from (
+    select
+        ex1.variant,
+        count(distinct ex1.id_for_vendor) as num_users_in_variant,
+        count(distinct ex.id_for_vendor) as num_exporters,
+        count(distinct case when exs.parent_template_id is null then ex.id_for_vendor end) as num_originals_exporters,
+        count(distinct case when exs.parent_template_id is not null then ex.id_for_vendor end) as num_remakes_exporters,
+        count(distinct ex.export_id) as num_exports,
+        count(distinct case when exs.parent_template_id is null then ex.export_id end) as num_originals_exports,
+        count(distinct case when exs.parent_template_id is not null then ex.export_id end) as num_remakes_exports,
+        
+    from experiment_users as ex1
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+        on exs.id_for_vendor = ex1.id_for_vendor
+        and exs.device_timestamp > ex1.experiment_started_device
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+        on exs.export_id = ex.export_id
+    group by 1
+    having count(distinct ex1.id_for_vendor) > 10
+)

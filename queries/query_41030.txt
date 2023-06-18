@@ -1,0 +1,22 @@
+/*
+    Name: VL Product Data Glossary - Trial Conversion Rate
+    Query ID: 41030
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-27T13:27:21.583Z
+    */
+    declare start_date timestamp default '2022-01-01';
+
+select 
+    date_trunc(original_purchase_date, week) as purchase_week,
+    (count(distinct case when payments.revenue_so_far > 0 then lt_subscription_id end)/count(distinct lt_subscription_id))*100 as trial_conversion_rate
+    
+from `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions`
+where license_applications = ('videoleap') -- videoleap_android
+    and subscription.had_trial = true
+    and subscription.current_is_in_trial_period = False
+    and original_purchase_date > start_date
+    
+group by 1
+order by 1
+    
+    

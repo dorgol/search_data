@@ -1,0 +1,63 @@
+/*
+    Name: PL Android: Usage Retention
+    Query ID: 40905
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-05T15:49:09.910Z
+    */
+    with users as (
+    select distinct
+        f.installation_id,
+        date(f.first_active_dt) as first_active_dt
+  --      case when f.last_platform_user_id = 'unknown' then f.platform_device_id else f.last_platform_user_id end as user_id,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date` f
+    where date_trunc(date(first_active_dt), {{Time granularity}}) >= date_sub(current_date(), interval 1 year)
+    and date_trunc(current_date(), week) != date_trunc(date(first_active_dt), week)
+    and f.app_name = 'editor_android'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_device_country not in ('US','CN')
+        else f.current_device_country = '{{countries}}' end
+--        limit 100
+)
+,
+usage_retention as
+(
+select
+u.installation_id,
+date_trunc(u.first_active_dt,week) as first_launch_week,
+floor(cast(date_diff(f.dt, date(u.first_active_dt), day) as float64) / cast(7 as float64)) as week_diff,
+floor(cast(date_diff(current_date(), date(u.first_active_dt), day) as float64) / cast(7 as float64)) as weeks_from_assignment_to_current,
+from users as u
+left join `ltx-dwh-prod-processed`.`agg`.`app_device_date` f
+on u.installation_id=f.installation_id
+and f.app_name='editor_android'
+and f.dt>u.first_active_dt
+)
+
+,test_week as
+(
+  select week_diff
+  from
+  (select generate_array(0,6) as week_diff_array),unnest(week_diff_array) as week_diff
+)
+
+
+select
+    *,
+    cast(number_of_users as float64) / cast(total_users as float64) * 100 as usage_retention,
+    date_add(first_launch_week,interval week_diff week),
+    date_trunc(date_sub(current_date(), interval 7 day),week)
+from
+    (
+    select
+        tw.week_diff,
+        ur.first_launch_week,
+        count(distinct ur.installation_id ) as total_users,
+        count(distinct case when ur.week_diff = tw.week_diff then ur.installation_id  end) as number_of_users
+    from usage_retention as ur
+    cross join test_week as tw
+    where ur.weeks_from_assignment_to_current > tw.week_diff
+    and date_add(ur.first_launch_week,interval tw.week_diff week)< date_trunc(date_sub(current_date(), interval 7 day),week)
+    and first_launch_week>='2023-01-29'
+    group by 1,2
+    )

@@ -1,0 +1,39 @@
+/*
+    Name: VL iOS - Remake exports by feed screen
+    Query ID: 40442
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-19T09:35:25.530Z
+    */
+    select
+    date_trunc(date(ex.meta_received_at), {{period}}) as dt,
+    case when '{{grouping}}' = 'see all screens' then ac.screen_name
+        else
+            case when lower(ac.screen_name) like '%category.recommended%' or ac.screen_name like '%for_you%' then 'Main Feed'
+                 when st.flow_name = "assets_first" then "assets_first"
+                 when lower(ac.screen_name) like '%discover.recommended%' then 'Discover Main Feed'
+                 when lower(ac.screen_name) like '%discover.%' then 'Discover Categories'
+                 when ac.screen_name like '%category.%' then 'Main Categories'
+                 when ac.screen_name like '%templates%' or ac.screen_name like '%liked%' or ac.screen_name like '%purchased%' then 'Profile'
+                 when ac.screen_name = 'post_details' or ac.screen_name = 'remakes' then 'Remake screen'
+                 when ac.screen_name is null then "unknown"
+                 else ac.screen_name end 
+        end as screen_name,
+    count(distinct st.event_id) as num_clicks,
+    count(distinct ex.export_id) as num_exports,
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as st
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started` as ac
+    on st.action_identifier = ac.action_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+    on st.open_project_id = exs.open_project_id
+    and exs.parent_template_id is not null
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+    on exs.export_id = ex.export_id
+left join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+    on d.platform_device_id = st.id_for_vendor
+    and d.app_name = "videoleap"
+where date(ex.meta_received_at) >= date_sub(current_date(), interval {{last x days}} day)
+    and date_trunc(current_date(), {{period}}) > date_trunc(date(ex.meta_received_at), {{period}}) -- not today
+    and case when '{{day0}}' = 'day0' then (d.first_active_dt is null or date(d.first_active_dt) = date(ex.meta_received_at))
+             when '{{day0}}' = 'non day0' then date(d.first_active_dt) < date(ex.meta_received_at)
+             else true end
+group by 1,2

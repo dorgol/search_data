@@ -1,0 +1,103 @@
+/*
+    Name: VL Android - Interest Based Experiment V2 - Remake Participation by User Type
+    Query ID: 40788
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-31T13:17:46.034Z
+    */
+    with users1 as (
+    select distinct
+        dav.installation_id as platform_device_id,
+        dav.variant,
+        dav.segmentation,
+        dav.display_type,
+        dav.experiment_started_meta
+        
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+    where dav.experiment = 'interest_based_funnel_v2'
+        and case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'No Segmentation' then segmentation = '01 All Users'
+                else true end
+        and case 
+                when '{{display}}' = 'Activated' then display_type = 'activated_for_device'
+                when '{{display}}' = 'Displayed' then display_type = 'displayed' -- change this when we know the name
+                else true end
+)
+
+, users as (
+    select
+        u.platform_device_id,
+        u.variant,
+        u.segmentation,
+        u.display_type,
+        u.experiment_started_meta,
+        case when    pt.origin_page_response is null then                'No answer'
+                when pt.origin_page_response like '%business%' then 'Promoting a business' 
+                when pt.origin_page_response like '%myself%' then 'Editing for myself' 
+                when pt.origin_page_response like '%friends%' then 'Sharing with friends/family'
+                when pt.origin_page_response like '%influencer%' then 'I’m an influencer'
+                when pt.origin_page_response like '%creator%' then 'I’m a creator'
+                when origin_page_response like '%Other%' then      'Other' 
+                
+                when origin_page_response is null then 'No answer'
+                when origin_page_response like '%fashion%' then 'fashion' 
+                when origin_page_response like '%health%' then 'health and fitness' 
+                when origin_page_response like '%travel%' then 'travel'
+                when origin_page_response like '%other%' then 'Other' 
+                
+                else origin_page_response end as response,
+    from users1 u 
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_presented` qp
+        on u.platform_device_id = qp.installation_id
+        and qp.app_name = 'videoleap_android'
+        and qp.meta_received_at >= u.experiment_started_meta
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pt
+        on qp.installation_id = pt.installation_id
+        and pt.app_name = 'videoleap_android'
+        and origin_page_index = 0
+        and origin_page_name in ('So, what brings you here? v2', 'So, what brings you here?')
+    )
+
+, feed_info as (
+    select distinct
+        u.variant,
+        response,
+        count(distinct u.platform_device_id) as users,
+        count(distinct ts.installation_id) as project_users,
+        count(distinct me.installation_id) as export_users,
+        count(distinct te.project_id) as projects,
+        count(distinct me.project_id) as exported_projects,
+        count(distinct me.export_id) as exports,
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_template_editing_started` ts
+        on u.platform_device_id = ts.installation_id
+        and ts.meta_received_at >= u.experiment_started_meta
+    left join `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_template_editing_ended` te
+        on ts.template_editing_flow_id = te.template_editing_flow_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_media_exported` me  
+        on me.project_id = te.project_id
+    group by 1,2
+    )
+
+   
+select
+    variant,
+    response,
+    users,
+    projects,
+    project_users,
+    export_users,
+    exported_projects,
+    exports,
+    safe_divide(exported_projects, projects)*100 as project_to_export_pct,
+    safe_divide(project_users, users)*100 as project_participation_pct,
+    safe_divide(export_users, users)*100 as export_participation_pct,
+    safe_divide(exports, users) as exports_per_user,
+    safe_divide(projects, users) as projects_per_user
+from feed_info
+
+
+   
+   

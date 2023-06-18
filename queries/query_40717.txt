@@ -1,0 +1,10 @@
+/*
+    Name: PL Android Experiment Assignment Check
+    Query ID: 40717
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-29T09:37:44.833Z
+    */
+    select *
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_app_ab_test_assignment_changed_state`
+where app_name='editor_android'
+and meta_received_at>='2023-03-27'

@@ -1,0 +1,120 @@
+/*
+    Name: SMBs Story - Subscription Tiers - Extreme Users - Remake Project Distribution
+    Query ID: 40228
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-10T14:18:29.066Z
+    */
+    with users_1 as (
+  select distinct
+    d.platform_device_id,
+    d.first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+    and date(d.dt) >= '{{start date}}'
+)
+
+
+, users as (
+    select  
+         u.platform_device_id,
+         u.first_active_dt,
+         case when origin_page_response like '%business%' then 'I promote a business'
+             else 'other users' end as response,
+    from users_1 u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+, first_remake as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        min(date(ts.meta_received_at)) as first_remake_dt
+        
+    from users u 
+    
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as ts
+        on u.platform_device_id = ts.id_for_vendor
+
+    where date(ts.meta_received_at) >= date('{{start date}}')
+    and response = 'I promote a business'
+    group by 1,2
+    
+    )
+
+, remakes as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        first_remake_dt,
+        ts.open_project_id,
+        --date_diff(date_trunc(current_date(), week), date_trunc(first_remake_export_dt, week), week) as weeks_from_first_remake_export
+        
+    from first_remake u 
+    
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as ts
+        on u.platform_device_id = ts.id_for_vendor
+
+    where date(ts.meta_received_at) >= date('{{start date}}')
+    )
+
+, remakes_final as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        first_remake_dt,
+        count(distinct u.open_project_id) as remakes,
+        date_diff(date_trunc(current_date(), week), date_trunc(first_remake_dt, week), week) as weeks_from_first_remake
+        
+    from remakes u
+    group by 1,2,3
+    )
+
+
+
+, final as (
+    select
+        response,
+        platform_device_id,
+        remakes,
+        cast(weeks_from_first_remake as NUMERIC) as weeks_from_first_remake,
+    from remakes_final
+    )
+
+-------------------------------------
+-------------------------------------
+
+, output as (
+    select 
+        response,
+        platform_device_id,
+        remakes,
+        weeks_from_first_remake,
+        case when safe_divide(remakes , weeks_from_first_remake) > 40 then 41 else safe_divide(remakes , weeks_from_first_remake) end  as remakes_per_week
+    from final
+    )
+    
+
+, ranking as (
+    select
+        *,
+        row_number () over (order by remakes_per_week desc) as rank
+    from output
+    where remakes_per_week > 2
+    order by rank asc
+    )
+
+    select
+        rank,
+        remakes_per_week
+    from ranking

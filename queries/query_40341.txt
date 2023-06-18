@@ -1,0 +1,87 @@
+/*
+    Name: SMBs Story - Mini-editor Feature Usage by Feature (Free vs Pro)
+    Query ID: 40341
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-15T09:30:59.706Z
+    */
+    with users_1 as (
+  select distinct
+    d.platform_device_id,
+    d.first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+)
+
+
+, users as (
+    select  
+         u.platform_device_id,
+         u.first_active_dt,
+         case when origin_page_response is null then 'No Answer' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as response,
+    from users_1 u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+, features as (
+    select distinct
+        date_trunc(ts.meta_received_at, {{Time granularity}}) as dt,
+        ts.open_project_id,
+        action_name
+    from users u 
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as ts
+        on u.platform_device_id = ts.id_for_vendor
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_feature_used` fu
+        on fu.open_project_id = ts.open_project_id
+        and action_source like '%template%'
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ex.open_project_id = ts.open_project_id
+    where ts.meta_received_at > "2022-01-01"
+        and case when '{{Day}}' = "day0" then date(ts.meta_received_at) = date(u.first_active_dt)
+                     when '{{Day}}' = "non day0" then date(ts.meta_received_at) > date(u.first_active_dt) 
+                     else true end
+        and case when '{{user type}}' = 'All' then true else response =  '{{user type}}' end
+        and case when '{{exported}}' = 'exported' then ex.open_project_id is not null
+                 when '{{exported}}' = 'not exported' then ex.open_project_id is null    
+                 else true end
+        and case when '{{Pro / Free}}' = 'Pro' then ts.is_subscriber is true
+                 when '{{Pro / Free}}' = 'Free' then ((ts.is_subscriber is false) or (ts.is_subscriber is null))
+                 else true end
+)
+
+, final as (
+    select
+        f.dt,
+        case when f.action_name is null then 'no feature' else f.action_name end as feature_used,
+        count(distinct f.open_project_id) as num_projects,
+        total_projects,
+        safe_divide(count(distinct f.open_project_id),total_projects)*100 as pct_projects
+    from features f
+    inner join (select
+                    f.dt,
+                    count(distinct f.open_project_id) as total_projects
+                from features f
+                group by 1) as tf
+        on f.dt = tf.dt
+    --where date(dt) < date_trunc(current_date(), {{Time granularity}})
+    group by 1,2,4
+    )
+    
+select
+    *
+from final
+order by dt asc, num_projects desc

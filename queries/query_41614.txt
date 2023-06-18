@@ -1,0 +1,53 @@
+/*
+    Name: VLA - screen_visited vs questionnaire_presented
+    Query ID: 41614
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-11T08:27:59.666Z
+    */
+    with questionnaire as 
+(SELECT
+date(meta_received_at) as dt,
+'global_presented' as event,
+farm_fingerprint (installation_id) as lt_defacto_id
+FROM `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_presented`
+WHERE date(meta_received_at) >= "2023-03-01" 
+      and date(meta_received_at) <= date_add(current_date(), interval -1 day)
+      and app_name in ('videoleap_android')
+group by 1,2,3
+
+union all
+
+SELECT
+date(meta_received_at) as dt,
+'screen_visited' as event,
+farm_fingerprint (installation_id) as lt_defacto_id
+FROM `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_screen_visited`
+WHERE date(meta_received_at) >= "2023-03-01" 
+      and date(meta_received_at) <= date_add(current_date(), interval -1 day)
+      and screen_name = "questionnaire"
+group by 1,2,3
+
+union all
+
+SELECT
+date(meta_received_at) as dt,
+'global_transition' as event,
+farm_fingerprint (installation_id) as lt_defacto_id
+FROM `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_page_transition`
+WHERE date(meta_received_at) >= "2023-03-01" 
+      and date(meta_received_at) <= date_add(current_date(), interval -1 day)
+      and app_name in ('videoleap_android')
+group by 1,2,3
+
+
+
+
+)
+
+select
+dt,
+event,
+count(distinct lt_defacto_id) as users_presented
+
+from questionnaire
+group by 1,2

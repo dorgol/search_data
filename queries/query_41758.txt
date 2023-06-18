@@ -1,0 +1,43 @@
+/*
+    Name: FT iOS - Screenshot Blocking Subscribers - Times Seen Until Purchase
+    Query ID: 41758
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-11T12:07:22.586Z
+    */
+    with 
+ss_buyers as (
+    select
+        p.platform_device_id,
+        min(p.meta_received_at) first_ss_purchase_time
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_presented` p
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_dismissed` d
+        on d.app_name = 'facetune2'
+        and d.meta_received_at >= '{{since_date}}'
+        and d.flow_id = p.flow_id
+        and d.reason = 'PurchaseSucceeded'
+    where true
+    and p.app_name = 'facetune2'
+    and p.meta_received_at >= '{{since_date}}'
+    and p.reason = 'contentScreenshotAlert'
+    group by 1
+)
+
+select
+    num_times_seen_before_purchase,
+    count(distinct platform_device_id) num_users
+from (
+    select
+        s.platform_device_id,
+        ifnull(count(distinct p.event_id),0) num_times_seen_before_purchase
+    from ss_buyers s 
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_presented` p
+        on true
+        and p.app_name = 'facetune2'
+        and p.meta_received_at >= '{{since_date}}'
+        and p.meta_received_at < first_ss_purchase_time
+        and p.reason = 'contentScreenshotAlert'
+        and p.platform_device_id = s.platform_device_id
+    group by 1
+)
+group by 1
+order by 1

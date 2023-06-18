@@ -1,0 +1,39 @@
+/*
+    Name: VL iOS - Post to Feed Toggle - Funnel
+    Query ID: 42091
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-31T09:03:15.954Z
+    */
+    -- VL Feed Funnel
+
+with users as (
+    select distinct
+        variant,
+        segmentation,
+        min(date(experiment_started_meta)) as dt,
+        count(distinct dav.id_for_vendor) as users,
+        count(distinct a.platform_device_id) as post_to_feed_users,
+        
+        count(distinct case when parent_template_id is null then a.platform_device_id end) as post_to_feed_originals_users,
+        count(distinct case when parent_template_id is not null then a.platform_device_id end) as post_to_feed_remakes_users,
+        
+        safe_divide(count(distinct a.platform_device_id), count(distinct dav.id_for_vendor))*100 as post_to_feed_pct,
+        safe_divide(count(distinct case when parent_template_id is null then a.platform_device_id end), count(distinct dav.id_for_vendor))*100 as post_to_feed_originals_pct,
+        safe_divide(count(distinct case when parent_template_id is not null then a.platform_device_id end), count(distinct dav.id_for_vendor))*100 as post_to_feed_remakes_pct
+        
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_post_upload_ended` a
+            on dav.id_for_vendor = a.platform_device_id
+            and a.meta_received_at >= dav.experiment_started_meta
+    where dav.experiment = 'vl_feed_ios_post_toggle'
+        and case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users'
+                else true end
+        and display_type = 'activated_for_device'
+    group by 1,2
+)
+
+
+select * from users

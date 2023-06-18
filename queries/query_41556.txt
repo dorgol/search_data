@@ -1,0 +1,50 @@
+/*
+    Name: Bundles experiment - Revenues per variant
+    Query ID: 41556
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-02T20:16:28.475Z
+    */
+    with experiment_users as (
+    select distinct
+        id_for_vendor,
+        variant,
+        experiment_started_device,
+        experiment_started_meta,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and experiment = "Bundles (Production)"
+        and segmentation = "01 All Users"
+                --  when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                --  when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+) 
+
+, transactions as (
+    select
+        variant,
+        product_id,
+        count(distinct original_transaction_id) as num_purchases,
+        sum(actual_proceeds_usd) as net_revenues
+    from (
+        select distinct
+            ex.variant,
+            t.product_id,
+            t.original_transaction_id,
+            t.actual_proceeds_usd
+        from `ltx-dwh-prod-processed.subscriptions.ios_transactions` t
+        left join  `ltx-dwh-prod-processed.subscriptions.ios_subscriptions_devices` as sd
+            on sd.original_transaction_id = t.original_transaction_id
+        join experiment_users as ex
+            on ex.id_for_vendor = sd.id_for_vendor
+            and purchase_date > experiment_started_device
+        where true
+            and date_trunc(date(purchase_date), day) >= "2023-02-03"
+            and is_sandbox is false
+            and lower(product_id) like '%template%'
+            and t.application = "videoleap"
+    )
+    group by 1,2
+)
+select
+  *
+from transactions

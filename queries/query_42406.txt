@@ -1,0 +1,43 @@
+/*
+    Name: Feed Tables Test
+    Query ID: 42406
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-06-01T07:53:35.699Z
+    */
+    with table_union as (
+
+select distinct 
+        dt,
+        'items_info' as source,
+        platform_device_id
+    from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info`
+    where application = "videoleap" and dt >= '2023-01-01'
+
+union all
+
+select distinct 
+        date(meta_received_at) as dt,
+        'fsp_new' as source,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_screen_presented`
+    where app_name = "videoleap" and date(meta_received_at) >= '2023-01-01'
+
+union all
+
+select distinct 
+        date(meta_received_at) as dt,
+        'fsp_old' as source,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented`
+    where meta_source = "videoleap" and meta_platform = 'ios' and date(meta_received_at) >= '2023-01-01'
+)
+
+select
+    dt,
+    source,
+    count(distinct platform_device_id) as feed_users
+from table_union
+where dt < current_date()
+group by 1,2
+
+    

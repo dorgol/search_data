@@ -1,0 +1,113 @@
+/*
+    Name: VL iOS - Feed - Post Performance - Export Rate Distribution
+    Query ID: 40358
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-16T08:34:50.639Z
+    */
+    with impressions as (
+    select distinct
+        ii.post_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+
+        count(distinct ii.action_id) as impressions,
+        count(distinct ii.platform_device_id) as impression_users
+    from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` ii
+     inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and actions = 'become_ready' -- impressions
+        and ii.application = 'videoleap'
+    group by 1,2
+)
+
+, clicks as (
+    select distinct
+        pc.post_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+
+        count(distinct ii.action_id) as clicks,
+        count(distinct ii.platform_device_id) as click_users
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ii
+        inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and action = 'use_template' -- clicks
+        and ii.meta_source = 'videoleap'
+        and ii.meta_platform = 'ios'
+    group by 1,2
+)
+
+, exports as (
+    select distinct
+        pc.post_id,
+        case when pc.parent_template_id is null then 'Original' else 'Remake' end as post_type,
+
+        count(distinct ex.export_id) as exports,
+        count(distinct ex.id_for_vendor) as export_users
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` ex
+        inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on lower(ex.parent_template_id) = pc.template_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    where date(ex.meta_received_at) >= '{{from_date}}'
+    group by 1,2
+)
+
+, agg_per_post as (
+    select
+        --i.dt,
+        i.post_type,
+        i.post_id,
+        i.impressions,
+        i.impression_users,
+        c.clicks,
+        c.click_users,
+        e.exports,
+        e.export_users
+    from impressions i
+        left join clicks c
+            on c.post_id = i.post_id
+            --and c.dt = i.dt
+        left join exports e
+            on e.post_id = i.post_id
+            --and e.dt = i.dt
+    where case when '{{post type}}' = 'Original' then i.post_type = 'Original'
+                when '{{post type}}' = 'Remake' then i.post_type = 'Remake'
+                else true end)
+    
+
+, post_metrics as (
+    select
+        i.*,
+        safe_divide(exports, impressions)*100 as export_rate,
+        safe_divide(export_users, impression_users)*100 as user_export_rate,
+        safe_divide(exports, clicks)*100 as click_to_export_rate,
+        safe_divide(export_users, click_users)*100 as user_click_to_export_rate
+    from agg_per_post i
+    where impressions >= 100 and exports >= 1
+    )
+    
+, distribution as (
+    select
+        --dt,
+        case when '{{post type}}' = 'Combined' then 'Combined' else post_type end as post_type,
+        case when round(export_rate, 1) >= 10 then 10 else round(export_rate, 1) end as export_rate,
+        count(distinct post_id) as posts
+        
+    from post_metrics
+    group by 1,2)
+    
+select
+    post_type,
+    export_rate,
+    posts,
+    sum(posts) over (partition by post_type) as total_posts,
+    safe_divide(posts, sum(posts) over (partition by post_type))*100 as pct_posts
+from distribution
+
+
+

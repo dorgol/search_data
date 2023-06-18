@@ -1,0 +1,48 @@
+/*
+    Name: Felix - Attributions (Onboarding) - Installations by Marketing Network
+    Query ID: 41118
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-18T15:24:16.395Z
+    */
+    -- Which network has most attributed installs 
+-- Does this change:
+-- Over time?
+-- Per App?
+-- Conversion Rate vs Raw?
+
+with top_networks as (
+
+select 
+    
+    attribution.network as network,
+    count(distinct device.lt_defacto_id) as count_devices
+    
+from 
+    `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` 
+where lei_attribution.is_missing_attribution = False
+    and device.install_time > '{{start date}}'-- `device.install_time`
+    group by 1
+order by 2 desc
+limit 20
+
+)
+
+select 
+    --date_trunc(device.install_time, month) as install_time,
+    attribution.network,
+    --vertical,
+    --count(distinct case when subscription.revenue_so_far > 0 and subscription.had_trial = True then device.lt_defacto_id end) as converted_trials,
+    --count(distinct case when subscription.had_trial = True then device.lt_defacto_id end) as trials 
+    count(distinct device.lt_defacto_id) as count_devices,
+    count(distinct lt_subscription_id) as count_subscriptions
+    
+from 
+    `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` subs
+inner join top_networks on top_networks.network = attribution.network
+where lei_attribution.is_missing_attribution = False
+    and device.install_time > '{{start date}}'-- `device.install_time`
+
+group by 1
+order by 2 desc
+
+

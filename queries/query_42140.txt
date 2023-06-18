@@ -1,0 +1,37 @@
+/*
+    Name: AI Avatar- Chineses purchases - Summary
+    Query ID: 42140
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-23T07:56:11.890Z
+    */
+    select 
+    count(distinct h.platform_device_id) as saw_home_screen,
+    count(distinct sub_end.platform_device_id) as purchased_asset,
+    count(distinct r.platform_device_id) as reached_bundle_screen,
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_content_screen_presented` h
+join `ltx-dwh-prod-raw.analytics_global.ltx_global_app_device_info_log` d
+    on h.device_info_id = d.device_info_id
+    and d.app_name = 'facetune2'
+    and d.meta_received_at >= '2023-03-01'
+    and d.store_country = 'CN'
+    and cast(d.app_version_code as int64) between 4858 and 4938
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_presented` as sub_pre
+    on sub_pre.device_info_id = d.device_info_id 
+    and sub_pre.app_name = 'facetune2'
+    and sub_pre.reason = 'ai_avatar'
+    and sub_pre.meta_received_at >= '2023-04-20'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_purchase_ended` as sub_end
+    on sub_pre.platform_device_id = sub_end.platform_device_id
+    and sub_pre.flow_id = sub_end.flow_id
+    and sub_end.product_id like('%YouniverseCoin%')
+    and sub_end.reason='success'
+    and sub_end.meta_received_at >= '2023-04-20'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` r
+    on true
+    and r.app_name = 'facetune2'
+    and r.screen_name = 'ai_avatar_bundle_results'
+    and r.device_info_id = d.device_info_id 
+    and r.meta_received_at >= '2023-04-20'
+where true
+and h.app_name = 'facetune2'
+and h.meta_received_at >= '2023-04-20'

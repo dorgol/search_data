@@ -1,0 +1,51 @@
+/*
+    Name: [FT-1075] Saw Survey Popup
+    Query ID: 40413
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-19T07:32:28.603Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+)
+
+
+select
+    segmentation,
+    identifier,
+    accepted,
+    count(distinct id_for_vendor) as users,
+    sum(times_seen) as total_times_seen
+from (
+    select
+        segmentation,
+        identifier,
+        u.id_for_vendor,
+        max(accepted) as accepted,
+        count(distinct event_id) as times_seen
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_popup_resolved` p
+        on u.id_for_vendor = p.id_for_vendor
+        and p.meta_received_at >= '2023-03-16'
+        and identifier like 'videoPostExportSurvey%'
+    where true
+    group by 1,2,3
+)
+group by 1,2,3
+order by 1,2,3

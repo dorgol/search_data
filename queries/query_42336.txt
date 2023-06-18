@@ -1,0 +1,14 @@
+/*
+    Name: feed_unnested monitoring - actions count
+    Query ID: 42336
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-30T21:43:41.176Z
+    */
+    select
+    dt,
+    actions,
+    count(distinct action_id) as num_actions
+from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info`
+where case when '{{application}}' like "%all%" then true else application || "_" || platform in ({{application}}) end
+    and dt >= date('{{start time}}')
+group by 1,2

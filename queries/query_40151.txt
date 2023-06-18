@@ -1,0 +1,114 @@
+/*
+    Name: PP - Self-Serve Customer Details - Summary
+    Query ID: 40151
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-29T11:18:08.006Z
+    */
+    with brand_orgs as (
+    select distinct
+        a.id as agency_id,
+        a.name,
+        a.created_at,
+        subscription_type
+    from agencies a
+    inner join subscriptions s
+        on s.agency_id = a.id
+        and s.subscription_type in ('platform_free', 'essentials')
+    inner join merchants m
+        on m.agency_id = a.id
+    where true
+        and primary_email not like '%lightricks%'
+        and primary_email not like '%codicate%'
+        and a.name != 'TZLILBRAND')
+
+
+, creator_costs as (
+    select 
+        a.agency_id,
+        sum(case when cost_in_cents is null then 0 else cast(cost_in_cents as float) end)/100 as cost_usd,
+        sum(case when service_fees_in_cents is null then 0 else cast(service_fees_in_cents as float) end)/100 as service_fees_usd,
+        sum(case when other_fees_in_cents is null then 0 else cast(other_fees_in_cents as float) end)/100 as other_fees_usd
+    from brand_orgs a
+    inner join merchants m
+        on m.agency_id = a.agency_id
+    inner join campaigns c
+        on m.id = c.merchant_id
+    inner join paid_gigs pg
+        on pg.campaign_id = c.id
+        and pg.aasm_state not in ('replaced', 'cancelled')
+        and pg.accepted_at is not null
+    group by 1)
+    
+, agg_campaigns as (
+    select 
+        a.agency_id,
+        count(distinct c.id) as campaigns_created,
+        count(distinct case when c.activated_at is not null then c.id end) as campaigns_activated,
+        count(distinct case when c.aasm_state = 'closed' then c.id end) as campaigns_completed
+    from brand_orgs a
+    inner join merchants m
+        on m.agency_id = a.agency_id
+    inner join campaigns c
+        on m.id = c.merchant_id
+    group by 1)
+
+, final as (select
+    a.name,
+    a.subscription_type,
+    date(a.created_at) as joined_date,
+    count(distinct c.id) as campaigns_created,
+    count(distinct case when c.aasm_state = 'under_review' then c.id end) as campaigns_under_review,
+    count(distinct case when c.activated_at is not null then c.id end) as campaigns_activated,
+    count(distinct case when c.aasm_state = 'closed' then c.id end) as campaigns_completed,
+
+    count(distinct case when 
+                ((pg.campaign_creator_match_id is null) or (ccm.invited_at is null)) 
+                                then pg.user_id end) as creators_applied,
+    count(distinct case when 
+            invited_at is not null
+                            then pg.user_id end) as creators_invited,
+                            
+    count(distinct pg.user_id) as total_creators,
+    count(distinct case when pg.accepted_at is not null then pg.user_id end) as total_accepted_creators,
+    
+    count(distinct case when pg.aasm_state = 'completed' then pg.user_id end) as creators_completed_campaign,
+    
+    case when cc.cost_usd is null then 0 else cc.cost_usd end  as creator_costs_usd,
+    case when cc.service_fees_usd is null then 0 else cc.service_fees_usd end  as creator_costs_service_fees_usd,
+    case when cc.other_fees_usd is null then 0 else cc.other_fees_usd end  as creator_costs_other_fees_usd
+    --case when (cc.service_fees_usd + cc.other_fees_usd + cc.cost_usd) is null then 0 else (cc.service_fees_usd + cc.other_fees_usd + cc.cost_usd) end as creator_costs_total_usd
+    
+from brand_orgs a
+inner join merchants m
+    on m.agency_id = a.agency_id
+left join campaigns c
+    on m.id = c.merchant_id
+left join paid_gigs pg
+    on pg.campaign_id = c.id
+    and pg.aasm_state not in ('replaced', 'cancelled')
+left join campaign_creator_matches ccm
+        on ccm.id = pg.campaign_creator_match_id
+left join creator_costs cc
+                on cc.agency_id = a.agency_id
+where true
+and primary_email not like '%lightricks%'
+and primary_email not like '%codicate%'
+and a.name != 'TZLILBRAND'
+
+group by 1,2,3, 13,14,15
+)
+
+
+select
+    subscription_type,
+    count(distinct name) as total_customers,
+    count(distinct case when campaigns_created > 0 then name end) as campaign_created,
+    count(distinct case when campaigns_under_review > 0 then name end) as campaign_under_review,
+    count(distinct case when campaigns_activated > 0 then name end) as campaign_activated,
+    count(distinct case when campaigns_completed > 0 then name end) as campaign_completed,
+    count(distinct case when creators_applied > 0 then name end) as creator_applied,
+    count(distinct case when creators_invited > 0 then name end) as creator_invited,
+    count(distinct case when total_accepted_creators > 0 then name end) as creator_accepted,
+    sum(creator_costs_usd) as creator_costs_usd
+from final
+group by 1

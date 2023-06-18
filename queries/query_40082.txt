@@ -1,0 +1,52 @@
+/*
+    Name: 20230125 - FT iOS - [FT-1063] Face Monetization - Subscription Sources
+    Query ID: 40082
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-06T10:51:53.605Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1063]Face Monetization 1.2')
+    and display_type = '{{display_type}}'
+)
+
+select
+    segmentation,
+    variant,
+    subscription_source,
+    count(distinct lt_subscription_id) num_subs,
+    count(distinct lt_subscription_id) / max(total_subscriptions)*100 pct_total_subscriptions
+from (
+    select
+        case when variant = 'baseline' then 'Baseline' else variant end as variant,
+        segmentation,
+        subscription_source,
+        lt_subscription_id,
+        count(distinct ss.lt_subscription_id) over (partition by variant, segmentation) total_subscriptions
+    from users u
+    join `ltx-dwh-prod-processed`.`agg`.`subscriptions` ss
+        on u.id_for_vendor = ss.platform_device_id
+        and ss.original_purchase_date >= '2023-01-25'
+        and ss.original_purchase_date >= experiment_started_meta
+)
+group by 1,2,3
+-- having num_subs > 100
+order by 1,2, 4 desc

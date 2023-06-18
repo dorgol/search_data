@@ -1,0 +1,91 @@
+/*
+    Name: 20230316 - FT2 iOS - [FT-1078] Voluntary AR Off churn prevention - Renewal Rates - M/Y/T (draft)
+    Query ID: 41485
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-08T08:25:06.917Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1078] Voluntary AR Off churn prevention')
+    and display_type = '{{display_type}}'
+),
+
+first_subs_in_exp_period as (
+    select
+        segmentation,
+        case when variant = 'baseline' then 'Baseline' else variant end as variant,
+        s.subscription.subscription_duration,
+        count(distinct u.id_for_vendor) num_users
+    from users u
+    join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` d
+        on d.application = 'facetune2'
+        and d.lt_defacto_id = u.lt_defacto_id
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation` s
+        on s.application = 'facetune2'
+        and s.attribution.attribution_user_id = d.attribution_user_id
+    group by 1,2,3
+)
+select
+*
+from first_subs_in_exp_period
+order by 1,2,3
+-- transactions as (
+--     select
+--         segmentation,
+--         case when variant = 'baseline' then 'Baseline' else variant end as variant,
+--         d.attribution_user_id,
+--         lt_subscription_id,
+--         experiment_started_meta,
+--         t.transaction.is_trial_period,
+--         t.subscription.subscription_duration,
+--         row_number() over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) transaction_num_in_exp_range,
+--         case when lag(t.transaction.is_trial_period) over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) is true then true else false end as did_follow_trial,
+--         case when lag(t.payments.actual_proceeds) over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) > 0 then true else false end as did_pay_prev,
+--         lag(t.purchase_date) over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) as prev_purchase_date,
+--         lag(t.transaction.expiration_date) over (partition by segmentation, variant, lt_subscription_id order by purchase_date asc) as prev_expiration_date,
+--         case when date_diff(date(t.purchase_date), date(experiment_started_meta), day) >= 0 then true else false end as is_after_exp_start,
+--         t.purchase_date
+--     from users u
+--     join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` d
+--         on d.application = 'facetune2'
+--         and d.lt_defacto_id = u.lt_defacto_id
+--     join `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation` t
+--         on t.application = 'facetune2'
+--         and t.attribution.attribution_user_id = d.attribution_user_id
+--         and date_diff(date(experiment_started_meta), date(transaction.expiration_date), day) <= 30
+--         and t.payments.was_refund is not true
+-- )
+
+-- select
+--     segmentation,
+--     variant,
+--     -- case
+--     --     when subscription_duration = '1y' and did_follow_trial then '1y + trial'
+--     --     else subscription_duration
+--     -- end as subscription_duration,
+--     subscription_duration,
+--     count(distinct t.attribution_user_id) num_users,
+--     count(distinct t.lt_subscription_id) num_subscriptions,
+--     count(distinct case when transaction_num_in_exp_range > 1 then t.lt_subscription_id end) / count(distinct t.lt_subscription_id)*100 as renewal_rate,
+-- from transactions t
+-- group by 1,2,3
+-- having num_users > 100
+-- order by 1,3,2

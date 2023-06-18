@@ -1,0 +1,32 @@
+/*
+    Name: VL - User List - 3
+    Query ID: 41599
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-03T15:23:51.986Z
+    */
+    select 
+    distinct action
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_ended` a
+inner join `ltx-dwh-prod-processed`.`agg`.`app_device` 
+    using(platform_device_id)
+        
+
+
+/*agg as (
+    select
+        lt_id,
+        first_installation_id,
+        --min(date_diff) as min_lag,
+        count(distinct open_project_id) as count_projects
+    from template_purchases
+    where date_diff <= 30
+    group by 1,2
+)
+
+select 
+    * 
+from 
+    agg
+where 
+    count_projects >= 2 
+*/

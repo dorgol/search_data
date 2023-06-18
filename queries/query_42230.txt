@@ -1,0 +1,50 @@
+/*
+    Name: VL: Revenue per Period Split
+    Query ID: 42230
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-26T09:56:05.519Z
+    */
+    with trans as (
+    select
+        date_trunc(date(purchase_date), {{Time granularity}}) as period,
+        round(sum(case when payments.month0_late_or_renewal = 'month0' and subscription.subscription_duration = '1y' then projected.adjusted_actual_proceeds_alloc_cs end),0) as new_yearly_revenue,
+        round(sum(case when payments.month0_late_or_renewal = 'month0' and subscription.subscription_duration = '1m' then projected.adjusted_actual_proceeds_alloc_cs end),0) as new_monthly_revenue,
+        round(sum(case when payments.month0_late_or_renewal = 'late' and subscription.subscription_duration = '1y' then projected.adjusted_actual_proceeds_alloc_cs end),0) as late_yearly_revenue,
+        round(sum(case when payments.month0_late_or_renewal = 'late' and subscription.subscription_duration = '1m' then projected.adjusted_actual_proceeds_alloc_cs end),0) as late_monthly_revenue,
+        round(sum(case when payments.month0_late_or_renewal = 'month0' and subscription.subscription_duration = 'l' then projected.adjusted_actual_proceeds_alloc_cs end),0) as new_otp_revenue,
+        round(sum(case when payments.month0_late_or_renewal = 'late' and subscription.subscription_duration = 'l' then projected.adjusted_actual_proceeds_alloc_cs end),0) as late_otp_revenue,
+        round(sum(case when payments.month0_late_or_renewal = 'renewal' and subscription.subscription_duration = '1y' then projected.adjusted_actual_proceeds_alloc_cs end),0) as renewal_yearly_revenue,
+        round(sum(case when payments.month0_late_or_renewal = 'renewal' and subscription.subscription_duration = '1m' then projected.adjusted_actual_proceeds_alloc_cs end),0) as renewal_monthly_revenue,
+        round(sum(case when subscription.product_category = 'asset' then projected.adjusted_actual_proceeds_alloc_cs end),0) as asset_revenue,
+        round(sum(case when payments.month0_late_or_renewal = 'month0' or payments.month0_late_or_renewal = 'late' then projected.adjusted_actual_proceeds_alloc_cs end),0) as new_revenue,
+        round(sum(case when payments.month0_late_or_renewal = 'renewal' then projected.adjusted_actual_proceeds_alloc_cs end),0) as renewal_revenue,
+        100*round(sum(case when payments.month0_late_or_renewal = 'month0' or payments.month0_late_or_renewal = 'late' then projected.adjusted_actual_proceeds_alloc_cs end),0)/round(sum(projected.adjusted_actual_proceeds_alloc_cs),0) as new_revenue_share,
+        round(sum(projected.adjusted_actual_proceeds_alloc_cs),0) as total_revenues,
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation_cross_sell` t
+    where application = 'videoleap'
+    and date_trunc(date(purchase_date), {{Time granularity}}) >= '2022-06-01'
+    and date_trunc(current_date(), {{Time granularity}}) != date_trunc(date(purchase_date), {{Time granularity}})
+    and case 
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then subscription.current_subscription_store_country not in ('US','CN')
+        else subscription.current_subscription_store_country = '{{countries}}' end
+    group by 1
+),
+
+spend as (
+    select  
+      date_trunc(dt, {{Time granularity}}) as period,
+      sum(dm_spend) as dm_spend
+    from `ltx-dwh-prod-processed.marketing.daily_cost_data`
+    where app_name = 'videoleap'
+    group by 1
+)
+
+select
+    trans.*,
+    dm_spend,
+    safe_divide(asset_revenue, total_revenues)*100 as asset_pct_of_total
+from trans
+left join spend
+    using(period)
+order by 1

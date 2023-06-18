@@ -1,0 +1,81 @@
+/*
+    Name: VL iOS - 2023 Initiatives - SMBs - ARPPU (Cohort)
+    Query ID: 40638
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-28T15:32:53.661Z
+    */
+    with installs as (
+    select 
+        d.id_for_vendor as platform_device_id,
+        lt_defacto_id,
+        date(first_launch) as first_launch
+    from `ltx-dwh-prod-processed`.`devices`.`unified_devices` as d
+    where d.first_launch >= '2022-01-02'
+    and application = 'videoleap'
+    --and date_diff(date(current_date), date(d.first_launch), day) >7 -- out of trial period
+    )
+
+, response as (
+    select  
+         u.platform_device_id,
+         u.lt_defacto_id,
+         case when origin_page_response is null then 'No Answer'
+              when date(first_launch) < '2022-07-24' then 'No Answer' -- pre global questionnaire release
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as response,
+        first_launch
+    from installs u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+
+, transactions as (
+    select distinct 
+        i.platform_device_id as id_for_vendor,
+        response,
+        first_launch,
+        ss.original_transaction_id,
+        lt_transaction_id,
+        date(ss.original_purchase_date) as original_purchase_date,
+        date(ss.purchase_date) as purchase_date,
+        ss.actual_proceeds
+    from response i
+    inner join `ltx-dwh-prod-processed.subscriptions.unified_transactions_state` ss
+        on ss.lt_defacto_id = i.lt_defacto_id
+        and date(ss.purchase_date) >= first_launch
+        and application ='videoleap'
+        --and days_until_subscription = 0
+        and actual_proceeds >0
+        --and is_in_trial_period = false --only those out of trial period)
+        )
+
+, final as 
+    (select
+        date_trunc(first_launch,{{time granularity}}) as first_launch_dt,
+        response,
+        count(distinct id_for_vendor) as new_users,
+       -- sum( case when original_transaction_id is not null and date_diff(date(purchase_date), date(first_launch), day) = 0 then   actual_proceeds end) as new_user_rev_day0,
+       -- sum( case when original_transaction_id is not null and date_diff(date(purchase_date), date(first_launch), day) <= 7 then  actual_proceeds end) as new_user_rev_wk0,
+       -- sum( case when original_transaction_id is not null and date_diff(date(purchase_date), date(first_launch), day) <= 14 then actual_proceeds end) as new_user_rev_wk1,
+        sum( case when original_transaction_id is not null and date_diff(date(purchase_date), date(first_launch), day) <= 30 then actual_proceeds end) as new_user_rev_mnth0
+    from transactions
+    group by 1,2
+    )
+
+select
+    *,
+  -- case when first_launch_week < date_trunc(current_date(),{{time granularity}}) then (new_user_rev_day0/ new_users) else null end as arpu_day0,
+  -- case when first_launch_week < date_sub(date_trunc(current_date(),{{time granularity}}), interval 7 day) then (new_user_rev_wk0/ new_users)   else null end as arpu_wk0,
+  -- case when first_launch_week < date_sub(date_trunc(current_date(),{{time granularity}}), interval 14 day) then (new_user_rev_wk1/ new_users)   else null end as arpu_wk1,
+    case when first_launch_dt < date_sub(date_trunc(current_date(),day), interval 30 day) then (new_user_rev_mnth0/ new_users) else null end as arpu_mnth0
+from final
+--where first_launch_dt < date_sub(date_trunc(current_date(),{{time granularity}}), interval 30 day)
+    

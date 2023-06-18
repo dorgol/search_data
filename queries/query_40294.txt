@@ -1,0 +1,28 @@
+/*
+    Name: Filtertune - Upcoming Expirations
+    Query ID: 40294
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-13T12:11:53.291Z
+    */
+    select
+    expiration_date,
+    aro_status,
+    case when aro_status like '%OFF%' then -1 else 1 end * num_subscriptions as num_subscriptions
+from (
+    select
+        timestamp_trunc(s.payments.last_expiration_date, week) expiration_date,
+        case 
+            when subscription.current_is_auto_renew_status_on is true and subscription.subscription_duration = '1m' then 'Monthly ON'
+            when subscription.current_is_auto_renew_status_on is true and subscription.subscription_duration = '1y' then 'Yearly ON'
+            when subscription.current_is_auto_renew_status_on is false and subscription.subscription_duration = '1m' then 'Monthly OFF' 
+            when subscription.current_is_auto_renew_status_on is false and subscription.subscription_duration = '1y' then 'Yearly OFF' 
+        end as aro_status,
+        count(distinct subscription.original_transaction_id) num_subscriptions
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation` s
+    where true
+    and application = 'venus'
+    and date(s.payments.last_expiration_date) > current_date()
+    group by 1,2
+)
+where aro_status is not null
+order by 1,2

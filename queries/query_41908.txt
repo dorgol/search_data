@@ -1,0 +1,154 @@
+/*
+    Name: Export Screen Results
+    Query ID: 41908
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-26T14:56:04.621Z
+    */
+    
+with base as
+(select distinct dt,
+platform_device_id
+from
+`ltx-dwh-prod-processed`.`agg`.`app_device_date`
+where
+dt >= "2023-05-01"
+    and dt < date_trunc(current_date, day)
+    and app_name = "editor"
+    and platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then dt = first_active_dt
+    when '{{Day}}' = "week0" then date_diff(dt, first_active_dt, day) <= 7
+        when '{{Day}}' = "non day0" then dt > first_active_dt
+        else true end
+    and dt   >= date_add(current_date(),interval -{{ last x days }} day)    
+)
+
+,
+
+bp as
+(select distinct
+date(bp.meta_received_at) as dt,
+platform_device_id,
+source,
+presentation_id
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_screen_presented` as bp
+where app_name='editor'
+and meta_received_at>='2023-05-01'
+and screen_name='export_share_screen'
+),
+
+im as
+(select distinct
+date(im_e.meta_received_at) as dt,
+im_e.platform_device_id,
+im_e.event_id,
+case when screen_name in ('replace_sky','remove_object','retouch','colorize','filters','background_blur','ai_enhance','replace_background') then concat('instant_edit.',screen_name) else screen_name end as source,
+destination
+from
+`ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` im_e
+where app_name='editor'
+and meta_received_at>='2023-05-01'
+and button_identifier='next_step'
+union all
+
+(
+select distinct
+date(meta_received_at) as dt,
+platform_device_id,
+process_id,
+split(export_source ,'.')[0] as source,
+'export' as destination
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_export_started`
+where app_name='editor'
+and meta_received_at>= '2023-05-01'
+and export_source like ('%.es')
+--limit 100
+
+union all
+
+select distinct
+date(meta_received_at) as dt,
+id_for_vendor as platform_device_id,
+event_id as process_id,
+concat('instant_edit.',split(instant_edit_name ,'.')[0]) as source,
+'export' as destination
+from
+`ltx-dwh-prod-raw.analytics.ios_editor_instant_edit_exported`
+where meta_received_at>='2023-05-01'
+and instant_edit_name like ('%.es')
+
+union all
+((select distinct
+date(meta_received_at) as dt,
+platform_device_id,
+process_id,
+case when split(export_source ,'.')[0] in ('replace_sky','remove_object','retouch','colorize','filters','background_blur','ai_enhance','replace_background') then concat('instant_edit.',split(export_source ,'.')[0]) else split(export_source ,'.')[0] end as source,
+'export_video' as destination
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_export_started`
+where app_name='editor'
+and meta_received_at>= '2023-05-01'
+and export_source like ('%video%')
+and export_source!='dnd_ai_avatar_video'))
+--limit 100
+))
+
+
+
+
+
+
+select *,
+safe_divide(users_moving,users)*100 as pct_of_users,
+safe_divide(volume_interactions,export_screen_presented)*100 as pct_of_interactions,
+from
+(
+--exported_users as (
+  select distinct
+--d.dt,
+bp.source,
+im.destination,
+count(distinct bp.platform_device_id) over(partition by bp.source) as users,
+count(distinct bp.presentation_id) over(partition by bp.source)  as export_screen_presented,
+count(distinct im.platform_device_id) over (partition by bp.source,im.destination) as users_moving,
+count(distinct im.event_id) over (partition by bp.source,im.destination) as volume_interactions
+
+
+
+  from base as d
+
+    --and efs.app_name='editor'
+    --and efs.feature_name in ('ai_cars', 'ai_scenes')
+   --and efs.meta_received_at>="2023-03-05"
+ 
+   
+   inner join bp
+    on d.platform_device_id = bp.platform_device_id
+    and d.dt = bp.dt
+    left join im
+    on im.platform_device_id=bp.platform_device_id
+    and im.dt=bp.dt
+    and im.source=bp.source
+
+   
+   
+   /*left join 
+   `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_started` as im_s
+   on d.platform_device_id = im_s.platform_device_id
+    and d.dt = date(im_s.meta_received_at)
+    and im_s.app_name='editor'
+    and im_s.source in ('ai_scenes','ai_cars')
+    and im_s.meta_received_at>="2023-03-05"
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_ended` as im_e
+   on im_e.platform_device_id = im_s.platform_device_id
+   and im_e.process_id=im_s.process_id
+    and im_e.app_name='editor'
+    and im_e.reason='success'
+    and im_e.meta_received_at>="2023-03-05"
+    */
+
+  
+  --group by 1,2
+--)
+)
+where destination is not null
+and users>1

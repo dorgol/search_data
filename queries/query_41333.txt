@@ -1,0 +1,39 @@
+/*
+    Name: FT iOS - Most Chosen Questionnaire Features (Q3)
+    Query ID: 41333
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-14T09:22:00.782Z
+    */
+    with
+questionnare_raw as 
+(
+    select
+        id_for_vendor,
+        current_page_response,
+        count(distinct id_for_vendor) over () total_users
+    from `ltx-dwh-prod-raw.analytics.ios_facetune2_intro_questionnaire_transition` pq
+    where true
+    and date(pq.meta_received_at) >= date_sub(current_date(), interval 30 day)
+    and current_page_index = 3
+    and lower(current_page_question) like '%i want to use%'
+    and (destination_page_index = 4 or destination_page_index is null)
+    qualify row_number() over (partition by id_for_vendor order by pq.meta_received_at desc) = 1
+),
+
+current_questionnaire_features as
+(
+    select 
+        id_for_vendor,
+        replace(feature,'"', '') feature,
+    from questionnare_raw, unnest(json_extract_array(current_page_response)) feature
+    where true
+)
+
+select
+    feature,
+    count(distinct c.id_for_vendor)/max(total_users)*100 pct_users_chose_feature
+from current_questionnaire_features c
+left join questionnare_raw q
+    using(id_for_vendor)
+group by 1
+order by 2 desc

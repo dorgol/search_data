@@ -1,0 +1,36 @@
+/*
+    Name: VL iOS - Feed - Post Performance - Impressions (over time)
+    Query ID: 40142
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-09T09:24:19.057Z
+    */
+    with impressions as (
+    select distinct
+        ii.post_id,
+        ii.platform_device_id,
+        ii.action_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        date_trunc(date(ii.meta_received_at), {{time granularity}}) as dt
+    from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` ii
+    inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and actions = 'become_ready' -- impressions
+)
+
+select
+    dt,
+    case when '{{post type}}' = 'Combined' then 'Combined' else post_type end as post_type,
+    count(distinct action_id) as impressions,
+    count(distinct platform_device_id) as impression_users,
+    count(distinct post_id) as posts_seen,
+    count(distinct action_id) / count(distinct post_id) as impressions_per_post,
+    count(distinct platform_device_id) / count(distinct post_id) as users_per_post,
+    count(distinct action_id) / count(distinct platform_device_id) as impressions_per_user
+from impressions
+where case when '{{post type}}' = 'Original' then post_type = 'Original'
+            when '{{post type}}' = 'Remake' then post_type = 'Remake'
+            else true end
+group by 1,2 

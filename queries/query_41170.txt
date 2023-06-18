@@ -1,0 +1,78 @@
+/*
+    Name: Felix - Monthly Churn (Onboarding)
+    Query ID: 41170
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-21T12:15:39.836Z
+    */
+    -- Monthly subs
+-- Monthly cancellations
+-- cohort size (Number of people) per purchase month
+-- Number of people for subsequent churn months 
+-- Summarize and add cumulative view
+
+
+with subscriptions as (
+    select distinct
+        lt_subscription_id,
+        date_trunc(original_purchase_date, month) as original_purchase_date,
+    from `ltx-dwh-prod-processed`.`agg`.`subscriptions`
+    where original_purchase_date > '{{Start Date}}'
+        and app_name = 'videoleap'
+        and platform = 'ios'
+),
+
+churned_subscriptions as (
+    select distinct
+        lt_subscription_id,
+        date_trunc(original_purchase_date, month) as original_purchase_date,
+        date_trunc(first_known_cancellation_date, month) as first_known_cancellation_date,
+        date_diff(date(date_trunc(first_known_cancellation_date, month)), date(date_trunc(original_purchase_date, month)), month) as months_before_churn
+    from `ltx-dwh-prod-processed`.`agg`.`subscriptions`
+    where original_purchase_date > '{{Start Date}}'
+        and app_name = 'videoleap'
+        and platform = 'ios'    
+),
+
+monthly_subscribers as (
+
+    select distinct
+        date_trunc(original_purchase_date, month) as original_purchase_date,
+        count(distinct lt_subscription_id) as count_subs
+    from subscriptions
+    group by 1
+
+),
+
+monthly_churn as (
+
+    select 
+        original_purchase_date,
+        months_before_churn,
+        count(distinct lt_subscription_id) as count_cancellations
+    from churned_subscriptions
+    where months_before_churn >= 0
+    group by 1,2
+
+)
+
+select 
+    monthly_subscribers.original_purchase_date,
+    count_subs,
+    months_before_churn,
+    count_cancellations,
+    sum(count_cancellations) over (
+    partition by monthly_subscribers.original_purchase_date
+    order by months_before_churn asc
+    ) as cumulative_churn,
+    
+    -- Calculation for Churn Percentage
+    ((sum(count_cancellations) over (
+    partition by monthly_subscribers.original_purchase_date
+    order by months_before_churn asc)) / count_subs)*100 as cumulative_churn_percentage
+    
+    
+    
+from monthly_subscribers
+left join monthly_churn on monthly_subscribers.original_purchase_date = monthly_churn.original_purchase_date
+--where monthly_subscribers.original_purchase_date = '{{Month Filter}}'
+order by 1 asc, 3 asc

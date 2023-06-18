@@ -1,0 +1,33 @@
+/*
+    Name: FT iOS - Vanish Usage over Time
+    Query ID: 40188
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-09T11:22:52.814Z
+    */
+    select
+    date_part,
+    feature,
+    sub_feature_path,
+    count(distinct id_for_vendor) num_users_used,
+    count(distinct id_for_vendor)/ max(total_num_users_used)*100 as pct_total_users_used,
+    count(distinct event_id) num_uses,
+    count(distinct event_id)/ max(total_num_uses)*100 pct_total_uses
+from (
+    select
+        timestamp_trunc(meta_received_at, {{date_part}}) date_part,
+        feature,
+        sub_feature_path,
+        id_for_vendor,
+        event_id,
+        is_subscriber,
+        count(distinct id_for_vendor) over (partition by is_subscriber, timestamp_trunc(meta_received_at, {{date_part}})) total_num_users_used,
+        count(distinct event_id) over (partition by is_subscriber, timestamp_trunc(meta_received_at, {{date_part}})) total_num_uses
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_sub_feature_started` sfs
+    where true
+    and sfs.meta_received_at >= '2023-01-01'
+)
+where is_subscriber = {{is_subscriber}}
+and sub_feature_path = 'Vanish'
+group by 1,2,3
+having num_users_used >= 100
+order by 1,2,3

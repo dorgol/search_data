@@ -1,0 +1,42 @@
+/*
+    Name: [FT-1085] Live Photo as Video - Project Types
+    Query ID: 41136
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-19T06:55:26.173Z
+    */
+    with users as (
+    select
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = 'facetune2'
+    and display_type = 'reached home screen'
+    and experiment = '[FT-1085] Live Photo as Video'
+    and segmentation in ('02 New Users', '03 Existing Users')
+)
+
+select
+    segmentation || ' ' || variant as segment_variant,
+    'photo' as project_type,
+    count(distinct editing_session_id) as projects,
+    count(distinct editing_session_id)/count(distinct u.id_for_vendor) as projects_per_user,
+from users u
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` f
+    on u.id_for_vendor = f.id_for_vendor
+    and f.meta_received_at >= '2023-03-29'
+group by 1,2
+
+union all
+
+select
+    segmentation || ' ' || variant as segment_variant,
+    'video' as project_type,
+    count(distinct event_id) as projects,
+    count(distinct event_id)/count(distinct u.id_for_vendor) as projects_per_user,
+from users u
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_loaded` f
+    on u.id_for_vendor = f.id_for_vendor
+    and f.meta_received_at >= '2023-03-29'
+group by 1,2

@@ -1,0 +1,65 @@
+/*
+    Name: 20230124 - FT2 iOS - [FT-1062] Toolbar Categories V2 - Category uses - Grouped
+    Query ID: 40596
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-26T11:47:25.605Z
+    */
+    with users as (
+    select
+        segmentation,
+        application,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else country end as country,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_device,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and case
+        when '{{countries}}' = 'Global' then true
+        when '{{countries}}' = 'Rest of the world' then country not in ('US', 'CN')
+        else country = '{{countries}}' end
+    and  d.application = 'facetune2'
+    -- and variant = 'Variant 1'
+    and lower(d.experiment) like lower('[FT-1062]Toolbar Categories V2')
+    and display_type = 'displayed'
+)
+
+
+
+select  distinct
+    segmentation,
+    variant,
+    country,
+    `button_identifier`,
+    case 
+        when button_identifier like '%retouch%' then 1
+        when button_identifier like '%beauty%' then 2
+        when button_identifier like '%portrait%' then 3
+        when button_identifier like '%adjust%' then 4
+        when button_identifier like '%style%' then 5
+        when button_identifier like '%allTools%' then 6
+    end as index,
+    count(distinct event_id) over (partition by segmentation, variant, country, button_identifier ) as taps,
+   100* count(distinct event_id) over (partition by segmentation, variant, country, button_identifier ) / count(distinct event_id) over (partition by segmentation, variant, country) as pct_of_taps
+    
+from users u
+join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_button_pressed` bp
+    on u.id_for_vendor = bp.id_for_vendor
+    and meta_received_at >= '2023-01-24'
+    and bp.device_timestamp >= experiment_started_device
+where lower(bp.button_identifier) like lower('%main_toolbar%')
+--group by 1,2,3,4
+--where true
+qualify taps >1000
+order by 5 asc

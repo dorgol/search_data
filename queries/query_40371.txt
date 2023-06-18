@@ -1,0 +1,66 @@
+/*
+    Name: 20230117 - FT2 iOS - [FT-1060] Involuntary Churn Prevention - PN Sends (Global Event)
+    Query ID: 40371
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-16T08:18:52.458Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1060] Involuntary Churn Prevention')
+    and display_type = '{{display_type}}'
+    and variant = 'Variant 2'
+),
+
+first_installation_id_per_idfv as (
+  select distinct
+    u.id_for_vendor,
+    il.installation_id as first_installation_id
+  from users u
+  left join `ltx-dwh-prod-raw.analytics_global.ltx_global_app_device_info_log` il
+      on il.platform_device_id = u.id_for_vendor
+      and il.app_name = 'facetune2'
+  where true
+  qualify row_number() over (partition by u.id_for_vendor order by il.meta_received_at asc) = 1
+),
+
+campaign_users as (
+  select distinct
+    external_user_id,
+    canvas_variation_name
+  from `ltx-dwh-prod-raw.analytics.backend_braze_push_send`
+  where true 
+  and canvas_name = 'ft_ios_churn_billing-error_conv_both_180123_ft-product_expe_invoulantary_after_experiment'
+)
+
+select
+    segmentation,
+    case when variant = 'baseline' then 'Baseline' else variant end as variant,
+    count(distinct u.id_for_vendor) users_in_variant,
+    count(distinct cu.external_user_id) users_in_variant_with_braze_sends,
+    count(distinct cu.external_user_id)/count(distinct u.id_for_vendor)*100 pct_users_in_variant_with_braze_sends
+from users u
+left join first_installation_id_per_idfv fid
+    on u.id_for_vendor = fid.id_for_vendor
+left join campaign_users cu 
+    on cu.external_user_id = fid.first_installation_id
+where true
+group by 1,2
+order by 1,2

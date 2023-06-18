@@ -1,0 +1,91 @@
+/*
+    Name: VL iOS- Pick4Me experiment - project funnel - Felix
+    Query ID: 42430
+    Created By: Felix Ambrose
+    Last Updated At: 2023-06-02T15:38:59.161Z
+    */
+    with experiment_users as (
+    select distinct
+        variant,
+        id_for_vendor,
+        experiment_started_device,
+        experiment_started_meta
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and lower(experiment) like lower('Pick for Me (PROD)')
+        and variant = 'Variant 2'
+        and case when '{{segmentation}}' = 'All' then segmentation = "01 All Users"
+                 when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+)
+
+, pick_for_me_projects as (
+    select distinct
+        b2.platform_device_id,
+        b2.open_project_id
+    from experiment_users ex
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` b2
+        on ex.id_for_vendor = b2.platform_device_id
+        and b2.button_identifier in ("pick_for_me", "pick_for_me_again")
+        and ex.experiment_started_device < b2.device_timestamp
+        and b2.app_name = "videoleap"
+    --inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` as s1
+    --    on s1.app_name = "videoleap"
+    --    and s1.screen_name = "new_project_wizard"
+    --    and s1.editing_session_id = b2.editing_session_id
+    --inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` b3
+    --    on b2.editing_session_id = b3.editing_session_id
+    --    and b3.button_identifier in ("create_button")
+    --    and b3.app_name = "videoleap"
+)
+
+, other_projects as (
+    select distinct
+        s1.platform_device_id,
+        s1.open_project_id
+    from experiment_users ex
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` as s1
+        on  ex.experiment_started_device < s1.device_timestamp
+        and s1.app_name = "videoleap"
+        and s1.screen_name = "new_project_wizard"
+        and s1.platform_device_id = ex.id_for_vendor
+)
+
+, raw_export_pressed as (
+    select distinct
+        device_timestamp,
+        id_for_vendor,
+        open_project_id,
+        reason
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported`
+    where date(meta_received_at) >= "2023-03-19"
+        and reason like "%export button pressed"
+)
+
+
+, data as (
+    select
+        variant,
+        count(distinct b1.open_project_id) as pick_for_me_projects,
+        count(distinct b2.open_project_id) as other_projects,
+        count(distinct case when e1.reason like ("%export button pressed") then e1.open_project_id end) as pick_for_me_exports,
+        count(distinct case when e2.reason like ("%export button pressed") then e2.open_project_id end) as other_exports,
+    from experiment_users as ex
+    left join pick_for_me_projects as b1
+        on b1.platform_device_id = ex.id_for_vendor
+    left join other_projects as b2
+        on b2.platform_device_id = ex.id_for_vendor
+    left join raw_export_pressed as e1
+        on b1.platform_device_id = e1.id_for_vendor
+        and b1.open_project_id = e1.open_project_id
+    left join raw_export_pressed as e2
+        on b2.platform_device_id = e2.id_for_vendor
+        and b2.open_project_id = e2.open_project_id
+    group by 1
+)
+
+select 
+    *,
+    safe_divide(pick_for_me_exports , pick_for_me_projects)*100 as pick_for_me_export_rate,
+    safe_divide(other_exports , other_projects)*100 as other_export_rate
+from data

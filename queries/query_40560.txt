@@ -1,0 +1,185 @@
+/*
+    Name: [FT-1067] Beauty Feed - Entry point breakdown - last entrance - retention rate
+    Query ID: 40560
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-23T11:04:19.344Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(s.id_for_vendor is not null) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'activated_for_device'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and case 
+            when '{{segments}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+    --and variant like 'Variant%'
+    --and variant = 'Baseline'
+),
+
+last_foreground as (
+select
+    u.experiment,
+    u.variant,
+    '{{segments}}',
+    '{{subscriber}}',
+    u.first_day, 
+    u.id_for_vendor,
+    u.experiment_started_meta,
+    u.display_type,
+    date(f.meta_received_at) as dt,
+    max(f.meta_received_at) as last_foreground_time
+from users u
+join `ltx-dwh-prod-raw.analytics.ios_facetune2_app_foreground` f
+    on f.id_for_vendor = u.id_for_vendor
+    and date(meta_received_at) >= '2023-02-19'
+where true
+group by 1,2,3,4,5,6,7,8,9
+),
+
+retention as (
+select distinct
+    experiment,
+    variant,
+    '{{segments}}',
+    '{{subscriber}}',
+    coalesce(display_type, '') as display_type,
+    --coalesce(country, '') as country,
+    id_for_vendor,
+    experiment_started_meta,
+    date_diff(current_date (),date(experiment_started_meta),day) as device_calendar_day,
+    date(last_foreground_time) as foreground_day,
+from last_foreground
+),
+
+last_entrance as (
+   select
+        experiment,
+        variant,
+        '{{segments}}',
+        '{{subscriber}}',
+        id_for_vendor,
+        experiment_started_meta,
+        max(case when n.meta_received_at is not null then n.meta_received_at else '2000-01-01' end) as last_presets_in_navigation_ts,
+        max(case when q.meta_received_at is not null then q.meta_received_at else '2000-01-01' end) as last_presets_in_qs_ts,
+        max(case when w.meta_received_at is not null then w.meta_received_at else '2000-01-01' end) as last_presets_in_editor_ts,
+        max(case when d.meta_received_at is not null then d.meta_received_at else '2000-01-01' end) as last_presets_via_wn,
+    from users u
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` n  ---Clicked on Presets in Navigation
+        on true
+        and n.app_name = 'facetune2'
+        and n.platform_device_id = u.id_for_vendor
+        and cast(n.app_version_code as int64) >= {{since_version}}
+        and date(n.meta_received_at) >= '2023-02-19'
+        and n.meta_received_at > u.experiment_started_meta
+        and n.screen_name = 'home_screen'
+        and n.button_identifier = 'beautyFeed'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_dismissed` q ---Clicked on Presets in Beauty Quickstart
+        on true
+        and q.app_name = '{{app_name}}'
+        and q.platform_device_id = u.id_for_vendor
+        and cast(q.app_version_code as int64) >= {{since_version}}
+        and date(q.meta_received_at) >= '2023-02-19'
+        and q.meta_received_at > u.experiment_started_meta
+        and q.screen_name = 'beauty_quickstart'
+        and q.destination = 'beauty_feed'
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` w ---Started Presets Feature in Editor
+        on true
+        and w.app_name = 'facetune2'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and source not like 'beauty%'
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented` m
+        on true
+        and m.app_name = '{{app_name}}'
+        and m.platform_device_id = u.id_for_vendor
+        and cast(m.app_version_code as int64) >= {{since_version}}
+        and date(m.meta_received_at) >= '2023-02-19'
+        and m.meta_received_at > u.experiment_started_meta
+        and m.message_name = 'beautyFeedWhatsNew'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` d
+        on true
+        and d.app_name = '{{app_name}}'
+        and d.platform_device_id = m.platform_device_id
+        and cast(d.app_version_code as int64) >= {{since_version}}
+        and date(d.meta_received_at) >= '2023-02-19'
+        and d.meta_received_at > u.experiment_started_meta
+        and d.flow_id = m.flow_id
+        and d.reason = 'accepted'
+    group by 1,2,3,4,5,6
+)
+    
+
+select 
+    f.experiment,
+    f.variant,
+    '{{segments}}' as segment,
+    '{{subscriber}}' as subs,
+    case  when last_presets_in_qs_ts =  '2000-01-01' and last_presets_in_navigation_ts =  '2000-01-01' and last_presets_in_editor_ts = '2000-01-01' and last_presets_via_wn = '2000-01-01' then 'never'
+        when last_presets_in_navigation_ts <= last_presets_in_qs_ts and last_presets_in_navigation_ts <= last_presets_in_editor_ts and last_presets_in_navigation_ts <= last_presets_via_wn then 'navigation'
+        when last_presets_in_qs_ts <= last_presets_in_navigation_ts and last_presets_in_qs_ts <= last_presets_in_editor_ts and last_presets_in_qs_ts <= last_presets_via_wn then 'quickstart'
+        when last_presets_in_editor_ts <= last_presets_in_navigation_ts and last_presets_in_editor_ts <= last_presets_in_qs_ts and last_presets_in_editor_ts <= last_presets_via_wn then 'editor'
+        when last_presets_via_wn <= last_presets_in_editor_ts and last_presets_via_wn <= last_presets_in_navigation_ts and last_presets_via_wn <= last_presets_in_qs_ts then 'whats new'
+    end as last_entrance,
+    count (distinct case when device_calendar_day > 6  then r.id_for_vendor else null end ) as num_devices_calendar_day7,
+    count (distinct case when device_calendar_day > 13  then r.id_for_vendor else null end ) as num_devices_calendar_day14,
+    count (distinct case when device_calendar_day > 20  then r.id_for_vendor else null end ) as num_devices_calendar_day21,
+        count(distinct case when true
+                                and foreground_day >= date_add(date(r.experiment_started_meta), interval 1 day)
+                                and foreground_day < date_add(date(r.experiment_started_meta), interval 7 day)
+                                and device_calendar_day > 6
+           then r.id_for_vendor end) n_retained_week0,
+
+    count(distinct case when true
+                                and foreground_day >= date_add(date(r.experiment_started_meta), interval 7 day)
+                                and foreground_day < date_add(date(r.experiment_started_meta), interval 14 day)
+                                and device_calendar_day > 13
+           then r.id_for_vendor end) n_retained_week1,
+           
+    count(distinct case when true
+                                and foreground_day >= date_add(date(r.experiment_started_meta), interval 14 day)
+                                and foreground_day < date_add(date(r.experiment_started_meta), interval 21 day)
+                                and device_calendar_day > 20
+           then r.id_for_vendor end) n_retained_week2,
+from last_entrance f
+left join retention r
+    on f.experiment = r.experiment
+    and f.variant = r.variant
+    and f.id_for_vendor = r.id_for_vendor
+    and f.experiment_started_meta = r.experiment_started_meta
+group by 1,2,3,4,5
+

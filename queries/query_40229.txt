@@ -1,0 +1,124 @@
+/*
+    Name: SMBs Story - Subscription Tiers - Extreme Users - Remake Export Groups (all users)
+    Query ID: 40229
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-10T14:45:10.583Z
+    */
+    with users_1 as (
+  select distinct
+    d.platform_device_id,
+    d.first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+    and date(d.dt) >= '{{start date}}'
+)
+
+
+, users as (
+    select  
+         u.platform_device_id,
+         u.first_active_dt,
+         case when origin_page_response like '%business%' then 'I promote a business'
+             else 'other users' end as response,
+    from users_1 u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+, first_remake_export as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        min(date(ex.meta_received_at)) as first_remake_export_dt
+        
+    from users u 
+    
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as ts
+        on u.platform_device_id = ts.id_for_vendor
+        
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ex.open_project_id = ts.open_project_id
+
+    where date(ex.meta_received_at) >= date('{{start date}}')
+    --and response = 'I promote a business'
+    group by 1,2
+    
+    )
+
+, remake_exports as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        first_remake_export_dt,
+        ex.export_id,
+        --date_diff(date_trunc(current_date(), week), date_trunc(first_remake_export_dt, week), week) as weeks_from_first_remake_export
+        
+    from first_remake_export u 
+    
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as ts
+        on u.platform_device_id = ts.id_for_vendor
+        
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ex.open_project_id = ts.open_project_id
+
+    where date(ex.meta_received_at) >= date('{{start date}}')
+    )
+
+, remake_exports_final as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        first_remake_export_dt,
+        count(distinct u.export_id) as remake_exports,
+        date_diff(date_trunc(current_date(), week), date_trunc(first_remake_export_dt, week), week) as weeks_from_first_remake_export
+        
+    from remake_exports u
+    group by 1,2,3
+    )
+
+
+
+, final as (
+    select
+        response,
+        platform_device_id,
+        remake_exports as remake_exports,
+        cast(weeks_from_first_remake_export as NUMERIC) as weeks_from_first_remake_export,
+    from remake_exports_final
+    )
+
+-------------------------------------
+-------------------------------------
+
+, output as (
+    select 
+        response,
+        platform_device_id,
+        remake_exports,
+        weeks_from_first_remake_export,
+        case when safe_divide(remake_exports , weeks_from_first_remake_export) > 20 then 21 else safe_divide(remake_exports , weeks_from_first_remake_export) end  as remake_exports_per_week
+    from final
+    )
+    
+    select
+        response,
+        count(distinct platform_device_id) as total_remake_export_users,
+        count(distinct case when remake_exports_per_week >= 15 then platform_device_id end) as fifteen_weekly_export_users,
+        count(distinct case when remake_exports_per_week >= 5 then platform_device_id end) as five_weekly_export_users,
+        count(distinct case when remake_exports_per_week >= 3 then platform_device_id end) as three_weekly_export_users,
+        count(distinct case when remake_exports_per_week >= 2 then platform_device_id end) as two_weekly_export_users
+        
+    from output
+    group by 1
+
+

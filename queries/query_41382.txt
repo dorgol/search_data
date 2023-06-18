@@ -1,0 +1,38 @@
+/*
+    Name: Screen Recording Block - VL iOS (Projections)
+    Query ID: 41382
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-28T11:03:29.081Z
+    */
+    -- 
+
+declare blocked_rate default 0.1041;
+declare conversion_rate_of_blocked default 0.1106;
+declare paid_conversion_rate_of_blocked default 0.023;
+
+
+select
+    date_trunc(meta_received_at, month) as event_timestamp,
+    is_subscriber,
+    count(distinct case when date_trunc(meta_received_at, month) = min_day then id_for_vendor end) as first_attempt,
+    count(distinct case when date_trunc(meta_received_at, month) <> min_day then id_for_vendor end) as attempt,
+    count(distinct id_for_vendor)  as count_captures,
+    -- count(distinct id_for_vendor)*blocked_rate as projected_blocked_users,
+    count(distinct id_for_vendor)*conversion_rate_of_blocked as projected_converted_users,
+    count(distinct id_for_vendor)*paid_conversion_rate_of_blocked as projected_paid_converted_users
+from
+    `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_screen_capture_and_play`
+left join ( select  
+                id_for_vendor,
+                min(date_trunc(meta_received_at, month)) as min_day
+            from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_screen_capture_and_play`
+            where is_subscriber = False
+            group by 1) md using(id_for_vendor) 
+
+where 
+    meta_received_at > '2023-01-01'
+    and is_subscriber = False
+group by 1,2
+order by 1,2 asc
+
+

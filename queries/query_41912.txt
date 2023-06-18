@@ -1,0 +1,49 @@
+/*
+    Name: VL - Effect Performance Over Time
+    Query ID: 41912
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-15T16:06:26.244Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        template_id,
+        parent_template_id,
+        root_template_id,
+        split(requirements_flat, ".")[offset(0)] as effect_name,
+        requirements_flat as effect_full,
+        app_name,
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`,
+        unnest(requirements) as requirements_flat
+    where app_name = "videoleap"
+        --and requirements_flat like '%aiTransform%'
+)
+
+, stats as (
+    select
+        p.post_id,
+        dt,
+        case when effect_name in ("fishEye", "shake", "offset", "rays", "defocus", "crystal", "prism", "lensFlare", "colorfy", "vignette", "kaleidoscope","kaleidoscopeGrid", "filmGrain", "strobe" ) then effect_name
+        when effect_name in ("crt", "pixelate", "pulsar") then "glitch" else 'other' end as effect,
+        distinct_total_impressions,
+        total_clicks,
+        distinct_export_started_feed,
+        distinct_export_rate_feed
+    from posts p
+    inner join `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily` rd
+        on rd.post_id = p.post_id
+        and dt >= '2023-03-01' and dt != current_date()
+        and effect_name in ("crt", "pixelate", "pulsar","fishEye", "shake", "offset", "rays", "defocus", "crystal", "prism", "lensFlare", "colorfy", "vignette", "kaleidoscope","kaleidoscopeGrid", "filmGrain", "strobe")
+        )
+
+
+select
+    effect as effect_name,
+    dt,
+    sum(distinct_total_impressions) as impressions,
+    sum(total_clicks) as clicks,
+    sum(distinct_export_started_feed) as exports,
+    safe_divide(sum(distinct_export_started_feed),sum(distinct_total_impressions))*100 as export_rate,
+from stats
+group by 1,2
+having impressions > 1000

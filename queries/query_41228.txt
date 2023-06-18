@@ -1,0 +1,107 @@
+/*
+    Name: Felix - ARPS (Onboarding)
+    Query ID: 41228
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-27T08:05:34.056Z
+    */
+    --ARPU is average revenue of all users, not just those who subscribed. So for any given cohort month:
+--ARPU Day0: average revenue of all users in the cohort, after day0 (only revenues from day0)
+--ARPU Day30: average revenue of all users in the cohort, after day30 (only revenues from day0-30)
+
+--Method
+-- Pull all users and first launch month (cohort)
+
+-- Pull all transactions with transaction id, date, defacto id, actual proceeds
+
+-- 1) Join tables so transaction id,defacto id, date,first_launch_date,first launch month, actual proceeds
+-- 2) Calculate delta between date and first launch and bin for 0, 30, 120,366
+
+-- first_launch month, delta, sum_proceeds
+
+declare start_date date default '2022-01-01';
+
+with users_install as (
+
+    select distinct
+        lt_defacto_id,
+        date(date_trunc(first_launch, day)) as first_launch_date,
+        date(date_trunc(first_launch, month)) as first_launch_month,
+        --date(date_trunc(first_launch, day)) as first_launch_date
+    from `ltx-dwh-prod-processed`.`agg`.`app_device`    
+    where date(first_launch) > start_date
+        and vertical = 'Videoleap'
+
+),
+
+transactions as (
+
+    select 
+        --lt_transaction_id,
+        device.lt_defacto_id,
+        original_purchase_date,
+        sum(payments.actual_proceeds) as actual_proceeds
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions`
+    where date(purchase_date) >= start_date
+        --and payments.actual_proceeds > 0
+        and vertical = 'Videoleap'
+    group by 1,2    
+    
+
+),
+
+monthly_cohort as (
+
+    select 
+        date(date_trunc(original_purchase_date, month)) as  subscription_month,
+        count(distinct lt_defacto_id) as count_users
+    from 
+        transactions
+    group by 1    
+
+),
+
+
+
+transaction_delta as (
+
+    select 
+        --users_install.lt_defacto_id, 
+        users_install.first_launch_month, 
+        count_users,
+        case
+        when date_diff(date(original_purchase_date), first_launch_date, day) = 0 then 0
+        when date_diff(date(original_purchase_date), first_launch_date, day) <= 30 then 30
+        when date_diff(date(original_purchase_date), first_launch_date, day) <= 120 then 120
+        when date_diff(date(original_purchase_date), first_launch_date, day) <= 366 then 366
+        else 367 end as transaction_lag,
+        sum(actual_proceeds) as actual_proceeds
+        
+        from users_install
+        left join monthly_cohort
+            on first_launch_month = subscription_month
+        inner join transactions
+            using (lt_defacto_id)
+            
+            
+        group by 1,2,3
+        order by 1 asc, 3 asc
+            
+
+)
+
+select 
+    first_launch_month,
+    count_users,
+    transaction_lag,
+    sum(actual_proceeds) over(
+    partition by first_launch_month
+    order by transaction_lag asc
+    ) as cumulative_revenue,
+    sum(actual_proceeds) over(partition by first_launch_month order by transaction_lag asc)/count_users as rev_per_user
+    
+from transaction_delta
+where transaction_lag < 367
+
+order by 1 asc, 3 asc
+
+

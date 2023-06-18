@@ -1,0 +1,28 @@
+/*
+    Name: feed_unnested monitoring
+    Query ID: 42334
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-06-05T07:21:14.420Z
+    */
+    select
+    *
+from (
+    select
+        case when platform = "android" then application || "_" || platform
+            else application end as application,
+        dt,
+        count(1) as num_rows,
+        count(distinct unique_key) as num_unique_rows,
+        count(distinct lt_id) as num_lt_id,
+        countif(lt_id is null) / count(distinct unique_key) * 100 as pct_rows_with_null_lt_id,
+        count(distinct post_id) as num_post_id,
+        count(distinct session_id) as num_session_id,
+        count(distinct feed_id) as num_feed_is,
+        avg(totalVisibleTime) as avg_total_visible_time,
+    from `ltx-dwh-{{env}}-processed`.`app`.`feed_unnested_items_info`
+    where dt >= date('{{start time}}')
+    group by 1,2
+)
+where true
+    and case when '{{application}}' like "%all%" then true else application in ({{application}}) end
+    

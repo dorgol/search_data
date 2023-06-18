@@ -1,0 +1,39 @@
+/*
+    Name: Videoleap: Post Trial Return Rates
+    Query ID: 42169
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-23T14:38:22.726Z
+    */
+    with subs as (
+  select
+    last_platform_user_id,
+    original_purchase_date,
+    original_transaction_id,
+    revenue_so_far > 0 as paid,
+    row_number() over (partition by last_platform_user_id order by original_purchase_date asc) as tn
+  from `ltx-dwh-prod-processed.agg.subscriptions`
+  where app_name = 'videoleap'
+  and had_trial
+  qualify tn = 1
+)
+
+select distinct 
+  date(period) as period,
+  last_active_day,
+  count(last_platform_user_id) over (partition by period order by last_active_day desc) as cum_users_returned_after,
+  100*count(last_platform_user_id) over (partition by period order by last_active_day desc)/count(last_platform_user_id) over (partition by period) as pct_of_users_returned_after,
+from (
+  select
+    timestamp_trunc(s.original_purchase_date, month) as period,
+    s.last_platform_user_id,
+    max(date_diff(dt, date(original_purchase_date), day)) as last_active_day
+  from subs s
+  left join `ltx-dwh-prod-processed.agg.app_device_date` d
+    on d.app_name = 'videoleap'
+    and s.last_platform_user_id = d.last_platform_user_id
+    and d.dt >= date(s.original_purchase_date)
+    and d.dt > date_sub(current_date(), interval 180 day)
+  where date(s.original_purchase_date) >= date_sub(current_date(), interval 180 day)
+  and not paid
+  group by 1,2
+)

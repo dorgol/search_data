@@ -1,0 +1,35 @@
+/*
+    Name: FT iOS - Missing Video Events (?)
+    Query ID: 40004
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-02T11:46:43.914Z
+    */
+    select
+    timestamp_trunc(vl.meta_received_at,{{time_part}}) as import_time,
+    count(distinct vl.event_id) num_events,
+    count(distinct vl.ftv_editing_session_id) num_esid,
+    'editing session started' as event_type
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_ftv_editing_session_started` vl
+group by 1
+
+union all 
+
+select
+    timestamp_trunc(vl.meta_received_at,{{time_part}}) as import_time,
+    count(distinct vl.event_id) num_events,
+    null as num_esid,
+    'loaded' as event_type
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_loaded` vl
+group by 1
+
+union all 
+
+select
+    timestamp_trunc(vl.meta_received_at,{{time_part}}) as import_time,
+    count(distinct vl.event_id) num_events,
+    count(distinct vl.ftv_editing_session_id) num_esid,
+    'export' as event_type
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported` vl
+group by 1
+
+order by 1

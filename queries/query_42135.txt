@@ -1,0 +1,21 @@
+/*
+    Name: VL iOS - Project Loaded
+    Query ID: 42135
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-23T07:38:35.071Z
+    */
+    with project_loads as (
+select
+    date(meta_received_at) as dt,
+    project_id,
+    count(distinct _event_id) as loads
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_project_loaded`
+group by 1,2
+)
+
+select
+    date_trunc(dt, {{period}}) as dt,
+    case when loads > 1 then 'loaded' else 'new' end as type,
+    count(distinct project_id) as projects
+from project_loads
+group by 1,2

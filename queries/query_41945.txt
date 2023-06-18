@@ -1,0 +1,44 @@
+/*
+    Name: VL iOS - Conversion Monitoring - ARPS
+    Query ID: 41945
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-16T18:53:37.318Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(f.attribution_timestamp), {{period}}) as cohort_period,
+        date(f.attribution_timestamp) cohort_time,
+        f.attribution_user_id as user_id,
+        f.attribution_user_group_number,
+        s.lt_subscription_id is not null as is_subscriber,
+        s.lt_transaction_id,
+        projected.adjusted_actual_proceeds_alloc_cs,
+        s.purchase_date,
+        floor(timestamp_diff(s.purchase_date,f.attribution_timestamp,hour)/24) as time_to_sub,
+    from `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_subs` f
+    inner join `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation_cross_sell` s
+        on f.lt_subscription_id = s.lt_subscription_id
+        and date(s.original_purchase_date) >= date(f.attribution_timestamp)
+        and s.application in ('videoleap')
+        and s.projected.adjusted_actual_proceeds_alloc_cs > 0
+    where date_trunc(date(f.attribution_timestamp), {{period}}) >= '2022-10-01'
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(f.attribution_timestamp), {{period}})
+    and f.application in ('videoleap')
+)
+
+select
+    cohort_period,
+    count(distinct user_id) as cohort_users,
+    sum(case when time_to_sub = 0 then adjusted_actual_proceeds_alloc_cs end) as day0subs,
+    sum(case when time_to_sub <= 7 then adjusted_actual_proceeds_alloc_cs end) as day7subs,
+    sum(case when time_to_sub <= 30 then adjusted_actual_proceeds_alloc_cs end) as day30subs,
+    count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 7 then user_id end) day0users,
+    count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 17 then user_id end) day7users,
+    count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 37 then user_id end) day30users,
+    sum(case when time_to_sub = 0 then adjusted_actual_proceeds_alloc_cs end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day)> 7 then user_id end),0) as day0arpu,
+    sum(case when time_to_sub <= 7 then adjusted_actual_proceeds_alloc_cs end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 14 then user_id end),0) as day7arpu,
+    sum(case when time_to_sub <= 30 then adjusted_actual_proceeds_alloc_cs end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 37 then user_id end),0) as day30arpu,
+from users
+group by 1
+having day0arpu > 0
+order by 1 desc

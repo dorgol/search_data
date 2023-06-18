@@ -1,0 +1,27 @@
+/*
+    Name: Facetune: AI Selfie Generation Time
+    Query ID: 42250
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-27T18:58:26.308Z
+    */
+    with details as (
+    select
+        process_name,
+        TRIM(SPLIT(kv, ':')[OFFSET(0)], '" ') AS key,
+        TRIM(SPLIT(kv, ':')[OFFSET(1)], '" ') AS value,
+        process_id,
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_process_ended`
+    , UNNEST(SPLIT(REGEXP_REPLACE(process_details, r'[{}\s]', ''))) AS kv
+    where app_name = 'facetune2'
+    and meta_received_at >= '2023-05-20'
+    and process_name = 'ai_selfies_cloud_processing'
+    group by 1,2,3,4
+    having key = 'duration'
+)
+
+select distinct
+    process_name,
+    cast(round(cast(value as float64),0) as int64) AS duration,
+    count(process_id) over (partition by cast(round(cast(value as float64),0) as int64)) as runs,
+    100*count(process_id) over (order by cast(round(cast(value as float64),0) as int64) desc)/count(process_id) over () as pct_of_runs
+from details

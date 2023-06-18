@@ -1,0 +1,82 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1074] PN Provisional Access V2 - High Level Funnel - Flattened
+    Query ID: 41582
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-03T12:19:50.342Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%[FT-1074] PN Provisional Access V2%')
+    and display_type = '{{display_type}}'
+),
+
+exporters as (
+    select distinct
+        u.id_for_vendor
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_exported` ie
+        on ie.id_for_vendor = u.id_for_vendor
+        and ie.meta_received_at >= '2023-03-15'
+        and ie.meta_received_at >= experiment_started_meta
+)
+
+select
+    segmentation,
+    variant,
+    count(distinct u.id_for_vendor) num_users,
+    count(distinct case when se.id_for_vendor is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_saw_sol,
+    count(distinct case when s.id_for_vendor is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_finished_intro,
+    -- count(distinct case when lp.id_for_vendor is not null or lpg.platform_device_id is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_saw_login,
+    count(distinct case when il.id_for_vendor is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_imported_image,
+    count(distinct case when fs.id_for_vendor is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_started_feature,
+    count(distinct case when ie.id_for_vendor is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_exported,
+from users u
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_store_entered` se
+    on se.id_for_vendor = u.id_for_vendor
+    and se.meta_received_at >= '2023-03-15'
+    and se.meta_received_at >= experiment_started_meta
+    and se.source in ('firstTimeIninitialFlow')
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_intro_session_ended` s
+    on s.id_for_vendor = u.id_for_vendor
+    and s.meta_received_at >= '2023-03-15'
+    and s.meta_received_at >= experiment_started_meta
+-- left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_login_screen_presented` lpg
+--     on lpg.app_name = 'facetune2' 
+--     and lpg.platform_device_id = u.id_for_vendor
+--     and lpg.meta_received_at >= '2023-03-15'
+--     and lpg.meta_received_at >= experiment_started_meta
+-- left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_login_screen_started` lp
+--     on lp.id_for_vendor = u.id_for_vendor
+--     and lp.meta_received_at >= '2023-03-15'
+--     and lp.meta_received_at >= experiment_started_meta
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_loaded` il
+    on il.id_for_vendor = u.id_for_vendor
+    and il.meta_received_at >= '2023-03-15'
+    and il.meta_received_at >= experiment_started_meta
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_started` fs
+    on fs.id_for_vendor = u.id_for_vendor
+    and fs.meta_received_at >= '2023-03-15'
+    and fs.meta_received_at >= experiment_started_meta
+left join exporters ie
+    on ie.id_for_vendor = u.id_for_vendor
+group by 1,2
+order by 1,2

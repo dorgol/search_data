@@ -1,0 +1,70 @@
+/*
+    Name: Felix Onboarding - Monthly Usage Retention - (Correction)
+    Query ID: 41325
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-24T16:04:47.346Z
+    */
+    -- month0_users: Pull users with first launch on day 0 (day 0 can be between the start and end dates)
+-- monthn_users: Pull users for each day (n) that they return and the corresponding start date
+-- month0_total_users: Total Count of users for each start date (first launch date) 
+
+-- Table
+
+
+-- Pull users with first launch on day 0 (day 0 can be between the start date and today)
+with-- Pull users for each day (n) that they return and the corresponding start date
+monthn_users as (
+
+    select distinct 
+        add.lt_defacto_id,
+        date_trunc(first_active_dt, month) first_active_month,
+        date_diff(date(add.dt), date(date_trunc(first_active_dt, month)), month) as month_n 
+    from 
+        `ltx-dwh-prod-processed.agg.app_device_date` add
+    where dt > '{{Start Date}}' 
+        --and date_diff(date(add.dt), date(day0_users.first_active_dt), month) < 30
+        and cntd_foregrounds > 0
+        and app_name = 'videoleap'
+
+),
+
+month0_users as (
+
+    select distinct 
+        lt_defacto_id,
+        first_active_month
+    from 
+        monthn_users
+),
+
+
+-- Total Count of users for each start date (first launch date) (Denominator in the retention percentage calculation)
+month0_total_users as (
+
+    select distinct 
+        date_trunc(first_active_dt, month) as first_active_month,
+        count(distinct lt_defacto_id) as count_users,
+        
+    from 
+        `ltx-dwh-prod-processed.agg.app_device_date`
+    where first_active_dt > '{{Start Date}}'
+        and vertical = 'Videoleap'
+        and cntd_foregrounds > 0
+    group by 1
+)
+
+
+select distinct
+    cast (monthn_users.first_active_month as date) as first_active_month,
+    month_n,
+    month0_total_users.count_users as count_users_month_0,
+    count(distinct lt_defacto_id) as count_users_month_n,
+    (count(distinct lt_defacto_id)/month0_total_users.count_users)*100 as monthly_retention
+    
+from monthn_users    
+inner join
+    month0_total_users on month0_total_users.first_active_month = monthn_users.first_active_month
+where month_n > 0
+
+group by 1,2,3
+order by 1,2 asc

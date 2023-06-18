@@ -1,0 +1,28 @@
+/*
+    Name: Screen Recording Block - VL iOS (Projections) - 2
+    Query ID: 41437
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-28T11:03:17.795Z
+    */
+    -- 
+
+declare blocked_rate default 0.1041;
+declare conversion_rate_of_blocked default 0.1879;
+
+
+select
+    date_trunc(meta_received_at, month) as event_timestamp,
+    is_subscriber,
+    count(distinct id_for_vendor)  as count_captures,
+    -- count(distinct id_for_vendor)*blocked_rate as projected_blocked_users,
+    count(distinct id_for_vendor)*conversion_rate_of_blocked as projected_converted_users,
+from
+    `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_screen_capture_and_play`
+
+where 
+    meta_received_at > '2023-04-01'
+    and is_subscriber = False
+group by 1,2
+order by 1,2 asc
+
+

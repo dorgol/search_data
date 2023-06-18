@@ -1,0 +1,15 @@
+/*
+    Name: Facetune Android: Questionnaire Responses
+    Query ID: 42195
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-24T13:26:38.641Z
+    */
+    select distinct
+    current_page_index,
+    current_page_question,
+    current_page_response,
+    count(distinct installation_id) over (partition by current_page_question, current_page_response) as users,
+    100*count(distinct installation_id) over (partition by current_page_question, current_page_response)/count(distinct installation_id) over (partition by current_page_question) as pct_of_users,
+from `ltx-dwh-prod-raw.analytics.android_facetune2_intro_questionnaire_transition`
+where meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+order by 1,5 desc

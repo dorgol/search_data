@@ -1,0 +1,18 @@
+/*
+    Name: VL Active Users Over Time
+    Query ID: 41379
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-26T13:00:21.506Z
+    */
+    select 
+        date_trunc(dt, {{date granularity}}) as first_launch_month,
+        count(distinct lt_defacto_id) as users,
+        count(distinct case when date_trunc(date(first_launch), {{date granularity}}) = date_trunc(date(dt), {{date granularity}}) 
+                        then lt_defacto_id end) as new_users,
+        count(distinct case when date_trunc(date(first_launch), {{date granularity}}) < date_trunc(date(dt), {{date granularity}}) 
+                        then lt_defacto_id end) as existing_users
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where date_trunc(dt, {{date granularity}}) >= '2022-01-01'
+        and lower(app_name) in ('videoleap')
+        and date_trunc(dt, {{date granularity}}) < date_trunc(current_date(), {{date granularity}})
+    group by 1

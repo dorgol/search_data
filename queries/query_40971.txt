@@ -1,0 +1,55 @@
+/*
+    Name: (Joe) VL Android: Day0 CVR & pCVR
+    Query ID: 40971
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-11T06:46:44.163Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(min(first_session_id_ts) over (partition by case when f.last_lt_id = 'unknown' then cast(f.lt_defacto_id as string) else f.last_lt_id end)), {{period}}) as cohort_period,
+        case when f.last_lt_id = 'unknown' then cast(f.lt_defacto_id as string) else f.last_lt_id end as user_id,
+        min(first_session_id_ts) over (partition by case when f.last_lt_id = 'unknown' then cast(f.lt_defacto_id as string) else f.last_lt_id end) as first_session,
+        lt_defacto_id,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` f
+    where true
+    and f.app_name = 'videoleap_android'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        when '{{countries}}' = 'Pricing countries' then f.current_store_country in ('AU','CA', 'GB')
+        else f.current_store_country in ('{{countries}}') end
+    qualify date_trunc(date(first_session), {{period}}) >= date_sub(current_date(), interval 30 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(first_session), {{period}})
+
+)
+
+, subs as (
+    select
+        f.cohort_period,
+        f.user_id,
+        case when s.lt_subscription_id is not null then true else false end as is_subscriber,
+        case when s.revenue_so_far >0 then true else false end as is_paid
+    from users f
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`subscription_to_defacto` d
+        on f.lt_defacto_id = d.lt_defacto_id
+        and d.application = 'videoleap_android'
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_state` s
+        on d.lt_subscription_id = s.lt_subscription_id
+        and date(s.original_purchase_date) >= date(f.first_session)
+        and s.application = 'videoleap_android'
+        and floor(date_diff(date(s.original_purchase_date),date(first_session),day)) = 0
+        --and s.revenue_so_far > 0
+)
+
+
+select
+    cohort_period,
+    count(distinct user_id) as cohort_users,
+    count(distinct case when is_subscriber is true then user_id end) as day0subs,
+    count(distinct case when is_subscriber is true and is_paid is true then user_id end) as day0paidsubs,
+    100*count(distinct case when is_subscriber is true then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 7 then user_id end),0) as day0cvr,
+    100*count(distinct case when is_subscriber is true and is_paid is true then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}),day) >= 7 then user_id end),0) as day0pcvr
+from subs
+group by 1
+--having day0pcvr > 0
+order by 1

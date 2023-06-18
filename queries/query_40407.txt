@@ -1,0 +1,73 @@
+/*
+    Name: PL ARPU Monetization Experiment Arpu without SOL split
+    Query ID: 40407
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-17T18:32:30.975Z
+    */
+    with base as
+(select *
+from `ltx-dwh-prod-processed.ab_test.raw_final_subs_and_variant`
+where application='editor'
+and experiment='SubScreenMonetizationDec22'
+and segmentation='02 New Users'
+and display_type='activated_for_device'
+and original_purchase_date>experiment_started_meta
+and (variant='Baseline' or subscription_duration='1w')
+and revenue_so_far>0
+)
+
+select *,
+safe_divide(day0_rev,day0_sub)  as day0_arpu,
+safe_divide(day7_rev,day7_sub) as day7_arpu,
+safe_divide(day14_rev,day14_sub) as day14_arpu,
+safe_divide(day30_rev,day30_sub) as day30_arpu,
+safe_divide(day60_rev,day60_sub) as day60_arpu,
+safe_divide(day80_rev,day80_sub) as day80_arpu
+from
+(
+select
+--sol_sub,
+subscription_duration,
+sum(day0_rev) as day0_rev,
+count(distinct day0_sub) as day0_sub,
+sum(day7_rev) as day7_rev,
+count(distinct day7_sub) as day7_sub,
+sum(day14_rev) as day14_rev,
+count(distinct day14_sub) as day14_sub,
+sum(day30_rev) as day30_rev,
+count(distinct day30_sub) as day30_sub,
+sum(day60_rev) as day60_rev,
+count(distinct day60_sub) as day60_sub,
+sum(day80_rev) as day80_rev,
+count(distinct day80_sub) as day80_sub
+from
+(
+select
+*,
+case when timestamp_diff(t.purchase_date,base.original_purchase_date,day)<=0  and purchase_date>= experiment_started_meta and timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=0 then t.payments.actual_proceeds else null end as day0_rev,
+case when timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=0 then base.lt_subscription_id end as day0_sub,
+case when timestamp_diff(t.purchase_date,base.original_purchase_date,day)<=7  and purchase_date>= experiment_started_meta and timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=7 then t.payments.actual_proceeds else null end as day7_rev,
+case when timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=7 then base.lt_subscription_id end as day7_sub,
+case when timestamp_diff(t.purchase_date,base.original_purchase_date,day)<=14  and purchase_date>= experiment_started_meta and timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=14 then t.payments.actual_proceeds else null end as day14_rev,
+case when timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=14 then base.lt_subscription_id end as day14_sub,
+case when timestamp_diff(t.purchase_date,base.original_purchase_date,day)<=30  and purchase_date>= experiment_started_meta and timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=30 then t.payments.actual_proceeds else null end as day30_rev,
+case when timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=30 then base.lt_subscription_id end as day30_sub,
+case when timestamp_diff(t.purchase_date,base.original_purchase_date,day)<=60  and purchase_date>= experiment_started_meta and timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=60 then t.payments.actual_proceeds else null end as day60_rev,
+case when timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=60 then base.lt_subscription_id end as day60_sub,
+case when timestamp_diff(t.purchase_date,base.original_purchase_date,day)<=80  and purchase_date>= experiment_started_meta and timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=80 then t.payments.actual_proceeds else null end as day80_rev,
+case when timestamp_diff(current_timestamp(),base.original_purchase_date,day)>=80 then base.lt_subscription_id end as day80_sub,
+timestamp_diff(t.purchase_date,base.original_purchase_date,day),
+t.purchase_date,
+base.original_purchase_date,
+t.payments.actual_proceeds ,
+t.lt_subscription_id
+from base
+left join `ltx-dwh-prod-processed.subscriptions.unified_transactions` as t
+on base.lt_subscription_id=t.lt_subscription_id
+ and t.payments.purchase_platform <> 'web'
+        and t.purchase_date <= current_timestamp ()
+        order by t.lt_subscription_id
+
+)
+group by 1
+)

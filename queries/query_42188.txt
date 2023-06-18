@@ -1,0 +1,28 @@
+/*
+    Name: VL - iOS Churn - Felix
+    Query ID: 42188
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-25T09:15:49.675Z
+    */
+    -- Counts distinct users per day 
+
+declare start_date date default '2022-08-01';
+
+select 
+    dt,
+    sum(active_subs) as active_subs,
+    sum(churn_subs) as churn_subs,
+    sum(churn_paid_subs) as churn_paid_subs,
+    100*sum(churn_subs)/sum(active_subs)  as churned_pct,
+    100*sum(churn_paid_subs)/sum(active_subs) as churned_paid_pct,
+    
+from 
+    `ltx-dwh-prod-processed`.`agg`.`subs_metrics_by_date`
+
+    where  
+    app_name = 'videoleap' 
+    and dt > '2022-01-01'
+    and platform = 'ios'
+    and time_granularity = 'month'
+group by 1  
+

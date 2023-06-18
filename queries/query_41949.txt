@@ -1,0 +1,26 @@
+/*
+    Name: Global Events - Permissions flow - Integration
+    Query ID: 41949
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-17T07:05:54.659Z
+    */
+    SELECT distinct
+  st.app_name,
+  st.meta_received_at,
+  st.permission,
+  st.event_id,
+  st.presentation_id,
+  json_extract(sub_permissions, "$.authorization_status") as status,
+  json_extract(sub_permissions, "$.sub_permission") as sub_permission,
+  st.permission_status,
+  st.sub_permission_status,
+  vp.permission,
+  vp.presentation_id,
+  vp.source,
+FROM `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_permissions_status_changed` as st
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_permissions_view_presented` as vp
+  using(presentation_id)
+,unnest(ifnull(json_extract_array(sub_permission_status), [""])) as sub_permissions
+WHERE DATE(st._PARTITIONTIME) = "2023-05-16" 
+and st.app_name = '{{app_name}}'
+order by 2 desc

@@ -1,0 +1,55 @@
+/*
+    Name: VL Data Glossary - Export Retention
+    Query ID: 41547
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-03T12:55:51.865Z
+    */
+    declare d1 default 0;
+declare d2 default 7;
+declare d3 default 30;
+
+with exports as (
+    select 
+        lt_defacto_id,
+        date_trunc(date(first_active_dt), month) as first_launch_month, -- first_active_dt?
+        date(first_active_dt) as first_launch,
+        date(dt) as dt,
+        date_diff(date(dt), date(first_active_dt), day) as date_diff
+        
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where date(first_launch) >= date_sub(current_date(), interval 365 day)
+        and cntd_exports > 0
+        and app_name = 'videoleap'
+    
+),
+
+monthly_usage as (
+    select 
+        date_trunc(date(first_launch), month) as first_launch_month,
+        count(distinct lt_defacto_id) as total_users
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where date(first_launch) >= date_sub(current_date(), interval 365 day)
+        and app_name = 'videoleap'
+    group by 1    
+),
+
+date_diff as (
+    select 
+        first_launch_month,
+        lt_defacto_id,
+        min(date_diff) as min_dd
+    from exports
+    group by 1,2
+)
+
+select distinct 
+    first_launch_month,
+    count(distinct case when date_diff <= d1 then lt_defacto_id end),
+    count(distinct case when date_diff between d1 and d2 then lt_defacto_id end)/total_users as day7_export,
+    count(distinct case when date_diff <= d3 then lt_defacto_id end)/total_users as day30_export
+from date_diff
+left join monthly_usage using (first_launch_month)
+group by 1
+order by 1 asc
+
+

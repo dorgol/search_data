@@ -1,0 +1,73 @@
+/*
+    Name: 20230528 - FT2 iOS - [FT-1101] AI Selfies - Presets Usage and Acceptance
+    Query ID: 42409
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-05T09:47:48.285Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%[FT-1101]AI Selfies Exp%')
+    and display_type = 'entered_photo_editor'
+    and variant != 'Baseline'
+),
+feature_users as (
+    select distinct
+        segmentation,
+        variant,
+        feature_name,
+        feature_usage_id,
+        count(distinct fs.feature_usage_id) over (partition by segmentation, variant) total_sessions_used_in
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2023-05-20'
+        and fs.meta_received_at >= experiment_started_meta
+        and fs.platform_device_id = u.id_for_vendor
+        and fs.feature_name = 'aiSelfies'
+)
+
+select
+    segmentation,
+    variant,
+    fs.feature_name,
+    case when sub_feature_name is null then "not_used" else sub_feature_name end sub_feature_name,
+    max(toolbar_item_index) toolbar_item_index,
+    max(total_sessions_used_in) num_feature_sessions,
+    count(distinct fs.feature_usage_id) num_sessions_used_in,
+    count(distinct sfs.event_id) num_times_used,
+    count(distinct fs.feature_usage_id)/max(total_sessions_used_in)*100 pct_sessions_used_in,
+    count(distinct sfs.event_id)/max(total_sessions_used_in)*100 as pct_times_used,
+    count(distinct case when regexp_replace(json_extract(sub_feature_state, '$.inputModels[0].item'),'"','') = sub_feature_name then fs.feature_usage_id end) num_accepts,
+    count(distinct case when regexp_replace(json_extract(sub_feature_state, '$.inputModels[0].item'),'"','') = sub_feature_name then fs.feature_usage_id end)/count(distinct fs.feature_usage_id)*100 accept_rate,
+from feature_users fs
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_started` sfs
+    on true
+    and sfs.meta_received_at >= '2023-05-20'
+    and fs.feature_usage_id = sfs.feature_usage_id
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+    on true
+    and fe.meta_received_at >= '2023-05-20'
+    and fe.feature_usage_id = sfs.feature_usage_id
+    and fe.reason = 'accepted'
+group by 1,2,3,4
+-- having num_times_used > 2000
+order by 1,2,3,5,4

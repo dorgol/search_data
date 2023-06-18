@@ -1,0 +1,35 @@
+/*
+    Name: FT iOS - Questionnaire Skip Rates
+    Query ID: 41742
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-10T13:36:49.298Z
+    */
+    with
+users as (
+    select distinct
+        platform_device_id as id_for_vendor,
+        meta_received_at,
+        origin_page_response,
+        origin_page_index,
+        origin_page_name,
+        destination_page_index,
+        count(distinct platform_device_id) over () total_num_users
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+    where true
+        and app_name = 'facetune2'
+        and date(meta_received_at) >= date_sub(current_date(), interval {{days_back}} day)
+        and origin_page_name is not null
+        and origin_page_index != 0
+        and origin_page_index < ifnull(destination_page_index, 100)
+    qualify row_number() over (partition by id_for_vendor, destination_page_index order by meta_received_at desc) = 1
+)
+
+select
+    count(distinct id_for_vendor) num_users,
+    count(distinct case when origin_page_index = 1 and destination_page_index = 2 and origin_page_response is null then id_for_vendor end)/
+        count(distinct case when origin_page_index = 1 and destination_page_index = 2 then id_for_vendor end)*100 pct_skipped_q1,
+    count(distinct case when origin_page_index = 2 and destination_page_index = 3 and origin_page_response is null then id_for_vendor end)/
+        count(distinct case when origin_page_index = 2 and destination_page_index = 3 then id_for_vendor end)*100 pct_skipped_q2,
+    count(distinct case when origin_page_index = 3 and (destination_page_index is null or destination_page_index = 4) and origin_page_response is null then id_for_vendor end)/
+        count(distinct case when origin_page_index = 3 and (destination_page_index is null or destination_page_index = 4) then id_for_vendor end)*100 pct_skipped_q3,
+from users u

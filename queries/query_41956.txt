@@ -1,0 +1,22 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 transactions - ios_transactions
+    Query ID: 41956
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-16T17:27:47.595Z
+    */
+    SELECT distinct
+    date_trunc(t.purchase_date, {{period}}) as period,
+    t.product_id, 
+    count(distinct t.original_transaction_id) over (partition by date_trunc(t.purchase_date, {{period}}),t.product_id) as transactions,
+    count(distinct t.original_transaction_id) over () as total_transactions,
+    sum(actual_proceeds_usd) over (partition by date_trunc(t.purchase_date, {{period}}),t.product_id) as revenue,
+    sum(actual_proceeds_usd) over () as total_rev
+--FROM `ltx-dwh-prod-processed.subscriptions.unified_transactions` t
+from `ltx-dwh-prod-processed.subscriptions.ios_transactions` t
+WHERE true
+and application= '{{app_name}}'
+and DATE(t.purchase_date) >= '{{start_date}}'
+and date(t.original_purchase_date) >= '{{start_date}}'
+and product_id like '%Facetune2.FeedTemplate%'
+and actual_proceeds_usd > 0
+and not is_sandbox

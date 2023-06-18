@@ -1,0 +1,91 @@
+/*
+    Name: VL iOS - Branded Templates - Import Button Triggers (Simply - TooShy NEW VERSION)
+    Query ID: 40909
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-06T10:32:20.378Z
+    */
+    with bt_users as (
+    select distinct
+        dav.id_for_vendor,
+        dav.experiment_started_meta
+        
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_app_foregrounded` af
+    inner join `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+        on af.id_for_vendor = dav.id_for_vendor
+        and dav.experiment in ('IOS Feed Branded Campaign 11.22', 'IOS Feed Branded Campaign 01.23')
+        and segmentation = '01 All Users'
+        and display_type = 'activated_for_device'
+    --where date(dav.experiment_started_meta) >= '2023-03-21'
+)
+
+, import_screen_users as (
+    select distinct
+        u.id_for_vendor
+    from bt_users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+        
+             
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+        
+    --join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+    --    on u.id_for_vendor = mp.id_for_vendor
+    --    and mp.open_project_id = te.open_project_id
+    --    and mp.message_name = 'collab_context_screen'
+    --    and date(mp.meta_received_at) >= '2023-03-21'
+
+    join `ltx-dwh-prod-raw.analytics.ios_videoleap_import_wizard_screen_presented` sp
+        on u.id_for_vendor = sp.id_for_vendor
+        and te.open_project_id = sp.open_project_id
+        and date(sp.meta_received_at) >= '2023-03-21')    
+    
+    
+    
+, import_trigger_users as (   
+    
+    select
+       distinct u.id_for_vendor
+    from bt_users u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+ --   inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+ --       on u.id_for_vendor = mp.id_for_vendor
+ --       and mp.open_project_id = te.open_project_id
+ --       and mp.message_name = 'collab_context_screen'
+ --       and date(mp.meta_received_at) >= '2023-03-21'
+    inner join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` bp
+        on u.id_for_vendor = bp.platform_device_id
+        and bp.open_project_id = te.open_project_id
+        and button_location = 'collab_context_screen'
+        and date(bp.meta_received_at) >= '2023-03-21'
+        and button_identifier in ('continue','collab_add_yours','add_clips')
+    inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_import_wizard_screen_presented` sp
+        on u.id_for_vendor = sp.id_for_vendor
+        and te.open_project_id = sp.open_project_id
+        and date(sp.meta_received_at) >= '2023-03-21' 
+    
+    )
+    
+    
+select
+    count(distinct u.id_for_vendor) as users,
+    count(distinct ip.id_for_vendor) as import_presented,
+    count(distinct it.id_for_vendor) as import_triggered
+from bt_users u
+left join import_screen_users ip
+    on ip.id_for_vendor = u.id_for_vendor
+left join import_trigger_users it
+    on it.id_for_vendor = u.id_for_vendor

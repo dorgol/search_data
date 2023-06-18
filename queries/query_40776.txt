@@ -1,0 +1,26 @@
+/*
+    Name: Facetune: Avg Free Exports per Week by New/Existing
+    Query ID: 40776
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-30T12:08:16.009Z
+    */
+    select distinct
+    user_type,
+    exports,
+    count(attribution_user_id||cast(week as string)) over (partition by user_type,exports) as users,
+    -- count(attribution_user_id||cast(week as string)) over (partition by user_type order by exports desc) as cum_users,
+    100*count(attribution_user_id||cast(week as string)) over (partition by user_type order by exports desc)/count(attribution_user_id||cast(week as string) ) over (partition by user_type) as cum_pct_users
+from (
+    select
+        date_trunc(dt, week) as week,
+        case when timestamp_diff(dt,date(attribution_timestamp),day) >= 14 then 'existing' else 'new' end as user_type,
+        attribution_user_id,
+        sum(coalesce(cntd_exports,0)) as exports
+    from `ltx-dwh-prod-processed.agg.app_attribution_user_date`
+    where app_name = 'facetune2'
+    and dt >= date_sub(current_date(),interval 30 day)
+    and not is_sub
+    group by 1,2,3
+)
+where true
+qualify cum_pct_users >= 1

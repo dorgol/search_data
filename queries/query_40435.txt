@@ -1,0 +1,136 @@
+/*
+    Name: 20230123 - FT2 iOS - Global Login - Dark Mode Dismiss Login Rates
+    Query ID: 40435
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-19T13:34:59.007Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('globalLogin_10_2022')
+    and display_type = '{{display_type}}'
+),
+
+global_to_legacy as (
+    select distinct
+        lpg.session_id,
+        lp.app_session_id
+    from users u
+    -- global
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_presented` lpg
+        on lpg.app_name = 'facetune2' 
+        and variant <> 'FTGlobalLoginBaseline'
+        and lpg.platform_device_id = u.id_for_vendor
+        and lpg.meta_received_at >= '2023-01-23'
+        and lpg.meta_received_at >= experiment_started_meta
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_entered` lp
+        on lp.id_for_vendor = u.id_for_vendor
+        and lp.meta_received_at >= '2023-01-23'
+        and lp.meta_received_at >= experiment_started_meta
+        and timestamp_diff(lp.event_timestamp, lpg.event_timestamp, second) between -2 and 2
+),
+
+saw_login as (
+    select
+        l.*,
+        dm.event_timestamp as dm_event_timestamp,
+        is_dark_mode
+    from (
+        select distinct 
+            segmentation,
+            variant,
+            u.id_for_vendor,
+            coalesce(gtl.app_session_id, lp.app_session_id, lpg.session_id) app_session_id,
+            coalesce(lp.login_screen_session_id, lpg.flow_id) login_session_id,
+            coalesce(lp.event_id, lpg.event_id) event_id,
+            coalesce(lp.event_timestamp, lpg.event_timestamp) event_ts,
+            count(distinct coalesce(lpg.platform_device_id, lp.id_for_vendor)) over (partition by segmentation, variant) total_users_saw_login
+        from users u
+        -- global
+        left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_login_screen_presented` lpg
+            on lpg.app_name = 'facetune2' 
+            and variant <> 'FTGlobalLoginBaseline'
+            and lpg.platform_device_id = u.id_for_vendor
+            and lpg.meta_received_at >= '2023-01-23'
+            and lpg.meta_received_at >= experiment_started_meta
+        left join global_to_legacy gtl
+            on gtl.session_id = lpg.session_id
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_login_screen_started` lp
+            on lp.id_for_vendor = u.id_for_vendor
+            and lp.meta_received_at >= '2023-01-23'
+            and lp.meta_received_at >= experiment_started_meta
+    ) l
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_dark_mode_set` dm
+        on dm.app_session_id = l.app_session_id
+        and dm.event_timestamp < l.event_ts 
+    where l.app_session_id is not null
+    qualify row_number() over (partition by l.event_id order by dm_event_timestamp desc) = 1
+),
+
+logged_in as (
+    select distinct
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        coalesce(ld.event_id, ldg.event_id) event_id,
+        coalesce(ld.login_screen_session_id, ldg.flow_id) login_session_id,
+        case when ld.reason = 'Logged In' or ldg.reason = 'successful_login' then true else false end as did_log_in,
+        case when ld.reason = 'Login Screen Closed' or ldg.reason = 'user_closed' then true else false end as dismissed_login,
+        count(distinct case when ld.reason = 'Logged In' or ldg.reason = 'successful_login' then coalesce(ldg.platform_device_id, ld.id_for_vendor) end) over (partition by segmentation, variant) total_logged_in_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_login_screen_dismissed` ldg
+        on ldg.app_name = 'facetune2' 
+        and variant <> 'FTGlobalLoginBaseline'
+        and ldg.platform_device_id = u.id_for_vendor
+        and ldg.meta_received_at >= '2023-01-23'
+        and ldg.meta_received_at >= experiment_started_meta
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_login_screen_dismissed` ld
+        on ld.id_for_vendor = u.id_for_vendor
+        and ld.meta_received_at >= '2023-01-23'
+        and ld.meta_received_at >= experiment_started_meta
+)
+
+select
+    u.segmentation,
+    u.variant,
+    is_dark_mode,
+    count(distinct case when sl.id_for_vendor is not null then u.id_for_vendor end) num_users_saw_login,
+    max(total_users_saw_login) total_users_saw_login,
+    count(distinct case when sl.id_for_vendor is not null then u.id_for_vendor end)/max(total_users_saw_login)*100 pct_of_total_users_saw_login,
+    count(distinct case when sl.id_for_vendor is not null then sl.event_id end) num_times_saw_login,
+    max(total_logged_in_users) total_logged_in_users,
+    count(distinct case when li.did_log_in then sl.id_for_vendor end) as num_users_logged_in,
+    count(distinct case when li.did_log_in then sl.event_id end) as num_times_logged_in,
+    count(distinct case when li.did_log_in then sl.event_id end)/count(distinct sl.event_id)*100 pct_logged_in,
+    count(distinct case when li.dismissed_login then sl.event_id end)/count(distinct sl.event_id)*100 pct_dismissed_login,
+from users u
+join saw_login sl
+    on  sl.segmentation = u.segmentation
+    and sl.variant = u.variant
+    and sl.id_for_vendor = u.id_for_vendor
+left join logged_in li
+    on  li.segmentation = u.segmentation
+    and li.variant = u.variant
+    and li.id_for_vendor = u.id_for_vendor
+    and li.login_session_id = sl.login_session_id
+group by 1,2,3
+having is_dark_mode is not null
+order by 1,2,3

@@ -1,0 +1,23 @@
+/*
+    Name: VLA - Remake Export Issue
+    Query ID: 40833
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-03T08:40:39.978Z
+    */
+    select 
+            date_trunc(t.meta_received_at,{{period}}) as dt,
+            count(distinct t.installation_id) as editing_ended_users,
+            count(distinct sr.installation_id) as export_pressed_users,
+            count(distinct xs.installation_id) as export_started_users,
+            count(distinct ex.installation_id) as exported_users,
+        from `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_template_editing_ended` as t
+        left join `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_session_analytics_reported` as sr
+            on t.project_id = sr.open_project_id
+            and sr.reason like "%export_clicked"
+        left join `ltx-dwh-prod-raw.analytics.android_videoleap_media_export_started` xs
+            on t.project_id = xs.project_id
+        left join `ltx-dwh-prod-raw.analytics.android_videoleap_media_exported` ex
+            on xs.export_id = ex.export_id
+        where date_trunc(date(t.meta_received_at), {{period}}) >= date_sub(current_date(), interval 120 day)
+            and date_trunc(current_date(), {{period}}) != date_trunc(date(t.meta_received_at), {{period}})
+        group by 1

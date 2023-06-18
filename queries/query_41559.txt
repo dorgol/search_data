@@ -1,0 +1,16 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 assignments
+    Query ID: 41559
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-03T06:56:10.595Z
+    */
+    select
+    experiment,
+    variant,
+    reason,
+    count(distinct id_for_vendor)
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_assignment_state_changed`
+where lower(experiment) like lower('%[FT-1073] beautyFeedPPU_03_2023%')
+and meta_received_at >= '{{activation date -1}}'
+group by 1,2,3
+order by 1,2,3

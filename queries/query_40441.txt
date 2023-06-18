@@ -1,0 +1,59 @@
+/*
+    Name: VL iOS - Export Action by Feed Screen
+    Query ID: 40441
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-19T21:43:48.276Z
+    */
+    with feed_info as (
+    select distinct
+        ii.application,
+        ii.platform,
+        ii.dt,
+        ii.lt_id,
+        ii.platform_device_id,
+        ii.meta_received_at,
+        ii.feed_id,
+        ii.session_id,
+        ii.feed_type,
+        ii.app_version_code,
+        ii.firstPresentedTime,
+        ii.actions,
+        ii.action_id,
+        ii.action_time,
+        ii.event_id
+    from `ltx-dwh-prod-processed.app.feed_unnested_items_info` ii
+    where actions = 'use_template'
+    and date_trunc(ii.dt, {{period}}) >= date_sub(current_date(), interval {{last x days}} day) -- last {{last x days}} days
+    and date_trunc(current_date(), {{period}}) != date_trunc(ii.dt, {{period}}) -- not today
+    and case when cast(ii.app_version_code as int64) < 3612 and feed_type like '%discover%' then false else true end
+    )
+
+, total as (
+    select distinct
+        fi.feed_id,
+        fi.dt,
+        case when '{{grouping}}' = 'see all screens' then fi.feed_type
+        else
+            case when lower(fi.feed_type) like '%category.recommended%' or fi.feed_type like '%for_you%' then 'Main Feed'
+                 when lower(fi.feed_type) like '%discover.recommended%' then 'Discover Main Feed'
+                 when lower(fi.feed_type) like '%discover.%' then 'Discover Categories'
+                 when fi.feed_type like '%categor%' then 'Main Categories'
+                 when fi.feed_type like '%templates%' or fi.feed_type like '%liked%' or fi.feed_type like '%purchased%' then 'Profile'
+                 when fi.feed_type = 'post_details' or fi.feed_type = 'remakes' then 'Remake screen'
+                 else fi.feed_type end 
+        end as feed_type,
+        fi.actions,
+        fi.action_id
+    from feed_info fi
+    where fi.application = 'videoleap' and fi.platform = 'ios'
+     )
+   
+select
+    date_trunc(dt,{{period}}) as dt_period,
+    feed_type,
+    count(distinct action_id) as use_template_actions
+from total
+where feed_type is not null
+group by 1,2
+order by dt_period, use_template_actions desc
+   

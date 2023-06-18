@@ -1,0 +1,44 @@
+/*
+    Name: Feed assets first reporting validation
+    Query ID: 42292
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-28T23:59:23.554Z
+    */
+    select
+    date(meta_received_at) as dt,
+    "screen_presented" as source,
+    count(distinct feed_screen_id) as num_entries
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_screen_presented` 
+where screen_name like "assets_first%"
+group by 1,2
+
+-- union all
+
+-- select
+--     date(meta_received_at) as dt,
+--     "usage_info" as source,
+--     count(distinct feed_id) as num_entries
+-- from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_usage_info`
+-- where feed_type like "assets_first%"
+-- group by 1,2
+
+union all
+
+select
+    date(meta_received_at) as dt,
+    "use_template" as source,
+    count(distinct feed_screen_id) as num_entries
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started`
+where screen_name like "assets_first%"
+    and post_position_in_feed = 0
+group by 1,2
+
+union all
+
+select
+    date(meta_received_at) as dt,
+    "template_editing_started" as source,
+    count(distinct open_project_id) as num_entries
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started`
+where flow_name like "assets_first%"
+group by 1,2

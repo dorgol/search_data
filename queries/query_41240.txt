@@ -1,0 +1,56 @@
+/*
+    Name: VL iOS - Discoverability Usage
+    Query ID: 41240
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-28T16:07:09.408Z
+    */
+    with active_users as (
+    select distinct
+        platform_device_id,
+        dt,
+        first_active_dt
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where app_name = "videoleap"
+        and date_trunc(dt, {{period}}) >= '2023-01-01'
+        and date_trunc(dt, {{period}}) < date_trunc(current_date(), {{period}})
+        and case when '{{day0}}' = 'day0' then date(dt) = date(first_active_dt)
+                 when '{{day0}}' = 'non day0' then date(dt) > date(first_active_dt)
+                 else true end
+  
+ )
+ 
+
+
+, search_steps as (
+    select distinct
+        date_trunc(a.dt, {{period}}) as dt,
+        count(distinct a.platform_device_id) as active_users,
+        count(distinct p.platform_device_id) as feed_users,
+        count(distinct case when screen_name like '%search%' then p.platform_device_id end) as search_users,
+        count(distinct case when screen_name like '%discover%' then p.platform_device_id end) as discover_users,
+        count(distinct case when screen_name like '%category%' and screen_name not like '%recommended%' then p.platform_device_id end) as category_users,
+        count(distinct case when ((screen_name like '%category%' and screen_name not like '%recommended%') or (screen_name like '%discover%') or (screen_name like '%search%'))
+                                     then p.platform_device_id end) as all_discoverability_users
+        
+    from active_users as a
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented` as p
+        on a.dt = date(p.meta_received_at)
+        and a.platform_device_id = p.platform_device_id
+        and case when '{{day0}}' = 'day0' then date(first_active_dt) = date(p.meta_received_at)
+                 when '{{day0}}' = 'non day0' then date(first_active_dt) < date(p.meta_received_at)
+                 else true end
+    group by 1)
+    
+select
+    *,
+    safe_divide(search_users, active_users)*100 as search_user_pct,
+    safe_divide(discover_users, active_users)*100 as discover_user_pct,
+    safe_divide(category_users, active_users)*100 as category_user_pct,
+    safe_divide(all_discoverability_users, active_users)*100 as all_discoverability_user_pct,
+    
+        safe_divide(search_users,feed_users)*100 as search_user_pct_feed,
+    safe_divide(discover_users, feed_users)*100 as discover_user_pct_feed,
+    safe_divide(category_users, feed_users)*100 as category_user_pct_feed,
+    safe_divide(all_discoverability_users, feed_users)*100 as all_discoverability_user_pct_feed,
+from search_steps
+  

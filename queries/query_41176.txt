@@ -1,0 +1,20 @@
+/*
+    Name: PL iOS: New Installs Per Hour By Country
+    Query ID: 41176
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-24T08:25:06.454Z
+    */
+    select
+    app_real_world_name,
+    app_store_country as country,
+       -- case when app_store_country in ('ID','US','MY','KH','VN') then app_store_country else 'ROW' end as country,
+    date_trunc(f.first_launch,hour) as hour,
+    count(distinct f.lt_defacto_id) as installs,
+
+from `ltx-dwh-prod-processed`.`devices`.`unified_devices` f
+where f.application in ('editor'
+--, 'editor_android'
+)
+and first_launch >= '2023-04-17'
+group by 1,2,3
+order by 1,2,3

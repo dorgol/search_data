@@ -1,0 +1,25 @@
+/*
+    Name: Felix - Onboarding - Subscriptions 2
+    Query ID: 41037
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-17T15:25:07.161Z
+    */
+    
+select 
+        date_trunc(first_payment_date, week) as purchase_date,
+        --last_product_type,
+        first_subscription_duration,
+        count(distinct global_subscription_id) as count_subscriptions 
+from `ltx-dwh-prod-processed.agg.subscriptions`
+where app_name = 'videoleap'
+    and platform = 'ios'
+    and first_payment_date is not null 
+    and revenue_so_far > 0
+    and had_trial = True
+group by 1,2
+order by 1,2 asc
+    
+
+
+
+

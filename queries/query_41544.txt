@@ -1,0 +1,16 @@
+/*
+    Name: VL Data Glossary - Revenue
+    Query ID: 41544
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-02T14:41:29.215Z
+    */
+    select distinct
+        date_trunc(date(t.purchase_date),{{period}}) as period,
+        sum(projected.adjusted_actual_proceeds_alloc) as total,
+        sum(case when payments.month0_late_or_renewal = 'month0' then projected.adjusted_actual_proceeds_alloc end) as month0,
+        sum(case when payments.month0_late_or_renewal = 'late' then projected.adjusted_actual_proceeds_alloc end) as late,
+        sum(case when payments.month0_late_or_renewal = 'renewal' then projected.adjusted_actual_proceeds_alloc end) as renewal
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation` t
+    where date_trunc(date(t.purchase_date), week) >= '2022-10-01' and date_trunc(date(t.purchase_date), week) != date_trunc(date(current_date()), week)
+    and t.application in ('videoleap')
+    group by 1

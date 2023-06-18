@@ -1,0 +1,105 @@
+/*
+    Name: Felix - Onboarding - Installation vs Subscription
+    Query ID: 41112
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-27T10:09:08.020Z
+    */
+    -- Subscription vs Installation
+
+
+with installations as (
+    select 
+        lt_defacto_id,
+        vertical,
+        date_trunc(install_time, month) as install_month,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device`
+    where install_time > '2022-01-01'
+        and app_name in ('videoleap', 'facetune2')
+
+),
+
+cohort_size as (
+
+    select 
+        date_trunc(install_time, month) as install_month,
+        vertical,
+        count( distinct lt_defacto_id) as count_installs
+    from `ltx-dwh-prod-processed`.`agg`.`app_device`
+    where install_time > '2022-01-01'
+        and app_name in ('videoleap', 'facetune2')
+    group by 1,2    
+
+),
+
+subscriptions as (
+    select distinct
+        device.lt_defacto_id,
+        vertical,
+        lt_subscription_id,
+        date_diff(date(original_purchase_date), date(device.install_time), month) as month_diff
+    from
+        `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions`
+    where 
+        device.install_time > '2022-01-01'
+        and license_applications in ('facetune2','videoleap')
+),
+
+combined as (
+
+    select 
+        installations.lt_defacto_id,
+        install_month,
+        installations.vertical,
+        case 
+        when subscriptions.lt_subscription_id is null then 'No Subscription' 
+        else cast(month_diff as string) end as month_difference
+    from 
+        installations
+    left join subscriptions
+        on subscriptions.lt_defacto_id = installations.lt_defacto_id
+    left join  cohort_size
+        using (install_month, vertical)
+)
+ 
+select 
+    install_month,
+    cohort_size,
+    month_difference,
+    vertical,
+    count(distinct lt_defacto_id) as count_users,
+    (count(distinct lt_defacto_id)/cohort_size)*100 as perc_conversion
+from 
+    combined
+group by 1,2,3,4
+
+
+
+
+
+
+
+
+
+
+/*select 
+    lt_subscription_id,
+    vertical,
+    case 
+    when timestamp_diff(original_purchase_date, device.install_time, day) < 31 then 'month0'
+    when timestamp_diff(original_purchase_date, device.install_time, day) < 62 then 'month1'
+    when timestamp_diff(original_purchase_date, device.install_time, day) < 93 then 'month2'
+    when timestamp_diff(original_purchase_date, device.install_time, day) < 124 then 'month3'
+    when timestamp_diff(original_purchase_date, device.install_time, day) < 155 then 'month4'
+    when timestamp_diff(original_purchase_date, device.install_time, day) < 186 then 'month5'
+    else '>month5' end as launch_delay,
+    count(distinct lt_subscription_id) as count_subscriptions
+    -- timestamp_diff(original_purchase_date, device.install_time, day)
+    
+from
+    `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions`
+where 
+    device.install_time > '2022-01-01'
+    and vertical in ('Facetune','Videoleap')
+group by 
+    1,2
+*/

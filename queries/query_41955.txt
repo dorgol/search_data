@@ -1,0 +1,61 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 - Errors - from assignments
+    Query ID: 41955
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-16T17:13:39.362Z
+    */
+    with users as
+    (
+    select distinct
+        id_for_vendor,
+        experiment,
+        variant,
+        reason,
+        meta_received_at as experiment_started_meta_by_type
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_assignment_state_changed`
+    where lower(experiment) like lower('%[FT-1073] beautyFeedPPU_03_2023%')
+    and meta_received_at >= '{{start_date}}'
+    and reason = 'reached beauty feed'
+),
+
+
+total_users as (
+select distinct
+    day,
+    count(id_for_vendor) over (partition by day) as reached_feed_users,
+    count(id_for_vendor) over (order by day asc) as cum_reached_feed_users,
+from (
+    SELECT
+        id_for_vendor,
+        min(date(experiment_started_meta_by_type)) as day, --change to experiment_started_meta if you want total users to be all users that were assigned by each day
+    FROM users u
+    group by 1
+    )
+)
+
+
+select 
+    m.day,
+    message_name,
+    num_error_users,
+    100* num_error_users / cum_reached_feed_users as pct_error_users,
+    num_error_events
+from (
+    select
+        message_name,
+        date(meta_received_at) as day,
+        count(distinct m.platform_device_id) num_error_users,
+        count(distinct m.event_id) num_error_events,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` m
+        on true
+        and m.app_name = '{{app_name}}'
+        and m.platform_device_id = u.id_for_vendor
+        and cast(m.app_version_code as int64) >= {{since_version}}
+        and date(m.meta_received_at) >= '{{start_date}}'
+        --and m.meta_received_at > u.experiment_started_meta_by_type
+        and m.message_name in ('fetch_error_localizing_failed','fetch_error_no_internet','fetch_error_unknown_reason','purchase_error_failed','purchase_error_failed_with_retry','beauty_editor_textures_failed_to_save','Beauty presets feature preprocessing failed message dismissed')
+    group by 1,2
+    )m
+join total_users t
+    on t.day = m.day

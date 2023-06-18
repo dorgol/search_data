@@ -1,0 +1,38 @@
+/*
+    Name: Feed Post Performance for FTV
+    Query ID: 42326
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-06-01T13:28:17.081Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        parent_template_id is null as is_original,
+        preview_media_id,
+        cast(duration / 1000 as int64) as duration_sec
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where true
+        and app_name = "videoleap"
+        and duration <= 15000
+        and number_of_clips_used = 1
+)
+
+select
+    fpr.post_id,
+    "videoleap://feed?post_id=" || p.post_id as deep_link,
+    "https://res.cloudinary.com/lightricks/video/upload/" || p.preview_media_id || ".mp4?_a=AQABmcJ" as media_link,
+    p.duration_sec,
+    sum(fpr.distinct_total_impressions) as total_impressions,
+    sum(fpr.total_clicks) as total_clicks,
+    sum(fpr.distinct_export_pressed_feed) as total_exports,
+    sum(fpr.distinct_export_pressed_feed) / sum(fpr.distinct_total_impressions) as export_rate
+from `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily` as fpr
+join posts as p
+    on p.post_id = fpr.post_id
+where true
+    and dt >= date_sub(current_date(), interval 2 month)
+    and application = "videoleap"
+group by 1,2,3,4
+having (sum(distinct_total_impressions) > 1000)
+order by export_rate desc
+limit 100

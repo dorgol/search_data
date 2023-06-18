@@ -1,0 +1,73 @@
+/*
+    Name: 20230528 - FT2 iOS - [FT-1101] AI Selfies - Face Sizes and Accept Rate
+    Query ID: 42275
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-31T06:55:20.373Z
+    */
+    with 
+
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1101]AI Selfies Exp')
+    and display_type = 'entered_photo_editor'
+    and variant != 'Baseline'
+),
+
+face_detection as (
+    select
+        *,
+        json_extract_array(faces_rects,'$')[safe_offset(0)] face,
+        count(distinct feature_usage_id) over (partition by segmentation, variant) total_feature_ended
+    from (
+        select distinct
+            segmentation,
+            variant,
+            reason,
+            fe.feature_usage_id,
+            faces_rects,
+            array_length(json_extract_array(faces_rects,'$')) num_faces_detected
+        from users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+            on fe.app_name = 'facetune2'
+            and fe.meta_received_at >= '2023-05-20'
+            and fe.meta_received_at >= experiment_started_meta
+            and fe.platform_device_id = u.id_for_vendor
+            and feature_name = 'aiSelfies' 
+        join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_face_detection_session_data` fd
+            on fd.meta_received_at >= '2023-05-20'
+            and fd.meta_received_at >= experiment_started_meta
+            and fd.editing_session_id = fe.editing_session_id
+    )
+    where num_faces_detected = 1
+)
+
+select
+    segmentation,
+    variant,
+    ceil(round(safe_cast(json_extract(face, '$.size_x') as float64) * safe_cast(json_extract(face, '$.size_y') as float64),0)/20000)*20000 face_area,
+    any_value(safe_cast(json_extract(face, '$.size_x') as float64)) example_x_val,
+    any_value(safe_cast(json_extract(face, '$.size_y') as float64)) example_y_val,
+    count(distinct feature_usage_id) num_feature_ended,
+    count(distinct feature_usage_id)/max(total_feature_ended) *100 pct_of_total_ended,
+    count(distinct case when reason = 'accepted' then feature_usage_id end)/count(distinct feature_usage_id)*100 accept_rate,
+from face_detection
+group by 1,2,3
+order by 1,2,3

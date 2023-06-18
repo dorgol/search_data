@@ -1,0 +1,82 @@
+/*
+    Name: VL iOS- Landing Screen Experiment - Feed Funnel
+    Query ID: 42367
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-31T06:20:44.305Z
+    */
+    with experiment_users as (
+    select distinct
+        variant,
+        id_for_vendor,
+        experiment_started_device,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and experiment = 'vl_landing_screen_experiment_05_2023_local'
+        --and variant not like "%Baseline"
+        and case when '{{segments}}' = 'All Users' then segmentation = "01 All Users"
+                 when '{{segments}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segments}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+)
+
+, feed_presented as (
+    select distinct
+        device_timestamp,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_screen_presented`
+    where app_name = "videoleap"
+        --and meta_received_at >= experiment_started_device
+        --and button_identifier in ("home_plus_button", "create_button")
+)
+
+, use_template_clicked as (
+    select distinct
+        device_timestamp,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started`
+    where app_name = "videoleap"
+        and action  = 'use_template'
+        --and meta_received_at >= experiment_started_device
+)
+
+, remake_exported as (
+    select distinct
+        ex.device_timestamp,
+        xs.id_for_vendor as platform_device_id
+    from experiment_users u
+    inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_export_started` xs
+        on u.id_for_vendor = xs.id_for_vendor
+    inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_exported` ex
+             on xs.id_for_vendor = ex.id_for_vendor
+             and xs.export_id = ex.export_id
+             and xs.parent_template_id is not null
+        --and meta_received_at >= experiment_started_device
+    )
+
+, data as (
+    select
+        ex.variant,
+        count(distinct ex.id_for_vendor) as total_users,
+        count(distinct h1.platform_device_id) as feed_presented_users,
+        count(distinct h2.platform_device_id) as use_template_clicked_users,
+        count(distinct h3.platform_device_id) as remake_exported_users,
+
+    from experiment_users as ex
+    left join feed_presented as h1
+        on h1.platform_device_id = ex.id_for_vendor
+        and h1.device_timestamp >= experiment_started_device
+    left join use_template_clicked as h2
+        on h2.platform_device_id = ex.id_for_vendor
+        and h2.device_timestamp >= experiment_started_device
+    left join remake_exported as h3
+        on h3.platform_device_id = ex.id_for_vendor
+        and h3.device_timestamp >= experiment_started_device
+
+    group by 1
+)
+
+select 
+    *,
+    feed_presented_users / total_users * 100 as feed_presented_pct,
+    use_template_clicked_users / total_users * 100 as use_template_clicked_pct,
+    remake_exported_users / total_users * 100 as remake_exported_pct,
+from data

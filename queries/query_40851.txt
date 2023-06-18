@@ -1,0 +1,50 @@
+/*
+    Name: PL Retrials Over Time By Retrial Date
+    Query ID: 40851
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-03T15:30:43.814Z
+    */
+    
+with trials as
+(select *
+from
+(
+select 
+platform_device_id,
+original_purchase_date,
+original_transaction_id,
+last_product_id,
+row_number() over(partition by platform_device_id order by original_purchase_date ) as r_num
+
+from `ltx-dwh-prod-processed.agg.subscriptions`
+where app_name='editor'
+and original_purchase_date>='2020-01-01'
+and had_trial= true
+and current_is_in_trial_period is false
+and first_payment_date is null
+
+)
+where r_num=1
+)
+
+
+select 
+date_trunc(resub.original_purchase_date, month) as retrial_start, 
+--count(distinct trials.platform_device_id) as users_had_trial,
+count(distinct resub.platform_device_id) as retrial,
+count(distinct case when  resub.revenue_so_far>0 then resub.platform_device_id end) as paid_retrial,
+--count(distinct resub.platform_device_id)/count(distinct trials.platform_device_id)*100 as retrial_pct
+from trials
+left join `ltx-dwh-prod-processed.agg.subscriptions`  as resub
+ on resub.app_name='editor'
+and resub.original_purchase_date>='2020-01-01'
+and trials.platform_device_id=resub.platform_device_id
+and resub.original_purchase_date>trials.original_purchase_date
+and resub.had_trial is true
+
+--and had_trial= true
+--and current_is_in_trial_period is false
+--and first_payment_date is null;
+
+group by 1
+order by 1

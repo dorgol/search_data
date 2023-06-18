@@ -1,0 +1,158 @@
+/*
+    Name: Beauty Feed - Retention Rate Research - User Groups
+    Query ID: 40577
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-23T14:31:24.252Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = 'facetune2'
+        and lower(d.experiment) like lower('%[FT-1067] Beauty Feed%')
+        and d.display_type = 'activated_for_device'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        and case 
+            when '{{variant}}' = 'Variant1' then d.variant = 'Variant1' 
+            when '{{variant}}' = 'Variant2' then d.variant = 'Variant2' 
+            when '{{variant}}' = 'Variant3' then d.variant = 'Variant3'
+            when '{{variant}}' = 'All' then true
+        end  
+        group by 1,2,3,4,5,6,7,8
+    )
+),
+
+first_session as (
+    select 
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        experiment_started_meta,
+        session_id
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_foreground` f
+        on app_name = 'facetune2'
+        and date(meta_received_at) >= '2023-02-19'
+        and meta_received_at >= u.experiment_started_meta
+        and f.platform_device_id = u.id_for_vendor
+    where true
+    qualify row_number() over (partition by u.id_for_vendor order by event_id) = 1
+),
+
+funnel as (
+    select
+        fs.id_for_vendor,
+        'started_editor_feature' as stage,
+        min(device_timestamp) device_timestamp,
+    from first_session fs
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` il
+        on true
+        and app_name = 'facetune2'
+        and date(meta_received_at) >= '2023-02-19'
+        and meta_received_at > fs.experiment_started_meta
+        and il.session_id = fs.session_id
+        and source like '%main_toolbar%'
+    group by 1,2
+    
+    union all
+    
+    select
+        fs.id_for_vendor,
+        'started_feed' as stage,
+        min(device_timestamp) device_timestamp,
+    from first_session fs
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_screen_presented` il
+        on true
+        and app_name = 'facetune2'
+        and date(meta_received_at) >= '2023-02-19'
+        and meta_received_at > fs.experiment_started_meta
+        and il.session_id = fs.session_id
+    group by 1,2
+
+),
+user_groups as (
+    select
+        id_for_vendor,
+        flow as user_group,
+    from (
+        select
+            id_for_vendor,
+            string_agg(stage, ' > ') flow
+        from (
+            select
+                *
+            from funnel
+            order by device_timestamp asc
+        )
+        group by 1
+    )
+),
+
+retention as (
+    select
+        u.id_for_vendor,
+        max(case when date_diff(ad.dt, date(u.experiment_started_meta), day) = 1 then true else false end) as is_day1_retained,
+        max(case when date_diff(ad.dt, date(u.experiment_started_meta), day) between 1 and 7 then true else false end) as is_week0_retained,
+        max(case when date_diff(ad.dt, date(u.experiment_started_meta), day) between 8 and 14 then true else false end) as is_week1_retained
+    from first_session u 
+    join `ltx-dwh-prod-processed`.`agg`.`app_device_date` ad
+        on true
+        and ad.app_name = 'facetune2'
+        and ad.dt >= '2023-02-19'
+        and u.id_for_vendor = ad.platform_device_id
+        and ad.dt >= date(experiment_started_meta)
+        and cntd_foregrounds > 0
+    group by 1
+)
+
+select
+    *,
+    num_devices / sum(num_devices) over (partition by segmentation, variant)*100 pct_of_total
+from (
+    select 
+        segmentation,
+        variant,
+        case when user_group is null then 'None' else user_group end as user_group,
+        
+        count(distinct u.id_for_vendor) as num_devices,
+        
+                -- day0, week0, week1 retention
+        count(distinct case when r.is_day1_retained is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_retained_day1,
+        count(distinct case when r.is_week0_retained is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_retained_week0,
+        count(distinct case when r.is_week1_retained is true then u.id_for_vendor end)/nullif(count(distinct u.id_for_vendor),0)*100 as pct_retained_week1,
+    from first_session u
+    left join user_groups g
+        on g.id_for_vendor = u.id_for_vendor
+    left join retention r
+        on r.id_for_vendor = u.id_for_vendor
+    where true
+    group by 1,2,3
+)
+order by 1,2,3

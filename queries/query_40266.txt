@@ -1,0 +1,88 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Feature Usage Durations - Without Whats New - Acceptors - Cumul.
+    Query ID: 40266
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-12T14:37:13.825Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1072]Lama Inpainting')
+    and display_type = 'entered photo editor'
+),
+whats_new_usage as (
+    select
+        id_for_vendor,
+        max(case when reason = 'accepted' then true else false end) entered_through_whats_new
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+        on true 
+        and mp.app_name = 'facetune2'
+        and mp.meta_received_at >= '2023-03-01'
+        and mp.meta_received_at >= experiment_started_meta
+        and u.id_for_vendor = mp.platform_device_id
+        and message_name ='vanishWhatsNew'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` md
+        on true
+        and md.app_name = 'facetune2'
+        and md.meta_received_at >= '2023-03-01'
+        and md.meta_received_at >= experiment_started_meta
+        and md.flow_id = mp.flow_id
+    group by 1
+)
+
+select
+    *,
+    sum(pct_total_users_used) over (partition by segmentation, variant order by feature_usage_duration asc) cumul_pct_total_users_used,
+    sum(pct_total_uses) over (partition by segmentation, variant order by feature_usage_duration asc) cumul_pct_total_usage
+from (
+    select
+        segmentation,
+        variant,
+        floor(feature_usage_duration/10)*10 as feature_usage_duration,
+        -- feature_usage_duration,
+        count(distinct id_for_vendor) num_users_used,
+        count(distinct id_for_vendor)/ max(total_num_users_used)*100 as pct_total_users_used,
+        count(distinct event_id) num_uses,
+        count(distinct event_id)/ max(total_num_uses)*100 pct_total_uses
+    from (
+        select distinct
+            segmentation,
+            variant,
+            round(feature_usage_duration,0) feature_usage_duration,
+            u.id_for_vendor,
+            fe.event_id,
+            count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_num_users_used,
+            count(distinct fe.event_id) over (partition by segmentation, variant) total_num_uses
+        from users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+            on fe.app_name = 'facetune2'
+            and fe.meta_received_at >= '2023-03-01'
+            and fe.meta_received_at >= experiment_started_meta
+            and fe.platform_device_id = u.id_for_vendor
+            and feature_name = 'Patch'
+            and reason = 'accepted'
+        left join whats_new_usage wn
+            on wn.id_for_vendor = u.id_for_vendor
+        where wn.id_for_vendor is null
+    )
+    group by 1,2,3
+)
+order by 1,2,3

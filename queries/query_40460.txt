@@ -1,0 +1,132 @@
+/*
+    Name: [FT-1067] Beauty Feed - feed exports per user
+    Query ID: 40460
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-20T13:10:36.208Z
+    */
+    with last_items_info_per_feed_id as (
+   select date(meta_received_at) as dt,
+          *
+   from (
+         select
+              *,
+              row_number () over (partition by feed_id order by device_timestamp desc) as row
+          from  `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_usage_info`
+          where true
+          and items_info <> '[]'
+          and items_info is not null
+          and app_name = 'facetune2'
+          and date(meta_received_at) >= '2023-02-19'
+          and cast(app_version_code as int64) >= {{since_version}}
+          and date(meta_received_at) >= date_sub(current_date(), interval 1 month)
+
+)),
+
+
+usage as (    
+select distinct
+    f1.feed_type,
+    f1.platform_device_id,
+    f1.post_id,
+    f1.session_id,
+    f1.run_id,
+    f1.feed_id,
+    f2.actions,
+    f2.action_id
+from 
+    (
+    select
+        app_name,
+        platform,
+        dt,
+        platform_device_id,
+        feed_id,
+        meta_received_at, 
+        app_version_code,
+        `is_subscriber`,
+        event_id,
+        run_id,
+        session_id,
+        feed_description,
+        feed_type,
+        json_extract_scalar(items_info,"$.identifier.section.identifier") as post_id,
+        cast (json_extract_scalar(items_info,"$.sectionPositionInFeed") as int) as position,
+        cast (json_extract_scalar(items_info,"$.totalVisibleTime") as float64) totalVisibleTime,
+    from last_items_info_per_feed_id as fui,
+    unnest(json_extract_array(items_info)) as items_info
+    ) f1
+left join 
+    (
+    select
+        platform_device_id,
+        feed_id,
+        meta_received_at,
+        json_extract_scalar(items_info,"$.identifier.section.identifier") as post_id,
+        json_extract_scalar(selections,"$.actionType") as actions,
+        json_extract_scalar(selections,"$.actionIdentifier") action_id,
+        cast(json_extract_scalar(selections,"$.actionTime") as float64) action_time,
+    from last_items_info_per_feed_id as fui,
+    unnest(json_extract_array(items_info)) as items_info,
+    unnest(json_extract_array(items_info, "$.actions")) as selections
+
+    ) f2
+on f1.feed_id = f2.feed_id
+and f1.platform_device_id = f2. platform_device_id
+and f1.post_id = f2.post_id
+where true
+and feed_type like '%beauty%'
+),
+ 
+usage_with_exports as (   
+    select
+        u.feed_type,
+        u.platform_device_id,
+        u.post_id,
+        u.session_id,
+        u.run_id,
+        u.feed_id,
+        u.actions,
+        u.action_id,
+        count(distinct case when w.export_source like 'beauty_quickstart%' then w.event_id end) as num_exports_from_beauty_qs,
+        count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab,
+        count(distinct case when f.reason = 'edit' then f.event_id end) as num_continue_to_edit,
+        count(distinct case when f.reason = 'accepted' then f.event_id end) as num_accepted_in_editor,    
+    from usage u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` w
+        on w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.platform_device_id
+        and w.meta_received_at >= '2023-02-19'
+        and date(w.meta_received_at) >= date_sub(current_date(), interval 1 month)
+        and (w.export_source like 'beauty_feed_in_home_tab%' or w.export_source like 'beauty_quickstart%')
+        and ends_with(w.export_source, u.action_id)
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` f
+        on f.app_name = '{{app_name}}'
+        and f.platform_device_id = u.platform_device_id
+        and f.meta_received_at >= '2023-02-19'
+        and date(f.meta_received_at) >= date_sub(current_date(), interval 1 month)
+        and f.feature_name = 'BeautyPresets'
+        and f.reason in ('edit', 'accepted')
+        and case when f.reason = 'edit' then ends_with(f.feature_usage_id, u.action_id)
+            when f.reason = 'accepted' then left(split(sub_feature_state, '"actionID":"')[safe_offset(1)],36) = u.action_id
+            end
+    group by 1,2,3,4,5,6,7,8
+)
+
+
+select *
+from (
+select 
+    num_exports,
+    count(distinct platform_device_id) as num_users
+from (
+select
+    platform_device_id,
+    count(distinct case when u.actions is null then concat(u.platform_device_id,'-',u.post_id,'-',u.session_id,'-',u.feed_id) end) as impressions,
+    count(distinct case when u.actions = 'use_template' then u.action_id end) as try_preset_clicks,
+    sum(u.num_exports_from_beauty_qs) + sum(u.num_exports_from_beauty_feed_in_home_tab) + sum(u.num_continue_to_edit) + sum(u.num_accepted_in_editor) as num_exports,
+from usage_with_exports u
+group by 1
+)
+group by 1
+)
+where num_exports <= 20

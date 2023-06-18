@@ -1,0 +1,42 @@
+/*
+    Name: PL Android Experiment Assignment Check Staging Flow
+    Query ID: 40792
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-31T14:05:50.579Z
+    */
+    
+--sub screen presented
+select *
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_subscription_screen_presented`
+where app_name='editor_android'
+and meta_received_at>='2023-03-27'
+order by meta_received_at desc
+
+;
+--subscription_screen_ready
+select *
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_subscription_screen_ready`
+where app_name='editor_android'
+and meta_received_at>='2023-03-27'
+order by meta_received_at desc
+
+;
+
+--subscription_purchase_started
+select *
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_subscription_purchase_started`
+where app_name='editor_android'
+and meta_received_at>='2023-03-27'
+order by meta_received_at desc
+
+;
+
+
+--subscription_purchase_completed
+select *
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_subscription_purchase_ended`
+where app_name='editor_android'
+and meta_received_at>='2023-03-27'
+order by meta_received_at desc
+
+

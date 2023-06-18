@@ -1,0 +1,33 @@
+/*
+    Name: FT iOS - Missing Video Loaded Fields
+    Query ID: 40003
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-02T12:01:28.577Z
+    */
+    select
+    count(distinct editing_session_id) num_esid,
+    null as num_ftv_esid,
+    count(distinct event_id) num_events,
+    'video_loaded' as event_name
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_loaded` vl
+where date(vl.meta_received_at) >= date_sub(current_date(),interval 1 month)
+
+union all
+
+select
+    count(distinct editing_session_id) num_esid,
+    count(distinct ftv_editing_session_id) as num_ftv_esid,
+    count(distinct event_id) num_events,
+    'video_feature_started' as event_name
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_feature_started` vl
+where date(vl.meta_received_at) >= date_sub(current_date(),interval 1 month)
+
+union all
+
+select
+    count(distinct editing_session_id) num_esid,
+    count(distinct ftv_editing_session_id) as num_ftv_esid,
+    count(distinct event_id) num_events,
+    'video_feature_ended' as event_name
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_feature_ended` vl
+where date(vl.meta_received_at) >= date_sub(current_date(),interval 1 month)

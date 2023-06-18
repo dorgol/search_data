@@ -1,0 +1,59 @@
+/*
+    Name: Facetune Android: Looks version filtered - Exports Per Device
+    Query ID: 40707
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-29T07:45:28.807Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.installation_id,
+        d.experiment_started_meta,
+        d.display_type,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    join `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_assignment_state_changed` a
+        on a.installation_id = d.installation_id
+        and d.experiment = a.experiment
+        and d.variant = a.variant
+        and a.version_code >= 1101476
+        and meta_received_at >= '2023-03-08'
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+),
+
+
+exports as (
+    select
+        u.experiment,
+        u.segmentation, 
+        u.country,
+        u.variant,
+        u.installation_id,
+        u.experiment_started_meta, 
+        e.installation_id is not null as exporter,
+        count(distinct e.event_id) as num_exports,
+    from users u 
+    left join `ltx-dwh-prod-processed`.`devices`.`unified_app_export` e
+        on u.installation_id = e.installation_id
+        and e.meta_received_at >= experiment_started_meta
+        and e.meta_received_at >= '2023-03-08'
+        and e.application = '{{app}}'
+    group by 1,2,3,4,5,6,7
+)
+
+select
+    segmentation,
+    variant,
+    installation_id,
+    num_exports,
+from exports

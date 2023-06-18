@@ -1,0 +1,42 @@
+/*
+    Name: [FT-1085] Live Photo as Video - Import Destination - Session
+    Query ID: 41533
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-02T16:12:19.172Z
+    */
+    with users as (
+    select
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = 'facetune2'
+    and display_type = 'reached home screen'
+    and experiment = '[FT-1085] Live Photo as Video'
+    and segmentation in ('02 New Users', '03 Existing Users')
+    and variant != 'Baseline'
+)
+
+, imports as (
+    select
+        segmentation || ' ' || variant as segment_variant,
+        destination,
+        session_id,
+        platform_device_id,
+    from users u
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_screen_dismissed` d
+        on u.id_for_vendor = d.platform_device_id
+        and app_name = 'facetune2'
+        and meta_received_at >= '2023-03-29'
+        and screen_name = 'live_photo_import'
+    qualify row_number() over (partition by session_id order by destination desc) = 1
+)
+
+select
+    segment_variant,
+    destination,
+    count(distinct session_id) as sessions,
+    count(distinct platform_device_id) as users,
+from imports
+group by 1,2

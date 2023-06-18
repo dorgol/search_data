@@ -1,0 +1,25 @@
+/*
+    Name: (Joe) VL iOS - all users - App Version
+    Query ID: 40995
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-11T15:10:10.132Z
+    */
+    with installs as (
+    select 
+        d.id_for_vendor,
+        date(first_launch) as first_launch,
+        initial_app_version
+    from `ltx-dwh-prod-processed`.`devices`.`unified_devices` as d
+    where true
+        and date(first_launch) >= '2023-01-01'
+        and application = 'videoleap'
+        and date_diff(date(current_date), date(d.first_launch), day) >7 -- out of trial period
+    )
+
+select
+    initial_app_version,
+    first_launch,
+    count(distinct id_for_vendor) as day0_users
+from installs
+group by 1,2
+having day0_users > 1000

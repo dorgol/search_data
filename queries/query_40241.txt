@@ -1,0 +1,34 @@
+/*
+    Name: VLA Feed - num published posts over time
+    Query ID: 40241
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-12T08:05:23.364Z
+    */
+    with raw as (
+    select
+        date(up.meta_received_at) as dt,
+        up.parent_template_id is null as is_original,
+        up.post_id,
+        d.installation_id is null or date(d.first_active_dt) = date(up.meta_received_at) as is_day0
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_post_upload_ended` as up
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.installation_id = up.installation_id
+        and d.app_name = "videoleap_android"
+    where true
+        and up.meta_source = "videoleap" and up.platform = "android"
+        and up.export_error is null
+        and date(up.meta_received_at) >= date_sub(current_date(), interval 2 month)
+)
+
+select
+    date_trunc(dt, {{period}}) as dt,
+    count(distinct case when is_original then post_id end) as num_published_originals,
+    count(distinct case when not is_original then post_id end) as num_published_remakes,
+    count(distinct case when is_original then post_id end) / count(distinct post_id) * 100 as pct_published_originals
+from raw
+where true
+    and case when '{{Day}}' = 'day0' then is_day0
+             when '{{Day}}' = 'non day0' then not is_day0
+             else true end
+group by 1
+    

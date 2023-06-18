@@ -1,0 +1,16 @@
+/*
+    Name: PL: New Installs Per Hour
+    Query ID: 41175
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-10T10:03:14.075Z
+    */
+    select
+    app_real_world_name,
+    date_trunc(f.first_launch,hour) as hour,
+    count(distinct f.lt_defacto_id) as installs,
+
+from `ltx-dwh-prod-processed`.`devices`.`unified_devices` f
+where f.application in ('editor', 'editor_android')
+and first_launch >= '2023-04-17'
+group by 1,2
+order by 1,2

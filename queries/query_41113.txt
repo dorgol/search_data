@@ -1,0 +1,21 @@
+/*
+    Name: Felix - Onboarding - Active Subscriptions but Non renewals
+    Query ID: 41113
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-21T12:30:28.049Z
+    */
+    -- Active subs but not renewing
+
+select 
+    vertical,
+    count(distinct lt_subscription_id) as count_subscribers
+from
+    `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions`
+where 
+    subscription.current_is_active = True
+    and subscription.current_is_auto_renew_status_on = False -- missing data
+    and vertical in ('Videoleap','Facetune','Photoleap')
+group by 1  
+
+    
+

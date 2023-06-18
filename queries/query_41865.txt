@@ -1,0 +1,19 @@
+/*
+    Name: Global Events - AB Test Assignment - Integration
+    Query ID: 41865
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-14T14:56:11.348Z
+    */
+    select
+    platform_device_id,
+    device_timestamp,
+    assignment_source,
+    experiment,
+    experiment_state,
+    variable_key,
+    variable_value,
+    variant,
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_ab_test_assignment_state_changed`
+where app_name = '{{app_name}}'
+and meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+order by 1,2 asc

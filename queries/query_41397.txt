@@ -1,0 +1,89 @@
+/*
+    Name: Facetune Android: QuickStart Usage Accepts
+    Query ID: 41397
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-02T08:04:44.299Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.installation_id,
+        d.experiment_started_meta_by_type,
+        d.display_type,
+        count(distinct installation_id) over (partition by segmentation, experiment, variant) as total_users,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'New and Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and application = 'facetune2_android'
+    and lower(d.experiment) like '%quickstart%'
+    and d.display_type = 'displayed'
+)
+
+, baseline_accepts as (
+    select
+        segmentation,
+        variant,
+        feature,
+        count(distinct e.installation_id) as users_baseline,
+        count(distinct e.event_id) as times_selected_baseline,
+        count(distinct case when e.accepted then e.installation_id end) as users_accepted_baseline,
+        count(distinct case when e.accepted then e.installation_id end) as times_accepted_baseline,
+        100*count(distinct case when e.accepted then e.installation_id end)/count(distinct e.installation_id) as pct_users_accepted_baseline,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_feature_ended` e
+        on e.installation_id = u.installation_id
+        and e.meta_received_at >= u.experiment_started_meta_by_type
+        and e.meta_received_at >= '2023-04-03'
+        and e.app_version >= '2.18.0.2-free'
+        and e.feature in ('SMOOTH', 'FACE', 'PATCH', 'MIX_AND_MATCH', 'AI_ENHANCE', 'WHITEN')
+    where true
+    and variant = 'baseline'
+    group by 1,2,3
+)
+
+, variant_accepts as (
+    select
+        segmentation,
+        variant,
+        reason,
+        count(distinct a.installation_id) as users,
+        count(distinct a.event_id) as times_selected,
+        count(distinct e.installation_id) as users_accepted,
+        count(distinct e.event_id) as times_accepted,
+        100*count(distinct e.installation_id)/count(distinct a.installation_id) as pct_users_accepted,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.android_facetune2_alert_dialog_dismissed` a
+        on a.installation_id = u.installation_id
+        and a.meta_received_at >= u.experiment_started_meta_by_type
+        and a.meta_received_at >= '2023-04-03'
+        and a.alert_type = 'QUICK_START_EDIT'
+        and a.app_version >= '2.18.0.2-free'
+        and reason not in ('skip', 'dismiss', 'background_tap')
+    left join `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_feature_ended` e
+        on e.installation_id = u.installation_id
+        and e.meta_received_at >= a.meta_received_at
+        and e.meta_received_at >= '2023-04-03'
+        and e.app_version >= '2.18.0.2-free'
+        and e.accepted
+        and e.session_id = a.session_id
+        and a.reason = e.feature
+    where true
+    and variant = 'variant1'
+    group by 1,2,3
+)
+
+select
+    *
+from variant_accepts
+union all
+select 
+    *
+from baseline_accepts

@@ -1,0 +1,69 @@
+/*
+    Name: [FT-1062] Toolbar Categories V2 - Export Rate - By Num. Faces
+    Query ID: 40597
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-26T12:11:24.181Z
+    */
+    with users as (
+    select
+        segmentation,
+        application,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else country end as country,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and case
+        when '{{countries}}' = 'Global' then true
+        when '{{countries}}' = 'Rest of the world' then country not in ('US', 'CN')
+        else country = '{{countries}}' end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%FT-1062%')
+    and display_type = 'displayed'
+),
+
+face_data as (
+    select 
+        editing_session_id,
+        fd.id_for_vendor,
+        max(meta_received_at) meta_received_at,
+        case 
+            when max(faces_count) >= 2 then 'multiple faces'
+            when max(faces_count)  = 1 then 'single face'
+            when max(faces_count)  = 0 then 'no face'
+        end as num_faces,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_face_detection_session_data` fd
+    where date(meta_received_at) >= date_sub(current_date(), interval 6 month)
+    group by 1,2
+)
+
+select 
+    segmentation,
+    variant,
+    num_faces,
+    count(distinct i.editing_session_id)/count(distinct fd.editing_session_id)*100 export_rate,
+    count(distinct i.id_for_vendor)/count(distinct fd.id_for_vendor)*100 pct_exporters,
+    count(distinct i.event_id)/count(distinct fd.id_for_vendor)*100 exports_per_device,
+from users u
+join face_data fd
+    on u.id_for_vendor = fd.id_for_vendor
+    and fd.meta_received_at >= experiment_started_meta
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_image_exported` i
+    on u.id_for_vendor = i.id_for_vendor
+    and i.meta_received_at >= '2023-01-24'
+    and i.meta_received_at >= experiment_started_meta
+    and fd.editing_session_id = i.editing_session_id
+group by 1,2,3
+order by 1,2,3
+

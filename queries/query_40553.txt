@@ -1,0 +1,40 @@
+/*
+    Name: Feed VLA - Posts published from VL Android - raw data
+    Query ID: 40553
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-23T10:29:01.681Z
+    */
+    with purchases as (
+    select
+        ps.post_id,
+        count(distinct ps.action_id) as num_purchase_started,
+        count(distinct pe.action_id) as num_purchase_ended,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ps
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` pe
+        on ps.action_id = pe.action_id
+        and pe.reason = "succeeded"
+    where true
+    and ps.action = "purchase_template"
+    group by 1
+)
+
+select distinct
+    up.post_id,
+    case when up.parent_template_id is null then "original" else "remake" end as post_type,
+    date(up.meta_received_at) as creation_date,
+    up.lt_id as user_id,
+    fp.distinct_total_impressions,
+    fp.total_clicks,
+    fp.distinct_export_pressed,
+    fp.distinct_export_rate,
+    p.num_purchase_started,
+    p.num_purchase_ended
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_post_upload_ended` as up
+left join `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio` as fp
+    on fp.post_id = up.post_id
+left join purchases as p
+    on up.post_id = p.post_id
+where up.platform = "android"
+    and up.post_id is not null
+    and up.export_error is null
+order by distinct_export_pressed desc

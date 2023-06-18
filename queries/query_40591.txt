@@ -1,0 +1,27 @@
+/*
+    Name: Facetune: Month0 Revenues per Period by Product (2023/02)
+    Query ID: 40591
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-26T12:41:09.867Z
+    */
+    with trans as (
+    select
+        date_trunc(date(purchase_date), {{period}}) as period,
+        subscription.product_id,
+        round(sum(case when date(payments.first_payment_date) = date(purchase_date) and timestamp_trunc(attribution.attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) then payments.actual_proceeds end),0) as late_revenue,
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` t
+    where application = 'facetune2'
+    and date_trunc(date(purchase_date), {{period}}) > '2023-01-01'
+    and date_trunc(date(purchase_date), {{period}}) <= '2023-03-11'
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(purchase_date), {{period}})
+    and payments.actual_proceeds > 0
+    and case 
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then subscription.current_subscription_store_country not in ('US','CN')
+        else subscription.current_subscription_store_country = '{{countries}}' end
+    group by 1,2
+)
+select
+    trans.*,
+from trans
+order by 1,2

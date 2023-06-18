@@ -1,0 +1,41 @@
+/*
+    Name: VL iOS: New vs Late vs Renewals Revs
+    Query ID: 40616
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-11T14:27:02.701Z
+    */
+    with transactions as (
+    select distinct 
+        id_for_vendor,
+        ss.original_transaction_id,
+        lt_transaction_id,
+        date(ss.original_purchase_date) as original_purchase_date,
+        date(ss.purchase_date) as purchase_date,
+        date(attribution_timestamp) as attribution_timestamp,
+        date(first_payment_date) as first_payment_date,
+        product_category,
+        ss.actual_proceeds
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_state` ss
+    where application ='videoleap'
+        --and days_until_subscription = 0
+        --and revenue_so_far >0
+        --and is_in_trial_period = false --only those out of trial period)
+        )
+
+, revs as (
+    select
+        date_trunc(date(purchase_date), {{time granularity}}) as purchase_dt,
+             
+        case when date(purchase_date) <= date_add(date(attribution_timestamp), interval 30 day) then 'month0'
+             when cast(original_purchase_date as date) = cast(purchase_date as date) then 'late'
+             when cast(purchase_date as date) = cast(first_payment_date as date) then 'late'
+             else 'renewal' end as rev_source,
+             
+        sum(actual_proceeds) as sub_revs
+    from transactions
+    where date(purchase_date) >= '2023-01-01'
+    group by 1,2)
+
+select
+    *
+from revs

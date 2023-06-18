@@ -1,0 +1,71 @@
+/*
+    Name: 20230329 - [FT-1081] Feature Touchpoint Subscription - Saw Screens - Raw Numbers
+    Query ID: 41538
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-02T12:53:39.578Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%FT-1081%')
+    and display_type = 'Touch Point seen or supposed to be seen'
+),
+
+screens as (
+    select distinct
+        id_for_vendor,
+        segmentation, 
+        variant,
+        experiment_started_meta,
+        case 
+            when all_fts like '%Reshape%' and all_fts not like '%Face%' then 'Reshape Only'
+            when all_fts not like '%Reshape%' and all_fts like '%Face%' then 'Face Only'
+            when all_fts like '%Reshape%' and all_fts like '%Face%' then 'Both Face and Reshape'
+        end as screens_seen
+    from (
+        select
+            u.id_for_vendor,
+            segmentation, 
+            variant,
+            experiment_started_meta,
+            string_agg(feature_name, ', ') all_fts
+        from users u
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+            on u.id_for_vendor = fs.id_for_vendor
+            and fs.meta_received_at >= '2023-03-29'
+            and fs.meta_received_at >= experiment_started_meta
+            and feature_name in ('Reshape', 'Face')
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_button_pressed` aa
+            on fs.usage_id = aa.flow_id
+            and aa.meta_received_at >= '2023-03-29'
+            and destination in ( 'blocking_subscription_screen')
+            and button_identifier = 'accept'
+        group by 1,2,3,4
+    )
+)
+
+select
+    segmentation, 
+    variant,
+    screens_seen,
+    count(distinct id_for_vendor) num_users
+from screens
+group by 1,2,3
+order by 1,2,3

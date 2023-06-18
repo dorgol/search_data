@@ -1,0 +1,83 @@
+/*
+    Name: 20230316 - FT2 iOS - [FT-1078] Voluntary AR Off churn prevention - Total Current Subscribers by Sub Type
+    Query ID: 41837
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-14T07:43:19.912Z
+    */
+    with
+users as
+(
+    select distinct
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta,
+        lt_defacto_id,
+        min(experiment_started_meta_by_type) over (partition by id_for_vendor, segmentation, variant) first_display,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_users 
+    from ( 
+        select
+            segmentation,
+            variant,
+            display_type,
+            id_for_vendor,
+            experiment_started_meta,
+            experiment_started_meta_by_type,
+            lt_defacto_id
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = 'facetune2'
+        and lower(d.experiment) like lower('[FT-1078] Voluntary AR Off churn prevention')
+        and display_type in ({{display_type}})
+    )
+),
+
+last_subscription_before_displayed as (
+    select
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        s.subscription.subscription_duration,
+        s.subscription.had_trial,
+        s.subscription.subscription_renewal_date_calc,
+        s.payments.number_of_payments_until_current_transaction,
+        transaction.is_trial_period,
+        s.subscription.product_id,
+        lt_subscription_id,
+        purchase_date as last_purchase_date,
+        s.attribution.attribution_user_id,
+        d.lt_defacto_id,
+        first_display,
+        total_users
+    from users u
+    left join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` d
+        on d.application = 'facetune2'
+        and d.lt_defacto_id = u.lt_defacto_id
+        and u.experiment_started_meta >= d.attribution_timestamp
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation` s
+        on s.application = 'facetune2'
+        and d.attribution_user_id = s.attribution.attribution_user_id
+        -- and safe_cast(d.user_id as string) = rtrim(regexp_extract(s.attribution.attribution_user_id, r'\S*[-]'), '-')
+        and s.subscription.subscription_duration not in ('consumable', '6m','1w', 'l')
+        and purchase_date < first_display
+    where true
+    qualify row_number() over (partition by id_for_vendor, segmentation, variant order by last_purchase_date desc) = 1
+)
+select
+    segmentation,
+    variant,
+    count(distinct c.id_for_vendor) num_users,
+    count(distinct s.lt_subscription_id)/count(distinct c.lt_subscription_id)*100 renewal_rate
+from last_subscription_before_displayed c
+left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation` s
+    on s.application = 'facetune2'
+    and c.lt_subscription_id = s.lt_subscription_id
+    and s.purchase_date > c.last_purchase_date
+where current_timestamp() >= subscription_renewal_date_calc
+group by 1,2
+order by 1,2

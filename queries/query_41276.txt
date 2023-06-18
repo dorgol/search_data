@@ -1,0 +1,59 @@
+/*
+    Name: VL Android - Q2 Targets - Late Rev
+    Query ID: 41276
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-24T09:07:44.171Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(dt), {{period}}) as cohort_period,
+        case when s.lt_subscription_id is not null then true else false end as is_subscriber,
+        count(distinct f.lt_defacto_id) as mau,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date` f
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`subscription_to_defacto` d
+        on f.lt_defacto_id = d.lt_defacto_id
+        and d.application = 'videoleap_android'
+    left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on d.lt_subscription_id = s.lt_subscription_id
+        and date(s.original_purchase_date) <= f.dt
+        and date(s.last_expiration_date_or_renewal_date) >= f.dt
+        and s.app_name = 'videoleap_android'
+    where date_trunc(current_date(), {{period}}) != date_trunc(date(f.dt), {{period}})
+        and date_trunc(date(f.dt), {{period}}) >= '2022-10-01'
+        and f.app_name = 'videoleap_android'
+        and date_trunc(date(f.dt), {{period}}) != date_trunc(date(f.install_time), {{period}}) -- existing user
+    group by 1,2
+    having is_subscriber is false
+)
+
+, late_subs as (
+    select distinct
+        date_trunc(date(t.purchase_date), {{period}}) as sub_period,
+        count(distinct t.device.lt_defacto_id) as subs,
+        sum(t.projected.adjusted_actual_proceeds_alloc) as late_rev
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` t
+    where true
+        and t.application = 'videoleap_android'
+        and payments.month0_late_or_renewal = 'late'
+        and t.projected.adjusted_actual_proceeds_alloc >0
+        and date_trunc(current_date(), {{period}}) != date_trunc(date(t.purchase_date), {{period}})
+        and date_trunc(date(t.purchase_date), {{period}}) >= '2022-10-01'
+    group by 1
+)
+
+, total as (select
+    cohort_period,
+    mau,
+    subs,
+    late_rev
+from users u
+left join late_subs l
+    on sub_period = cohort_period
+)
+
+select
+    *,
+    safe_divide(subs,mau)*100 as late_cvr,
+    safe_divide(late_rev,subs) as arps
+from total
+order by 1 asc

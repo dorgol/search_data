@@ -1,0 +1,211 @@
+/*
+    Name: [FT-1082] Special offer subscription with timer - Manual Revs
+    Query ID: 40812
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-02T10:44:16.028Z
+    */
+    create temp table usage_assignment_state_changed1 as (
+    select
+        r.variant,
+        case when l.last_platform_user_id = 'unknown' then l.platform_device_id else l.last_platform_user_id end as user_id,
+        l.platform_device_id as id_for_vendor,
+        l.lt_defacto_id,
+        r.experiment,
+        case when reason = 'any' then 'displayed' else reason end as reason,
+        min(l.first_session_icloud_app_ts) over (partition by case when l.last_platform_user_id = 'unknown' then l.platform_device_id else l.last_platform_user_id end) as first_launch,
+        min(r.device_timestamp) over (partition by l.platform_device_id, reason) as experiment_started_device,
+        min(r.meta_received_at) over (partition by l.platform_device_id, reason) as experiment_started_meta, 
+    from `ltx-dwh-prod-processed.agg.app_device` as l
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_assignment_state_changed` as r
+        on l.platform_device_id = r.id_for_vendor
+    where (r.experiment= '[FT-1082] Special offer subscription with timer') and r.reason in ( 'activated_for_device', 'displayed', 'Subscription Storyboard view controller appeared', 'any')
+    and r.meta_received_at >= '2023-03-28' 
+    and  l.app_name = 'facetune2'
+);
+
+create temp table first_experiment_date as (
+    select
+        min(first_day) as first_day
+    from (
+        select
+            timestamp_trunc(experiment_started_meta, hour) as first_day,
+            count(distinct id_for_vendor) as devices
+        from usage_assignment_state_changed1
+        group by 1
+        )
+    where devices > 10
+);
+
+create temp table usage_assignment_state_changed as (
+    select
+        l.*,
+        case when r.id_for_vendor is not null then true else false end as displayed_flag,
+        r.experiment_started_device as experiment_started_device_displayed,
+        r.experiment_started_meta as experiment_started_meta_displayed,
+        first_day
+    from usage_assignment_state_changed1 as l
+    left join usage_assignment_state_changed1 as r
+        on l.id_for_vendor = r.id_for_vendor
+        and r.reason = 'displayed'
+    cross join first_experiment_date
+    where l.reason = 'activated_for_device'
+);
+
+create temp table devices_and_variant_full as (
+    -- select 
+    --     '01 All Users' as segmentation,
+    --   variant,
+    --   usage_assignment_state_changed.id_for_vendor,
+    --   first_launch,
+    --   experiment_started_device,
+    --   experiment_started_meta,
+    --     experiment_started_device_displayed,
+    --   experiment_started_meta_displayed,
+    --   displayed_flag,
+    --   first_day
+    -- from usage_assignment_state_changed
+    
+    -- union all
+    
+    select 
+       'facetune2' as application,
+       'Facetune iOS' as app_real_world_name,
+       '02 New Users' as segmentation,
+       experiment,
+       variant,
+       usage_assignment_state_changed.id_for_vendor,
+       lt_defacto_id,
+       first_launch,
+       experiment_started_device,
+       experiment_started_meta,
+       experiment_started_device_displayed,
+       experiment_started_meta_displayed,
+       displayed_flag,
+      first_day
+    from  usage_assignment_state_changed
+    where first_launch >= first_day
+    and displayed_flag
+    union all
+    
+    select 
+       'facetune2' as application,
+       'Facetune iOS' as app_real_world_name,
+        '03 Existing Users' as segmentation,
+       experiment,
+       variant,
+       usage_assignment_state_changed.id_for_vendor,
+       lt_defacto_id,
+       first_launch,
+       experiment_started_device,
+       experiment_started_meta,
+       experiment_started_device_displayed,
+       experiment_started_meta_displayed,
+       displayed_flag,
+      first_day
+    from usage_assignment_state_changed
+    where first_launch < first_day    
+    
+);
+
+create temp table suspected_frauds as (
+    select distinct
+        d.id_for_vendor 
+    from devices_and_variant_full as d
+    join ltx-dwh-prod-processed.devices.facetune2_otid_idfv_pairs as l
+    	 on d.id_for_vendor = l.id_for_vendor
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_state` as r 
+        on l.original_transaction_id = r.original_transaction_id and num_of_lt_defacto_id > 10
+);
+
+create temp table multiple_variants as (
+	select
+		id_for_vendor,
+		count(distinct variant) as num_variant
+	from devices_and_variant_full
+	group by id_for_vendor
+	having count(distinct variant) > 1
+);
+
+-- create the clean devices and variant table
+create temp table devices_and_variant as (
+    select 
+        *
+    from devices_and_variant_full
+    where id_for_vendor not in 
+        (
+            select 
+                id_for_vendor 
+            from suspected_frauds 
+            where id_for_vendor is not null 
+            union distinct 
+            select 
+                id_for_vendor 
+            from multiple_variants 
+            where id_for_vendor is not null
+        ) 
+);
+
+drop table usage_assignment_state_changed;
+drop table usage_assignment_state_changed1;
+
+
+
+
+with devices as
+(
+select
+  d.application,
+  d.app_real_world_name,
+  d.experiment,
+  d.variant,
+  d.segmentation,
+  d.displayed_flag,
+--   d.country,
+  count (distinct d.lt_defacto_id) as num_devices
+from
+    devices_and_variant as d
+where true
+and timestamp_diff(current_timestamp (),d.experiment_started_meta_displayed,day)>=0
+group by 1,2,3,4,5,6--,7,8--,9
+)
+
+
+, transactions as
+
+(
+    select
+      d.application,
+      d.app_real_world_name,
+      d.experiment,
+      d.variant,
+      d.segmentation,
+      d.displayed_flag,
+      count(distinct t.lt_subscription_id) as subs,
+      sum(coalesce(payments.actual_proceeds,0)) as revenue
+    from `devices_and_variant` as d
+    join `ltx-dwh-prod-processed`.`ulei`.`ulei_att_user_groups_and_devices` g
+        on farm_fingerprint('facetune2'||d.id_for_vendor) = g.lt_defacto_id
+    left join
+     `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` as t
+      on d.application = t.application
+      and g.attribution_user_id = t.attribution.attribution_user_id
+    where true
+    and t.original_purchase_date>= d.experiment_started_meta_displayed
+    and t.purchase_date>= d.experiment_started_meta_displayed
+    and t.original_purchase_date >= '2023-03-28'
+    and timestamp_diff(current_timestamp (),d.experiment_started_meta_displayed,day) >= 0
+    -- and subscription.subscription_duration in ('1m','1y')
+    group by 1,2,3,4,5,6--,7,8,9--,10
+)
+
+select
+    experiment,
+    segmentation,
+    variant,
+    num_devices,
+    revenue,
+    subs,
+    100*subs/num_devices as cvr,
+from devices d
+left join transactions t
+    using(application,app_real_world_name,experiment,variant,segmentation,displayed_flag)

@@ -1,0 +1,15 @@
+/*
+    Name: VL All - DM Spend Split
+    Query ID: 42096
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-25T16:14:42.453Z
+    */
+    select 
+                    date_trunc(date(rm.attribution_date), {{period}}) as period,
+                    purchase_platform,
+                    sum(dm_spend) as dm_spend 
+               from `ltx-dwh-prod-processed.agg.marketing_revenue_metrics_by_date_cs` rm
+               where rm.vertical in ('Videoleap') and days_from_attribution_date = 0
+               and date_trunc(date(attribution_date), {{period}}) >= '2023-01-01'
+               and date_trunc(date(attribution_date), {{period}}) < date_trunc(date(current_date()), {{period}})
+               group by 1,2

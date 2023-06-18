@@ -1,0 +1,71 @@
+/*
+    Name: 20230316 - FT2 iOS - [FT-1078] Voluntary AR Off churn prevention - Message Locations - Combinations
+    Query ID: 41650
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-07T08:59:55.093Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1078] Voluntary AR Off churn prevention')
+    and display_type = '{{display_type}}'
+),
+
+messages_seen as (
+    select
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        string_agg(message_name, ', ') all_messages_received
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+        on mp.app_name = 'facetune2' 
+        and mp.platform_device_id = u.id_for_vendor
+        and mp.meta_received_at >= '2023-03-16'
+        and (message_name like '%VoluntaryChurn%' or message_name like '%AutoRenewOffBanner_02_23%' )
+    group by 1,2,3
+)
+
+select
+    segmentation,
+    variant,
+    count(distinct id_for_vendor) num_users,
+    count(distinct case when all_messages_received is not null then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_any,
+
+    -- saw this type ever
+    count(distinct case when all_messages_received like '%OnLaunch%' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_on_launch,
+    count(distinct case when all_messages_received like '%OnExport%' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_on_export,
+    count(distinct case when all_messages_received like '%OnVIPToolEntrance%' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_on_vip_tool,
+    count(distinct case when all_messages_received like '%AutoRenewOffBanner%' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_on_editor_entrance,
+    -- Combos
+    count(distinct case when all_messages_received like '%OnLaunch%' and all_messages_received like '%OnExport%' and (all_messages_received like '%OnVIPToolEntrance%' or all_messages_received like '%AutoRenewOffBanner%') then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_all_3,
+    count(distinct case when all_messages_received like '%OnLaunch%' and all_messages_received not like '%OnExport%' and (all_messages_received like '%OnVIPToolEntrance%' or all_messages_received like '%AutoRenewOffBanner%') then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_launch_and_editor,
+    count(distinct case when all_messages_received like '%OnLaunch%' and all_messages_received like '%OnExport%' and (all_messages_received not like '%OnVIPToolEntrance%' and all_messages_received not like '%AutoRenewOffBanner%') then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_launch_and_export,
+    count(distinct case when all_messages_received not like '%OnLaunch%' and all_messages_received like '%OnExport%' and (all_messages_received like '%OnVIPToolEntrance%' or all_messages_received like '%AutoRenewOffBanner%') then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_editor_and_export,
+    -- saw only
+    count(distinct case when all_messages_received like '%OnLaunch%' and all_messages_received not like '%OnExport%' and all_messages_received not like '%OnVIPToolEntrance%' and all_messages_received not like '%AutoRenewOffBanner%' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_only_launch,
+    count(distinct case when all_messages_received like '%OnExport%' and all_messages_received not like '%OnLaunch%' and all_messages_received not like '%OnVIPToolEntrance%' and all_messages_received not like '%AutoRenewOffBanner%' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_only_export,
+    count(distinct case when all_messages_received like '%OnVIPToolEntrance%' and all_messages_received not like '%OnExport%' and all_messages_received not like '%OnLaunch%' and all_messages_received not like '%AutoRenewOffBanner%' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_only_vip_tool,
+    count(distinct case when all_messages_received like '%AutoRenewOffBanner%' and all_messages_received not like '%OnLaunch%' and all_messages_received not like '%OnVIPToolEntrance%' and all_messages_received not like '%OnExport%' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_saw_only_editor_entrance,
+from messages_seen m
+group by 1,2
+order by 1,2

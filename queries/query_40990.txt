@@ -1,0 +1,25 @@
+/*
+    Name: (Joe) - month0_late_or_renewal investigation
+    Query ID: 40990
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-11T12:10:47.980Z
+    */
+    with trans as (
+    select
+        date_trunc(date(purchase_date), {{period}}) as period,
+        payments.month0_late_or_renewal,
+        round(sum(payments.actual_proceeds),0) as revenues,
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` t
+    where application = 'facetune2'
+    and date_trunc(date(purchase_date), {{period}}) >= date_sub(current_date(), interval 180 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(purchase_date), {{period}})
+    and case 
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then subscription.current_subscription_store_country not in ('US','CN')
+        else subscription.current_subscription_store_country = '{{countries}}' end
+    group by 1,2
+)
+
+select
+*
+from trans

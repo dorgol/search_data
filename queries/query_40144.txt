@@ -1,0 +1,81 @@
+/*
+    Name: VL iOS - Feed - Post Performance - Clicks (over time)
+    Query ID: 40144
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-09T09:35:52.395Z
+    */
+    with impressions as (
+    select distinct
+        ii.post_id,
+        ii.platform_device_id,
+        ii.action_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        date_trunc(date(ii.meta_received_at), {{time granularity}}) as dt
+    from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` ii
+     inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and actions = 'become_ready' -- impressions
+        and ii.application = 'videoleap'
+)
+
+, clicks as (
+    select distinct
+        ii.post_id,
+        ii.platform_device_id,
+        ii.action_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        date_trunc(date(ii.meta_received_at), {{time granularity}}) as dt
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ii
+        inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and action = 'use_template' -- clicks
+        and ii.meta_source = 'videoleap'
+        and ii.meta_platform = 'ios'
+)
+
+, agg_impressions as (
+    select
+        dt,
+        case when '{{post type}}' = 'Combined' then 'Combined' else post_type end as post_type,
+        count(distinct action_id) as impressions,
+        count(distinct platform_device_id) as impression_users
+    from impressions
+    where case when '{{post type}}' = 'Original' then post_type = 'Original'
+                when '{{post type}}' = 'Remake' then post_type = 'Remake'
+                else true end
+    group by 1,2 )
+    
+, agg_clicks as (
+    select
+        dt,
+        case when '{{post type}}' = 'Combined' then 'Combined' else post_type end as post_type,
+        count(distinct action_id) as clicks,
+        count(distinct platform_device_id) as click_users,
+        count(distinct post_id) as click_posts
+    from clicks
+    where case when '{{post type}}' = 'Original' then post_type = 'Original'
+                when '{{post type}}' = 'Remake' then post_type = 'Remake'
+                else true end
+    group by 1,2 )
+    
+select
+    i.dt,
+    i.post_type,
+    i.impressions,
+    i.impression_users,
+    c.clicks,
+    c.click_users,
+    safe_divide(clicks, impressions)*100 as clicks_per_impression,
+    safe_divide(click_users, impression_users)*100 as clicks_per_impression_users,
+    safe_divide(clicks, click_posts) as clicks_per_post,
+    safe_divide(clicks, click_users) as clicks_per_user
+from agg_impressions i
+    left join agg_clicks c
+        on i.dt = c.dt
+        and i.post_type = c.post_type

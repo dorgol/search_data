@@ -1,0 +1,22 @@
+/*
+    Name: Facetune: Photo Size Distribution - Single Face
+    Query ID: 40865
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-03T17:16:43.416Z
+    */
+    select
+    *,
+    100*num_faces/sum(num_faces) over () as pct,
+from (
+    select
+        round(cast(json_extract_scalar(faces, '$.size_x') as float64)/10,0)*10 as size_x,
+        round(cast(json_extract_scalar(faces, '$.size_y') as float64)/10,0)*10 as size_y,
+        count(distinct event_id || json_extract_scalar(faces, '$.origin_x')) as num_faces,
+    from `ltx-dwh-prod-raw.analytics.ios_facetune2_face_detection_session_data`
+      , unnest(json_query_array(faces_rects)) as faces
+    where meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+    and faces_count = 1
+    group by 1,2
+)
+where true
+qualify pct > 0.001

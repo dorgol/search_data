@@ -1,0 +1,73 @@
+/*
+    Name: beautyFeedPPU_03_2023 - debugging - Total Exports
+    Query ID: 42441
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-04T12:07:38.622Z
+    */
+    
+with users as
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and lower(d.experiment) not like lower('%AU_UK%')
+        and d.display_type = 'reached beauty feed'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        and variant not in ('Baseline', 'Variant 1')
+        group by 1,2,3,4,5,6,7,8
+)
+
+    select
+        variant,
+        segmentation,
+        count(distinct ex.platform_device_id) num_exporters,
+        count(distinct sp.platform_device_id) num_saw_store,
+        count(distinct spe.platform_device_id) num_purchased_store_purchase_ended,
+        count(distinct s.attribution.attribution_user_id) num_purchased_rev_alloc,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = u.id_for_vendor
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '{{start_date}}'
+        and ex.meta_received_at > u.experiment_started_meta
+        and (ex.export_source like 'beauty_feed_in_home_tab%')
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_view_presented` sp
+        on true
+        and date(sp.meta_received_at) >= '{{start_date}}'
+        and sp.platform_device_id = u.id_for_vendor
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_purchase_process_ended` spe
+        on true
+        and date(spe.meta_received_at) >= '{{start_date}}'
+        and spe.platform_device_id = u.id_for_vendor
+        and result = 'success'
+    left join `ltx-dwh-prod-processed.subscriptions.purchase_to_verified_devices` as sde
+        on sde.lt_defacto_id = farm_fingerprint('{{app_name}}' || u.id_for_vendor) 
+    left join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` d
+        on d.application = 'facetune2'
+        and d.lt_defacto_id = farm_fingerprint('facetune2' || ex.platform_device_id)
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation` s
+        on s.application = 'facetune2'
+        and s.original_purchase_date >= '2023-05-01'
+        and subscription.product_category = 'asset'
+        and subscription.product_sub_category = 'template'
+        and d.attribution_user_id = s.attribution.attribution_user_id
+    group by 1,2
+    order by 1,2

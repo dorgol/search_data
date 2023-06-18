@@ -1,0 +1,58 @@
+/*
+    Name: 20230125 - FT iOS - [FT-1063] Face Monetization - Feature Retention
+    Query ID: 40118
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-07T08:55:07.061Z
+    */
+    with 
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%{{experiment}}%') 
+    and display_type = '{{display}}'
+),
+
+feature_usage as (
+    select
+        segmentation,
+        variant,
+        fs.id_for_vendor,
+        event_id,
+        device_timestamp,
+        feature_name,
+        is_subscriber,
+        experiment_started_meta,
+        count(distinct event_id) over (partition by u.id_for_vendor, segmentation, variant, feature_name) num_times_used_feature
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+        on fs.meta_received_at >= '2023-01-25'
+        and fs.id_for_vendor = u.id_for_vendor
+        and fs.meta_received_at >= experiment_started_meta
+)
+
+select
+    segmentation,
+    variant,
+    feature_name,
+    count(distinct id_for_vendor) num_feature_users,
+    count(distinct case when num_times_used_feature > 1 then id_for_vendor end)/count(distinct id_for_vendor)*100 feature_retention_rate
+from feature_usage f
+group by 1,2,3
+having num_feature_users >= 1000
+order by 5 desc,1,2,3

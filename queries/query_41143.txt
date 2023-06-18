@@ -1,0 +1,19 @@
+/*
+    Name: PL Heal Success was retry?
+    Query ID: 41143
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-19T10:33:05.965Z
+    */
+    select 
+date_trunc(meta_received_at, day) as dt,
+json_extract_scalar(process_details,"$.was_retry") as success,
+--count(distinct process_id),
+count(distinct event_id) as freq,
+count(distinct open_project_id) as projects,
+count(distinct platform_device_id) as users
+--process_details
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_process_ended`
+where app_name='editor'
+and meta_received_at>='2023-04-01'
+and process_name='remove_object_request'
+group by 1,2

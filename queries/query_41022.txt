@@ -1,0 +1,50 @@
+/*
+    Name: Photoleap iOS- Trial Value Reminder Experiment T2Paid
+    Query ID: 41022
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-13T13:49:22.393Z
+    */
+    with devices as
+(
+select 
+distinct
+id_for_vendor,
+variant,
+segmentation,
+is_in_trial_period,
+auto_renewal_disabling_date,
+revenue_so_far,
+is_renewing,
+original_purchase_date
+from
+
+`ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant`
+where application='editor'
+and experiment='Free Trial Value Reminder'
+and segmentation= '02 New Users'
+and had_trial= true
+and subscription_duration='1y'
+and display_type='activated_for_device'
+--and id_for_vendor='24179840-46FD-48EF-9079-3F3461E2C866'
+and variant !='Enabled'
+and original_purchase_date >= experiment_started_meta
+)
+--group by 1
+
+
+
+(
+select
+variant,
+date(original_purchase_date) as trial_start,
+count(distinct id_for_vendor) as completed_trial,
+count(distinct case when revenue_so_far>0 then id_for_vendor end) as paid_trial,
+count(distinct case when revenue_so_far>0 then id_for_vendor end)/count(distinct id_for_vendor)*100
+from
+devices
+where 
+--is_renewing is false
+ is_in_trial_period is false
+
+group by 1,2
+)

@@ -1,0 +1,70 @@
+/*
+    Name: VL iOS: Export Retention by Project Type
+    Query ID: 42216
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-25T13:21:15.274Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(first_session_icloud_app_ts), {{Time granularity}}) as cohort_period,
+        date_diff(current_date(), date(first_session_icloud_app_ts), {{Time granularity}}) as total_periods,
+        f.platform_device_id,
+        case when f.last_platform_user_id = 'unknown' then f.platform_device_id else f.last_platform_user_id end as user_id,
+        date(first_session_icloud_app_ts) as first_session_dt
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` f
+    where date_trunc(date(first_session_icloud_app_ts), {{Time granularity}}) >= date_sub(current_date(), interval 1 year)
+        and date_trunc(current_date(), {{Time granularity}}) != date_trunc(date(first_session_icloud_app_ts), {{Time granularity}})
+        and f.app_name = 'videoleap'
+        and case  
+            when '{{countries}}' = 'Global' then true 
+            when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+            else f.current_store_country = '{{countries}}' end
+)
+
+, user_per_period as (
+    select distinct
+        cohort_period,
+        total_periods,
+        periods,
+        count(distinct user_id) over (partition by cohort_period) as total_users_for_period
+    from users
+    join unnest(generate_array(0,30)) as periods
+    where periods <= total_periods
+)
+
+, exports as (
+    select
+        cohort_period,
+        date_diff(date(ex.meta_received_at), first_session_dt, {{Time granularity}}) as active_period,
+        count(distinct ex.id_for_vendor) as export_users,
+        count(distinct case when parent_template_id is null then ex.id_for_vendor end) as og_export_users,
+        count(distinct case when parent_template_id is not null then ex.id_for_vendor end) as remake_export_users,
+    from users as u
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` exs
+        on u.platform_device_id = exs.id_for_vendor
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+        on exs.export_id = ex.export_id
+    where date_trunc(date(ex.meta_received_at), {{Time granularity}}) >= date_sub(current_date(), interval 1 year)
+        and date_trunc(current_date(), {{Time granularity}}) != date_trunc(date(ex.meta_received_at), {{Time granularity}})
+    group by 1,2
+    having export_users > 100
+)
+
+
+select distinct
+    format_date('%y-%m-%d', user_per_period.cohort_period) as cohort_period,
+    active_period,
+    '{{Time granularity}} ' || cast (active_period as string) || ' export retention' as period_name,
+    export_users,
+    og_export_users,
+    remake_export_users,
+    total_users_for_period,
+    round(100*export_users/total_users_for_period,2) as export_retention,
+    round(100*og_export_users/total_users_for_period,2) as og_export_retention,
+    round(100*remake_export_users/total_users_for_period,2) as remake_export_retention
+from user_per_period
+join exports
+    on user_per_period.periods = exports.active_period
+    and user_per_period.cohort_period = exports.cohort_period
+where active_period = 0
+order by 1,2

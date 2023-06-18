@@ -1,0 +1,16 @@
+/*
+    Name: FT iOS - Image Export Dimensions
+    Query ID: 42055
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-21T07:04:23.400Z
+    */
+    select
+    image_width,
+    image_height,
+    count(distinct event_id) num_exports
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_image_exported`
+where true
+and date(meta_received_at) >= date_sub(current_date(), interval 30 day)
+group by 1,2
+having num_exports > 100
+order by 3 desc

@@ -1,0 +1,49 @@
+/*
+    Name: Global Events - Export Flow - Direct Export - Integration
+    Query ID: 41840
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-31T06:24:13.080Z
+    */
+    select
+    eps.platform_device_id,
+    eps.device_timestamp as process_start_time, 
+    eps.asset_type,
+    eps.export_source,
+    eps.export_target,
+    eps.asset_duration,
+    eps.asset_height,
+    eps.asset_width,
+    eps.export_details,
+    eps.file_format,
+    eps.frame_rate,
+    eps.parent_template_id,
+    eps.process_id,
+    eps.publish_target,
+    epe.result as export_result,
+    epe.activity_targets,
+    epe.error,
+    fs.flow_id,
+    fs.device_timestamp as flow_start_time,
+    fs.source,
+    fs.source_flow_id,
+    fe.flow_id is not null as flow_ended,
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_export_process_started` eps
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_export_process_ended` epe
+    on epe.app_name = '{{app_name}}'
+    and eps.platform_device_id = epe.platform_device_id
+    -- and fs.flow_id = epe.flow_id
+    and eps.process_id = epe.process_id
+    and epe.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_export_flow_started` fs
+    on fs.app_name = '{{app_name}}'
+    and fs.platform_device_id = eps.platform_device_id
+    and fs.flow_id = eps.flow_id
+    and fs.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_export_flow_ended` fe
+    on fe.app_name = '{{app_name}}'
+    and fs.platform_device_id = fe.platform_device_id
+    and fs.flow_id = fe.flow_id
+    and fe.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+where eps.app_name = '{{app_name}}'
+and eps.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+order by 1,3 asc,2,10 asc

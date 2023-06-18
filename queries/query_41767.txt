@@ -1,0 +1,160 @@
+/*
+    Name: Photoleap iOS - Ai Enhance v2 Experiment Trended
+    Query ID: 41767
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-06-06T09:15:27.972Z
+    */
+    with devices as
+(
+select 
+distinct
+segmentation,
+variant,
+id_for_vendor,
+experiment_started_meta
+from
+
+`ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+where application='editor'
+and experiment='Enhance V2'
+--and segmentation= 
+--'03 Existing Users'
+--'02 New Users'
+--and had_trial= true
+--and subscription_duration='1y'
+  and   case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                --when '{{segments}}' = 'All Users Without Existing Segmentation' then dav.segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+                end
+and display_type='activated_for_device'
+--and id_for_vendor='24179840-46FD-48EF-9079-3F3461E2C866'
+and variant !='Enabled'
+and experiment_started_meta>='2023-04-15'
+
+)
+,
+base as 
+(
+select
+devices.*,
+dev.dt
+from
+devices
+left join `ltx-dwh-prod-processed`.`agg`.`app_device_date` as dev
+on devices.id_for_vendor=dev.platform_device_id
+and dev.app_name='editor'
+and dt>=date(devices.experiment_started_meta)
+order by id_for_vendor, dt
+--limit 100
+)
+
+
+
+
+-- bl as
+(
+select
+variant,
+
+ai_enhance_users/users*100 as ai_enhance_usage_pct,
+ai_enhance_starts/ai_enhance_users as starts_per_user,
+ai_enhance_exporters/ai_enhance_users*100 as export_pct,
+ai_enhance_exports/ai_enhance_exporters as exports_per_exporter,
+ai_enhance_exports/ai_enhance_users as exports_per_user,
+*
+from
+(
+select
+variant,
+dav.dt,
+
+count(distinct dav.id_for_vendor) as users,
+
+count(distinct ies.id_for_vendor
+                     ) as ai_enhance_users,
+count(distinct ies.flow_id
+      ) as ai_enhance_starts,
+count(distinct iexp.id_for_vendor
+   ) as ai_enhance_exporters,
+count(distinct  iexp.event_id
+   ) as ai_enhance_exports,
+count(distinct l.id_for_vendor) as ai_enhance_sub_screen_triggered,
+count(distinct l.presentation_id) as ai_enhance_sub_screen_volume_triggered,
+count(distinct r.id_for_vendor) as ai_enhance_subs
+from  base as dav
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_flow_started` as ies
+on ies.id_for_vendor=dav.id_for_vendor
+and date(ies.meta_received_at) = dav.dt
+and ies.instant_edit_name='AIEnhance'
+
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_exported` as iexp
+on iexp.id_for_vendor=dav.id_for_vendor
+and date(iexp.meta_received_at)= dav.dt
+and iexp.instant_edit_name in ('AIEnhance','ai_enhance')
+left join ltx-dwh-prod-raw.analytics.ios_editor_subscription_presented l
+on dav.id_for_vendor=l.id_for_vendor
+and date(l.meta_received_at) =dav.dt
+and l.source in ('ai_enhance.save','ai_enhance','ai_enhance.all','ai_enhance.retouch','ai_enhance.descratch','AIEnhance')
+left join ltx-dwh-prod-raw.analytics.ios_editor_subscription_purchase_succeeded r
+    on l.id_for_vendor=r.id_for_vendor
+    and l.presentation_id=r.presentation_id
+where dav.variant='Baseline'
+and dav.dt is not null
+group by 1,2
+)
+)
+
+union all
+
+
+
+
+(
+select
+variant,
+
+safe_divide(ai_enhance_users,users)*100 as ai_enhance_usage_pct,
+safe_divide(ai_enhance_starts,ai_enhance_users) as starts_per_user,
+safe_divide(ai_enhance_exporters,ai_enhance_users)*100 as export_pct,
+safe_divide(ai_enhance_exports, ai_enhance_exporters) as exports_per_exporter,
+safe_divide(ai_enhance_exports, ai_enhance_users) as exports_per_user
+,*
+from
+(
+select
+variant,
+dav.dt,
+count(distinct dav.id_for_vendor) as users,
+count(distinct  fs.platform_device_id     ) as ai_enhance_users,
+count(distinct  fs.feature_usage_id    ) as ai_enhance_starts,
+count(distinct  exps.platform_device_id   ) as ai_enhance_exporters,
+count(distinct  exps.process_id     ) as ai_enhance_exports,
+count(distinct l.id_for_vendor) as ai_enhance_sub_screen_triggered,
+count(distinct l.presentation_id) as ai_enhance_sub_screen_volume_triggered,
+count(distinct r.id_for_vendor) as ai_enhance_subs
+from  base as dav
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as fs
+on fs.platform_device_id=dav.id_for_vendor
+and fs.app_name='editor'
+and date(fs.meta_received_at) =dav.dt
+and fs.feature_name='ai_enhance'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` as exps
+on exps.platform_device_id=dav.id_for_vendor
+and exps.app_name='editor'
+and date(exps.meta_received_at)= dav.dt
+and exps.export_source='ai_enhance'
+left join ltx-dwh-prod-raw.analytics.ios_editor_subscription_presented l
+on dav.id_for_vendor=l.id_for_vendor
+and date(l.meta_received_at) =dav.dt
+and l.source in ('ai_enhance.save','ai_enhance','ai_enhance.all','ai_enhance.retouch','ai_enhance.descratch','AIEnhance')
+left join ltx-dwh-prod-raw.analytics.ios_editor_subscription_purchase_succeeded r
+    on l.id_for_vendor=r.id_for_vendor
+    and l.presentation_id=r.presentation_id
+where dav.variant='Variant 1'
+and dav.dt is not null
+group by 1,2
+
+)
+)

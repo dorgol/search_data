@@ -1,0 +1,79 @@
+/*
+    Name: 20230403 - FT2 iOS - [FT-1087] Material Makeup - Subfeature Accepts
+    Query ID: 41422
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-27T14:28:34.095Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' ) 
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%Material Makeup%')
+    and display_type = '{{display_type}}'
+)
+
+select
+    segmentation,
+    variant,
+    sub_feature_name,
+    count(distinct id_for_vendor) num_users,
+    count(distinct fs.feature_usage_id) num_sessions,
+    count(distinct sfs.platform_device_id)/nullif(max(total_mm_users),0)*100 pct_mm_users_used,
+    count(distinct sfs.platform_device_id)/nullif(max(total_users),0)*100 pct_total_users_used,
+    count(distinct sfs.feature_usage_id)/nullif(max(total_mm_sessions),0)*100 pct_sessions_used_in
+from (
+    select distinct
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        fs.feature_usage_id,
+        fs.platform_device_id,
+        experiment_started_meta,
+        count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_users,
+        count(distinct fs.platform_device_id) over (partition by segmentation, variant) total_mm_users,
+        count(distinct fs.feature_usage_id) over (partition by segmentation, variant) total_mm_sessions
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on true
+        and fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2023-04-03'
+        and fs.meta_received_at >= u.experiment_started_meta
+        and u.id_for_vendor = fs.platform_device_id
+        and case when variant = 'Baseline' then fs.feature_name = 'Makeup' else fs.feature_name = 'Material Makeup' end
+) fs
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+    on true
+    and fe.app_name = 'facetune2'
+    and fe.meta_received_at >= '2023-04-03'
+    and fe.feature_usage_id = fs.feature_usage_id
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_started` sfs
+    on true
+    and sfs.app_name = 'facetune2'
+    and sfs.meta_received_at >= '2023-04-03'
+    and sfs.meta_received_at >= experiment_started_meta
+    and fs.feature_usage_id = sfs.feature_usage_id
+-- left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_ended_with_change` sf
+--     on true
+--     and sf.app_name = 'facetune2'
+--     and sf.meta_received_at >= '2023-04-03'
+--     and sf.feature_usage_id = fs.feature_usage_id
+--     and sub_feature_name = 'arcball'
+group by 1,2,3
+having sub_feature_name is not null
+order by 1,3,2

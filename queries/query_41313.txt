@@ -1,0 +1,70 @@
+/*
+    Name: Photoleap - AI Scenes Experiment
+    Query ID: 41313
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-02T15:37:10.169Z
+    */
+    
+create temp table devices_and_variant as (
+    select distinct
+        dav.* except (display_type)
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` as dav
+    where dav.experiment = '{{ experiment }}'
+        --and dav.segmentation like '%{{ segments }}%'
+            and   case 
+                when '{{segments}}' = 'All Users' then dav.segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then dav.segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then dav.segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'All Users Without Existing Segmentation' then dav.segmentation in ('01 All Users','02 New Users','03 Existing Users' ) end
+                and display_type='activated_for_device'
+            --and variant='Variant 1'
+);
+
+
+select *,
+ai_scenes_users/users*100 as scenes_usage_pct,
+exporters/ai_scenes_users*100 as scenes_export_pct,
+feature_starts/ai_scenes_users as starts_per_user,
+exports/ai_scenes_users as exports_per_user,
+users_triggered_scenes_sub_screen/ai_scenes_users*100 as pct_of_ai_users_triggering_sub_screen,
+ai_scenes_conversions/ai_scenes_users*100 pct_of_ai_scenes_users_converting,
+ai_scenes_conversions/users_triggered_scenes_sub_screen*100 as pct_of_users_triggereing_ai_scenes_sub_screen_that_convert,
+volume_of_sub_screens_triggered/ai_scenes_users as sub_screens_triggered_per_user
+from
+(
+select
+dav.variant,
+count(distinct dav.id_for_vendor) as users,
+count(distinct exp.platform_device_id) as ai_scenes_users,
+count(distinct exp.feature_usage_id) as feature_starts,
+count(distinct exports.process_id) as exports,
+count(distinct exports.platform_device_id) as exporters,
+count(distinct efs.id_for_vendor) as users_triggered_scenes_sub_screen,
+count(distinct efs.presentation_id) as volume_of_sub_screens_triggered,
+count(distinct subs.id_for_vendor) as ai_scenes_conversions,
+from devices_and_variant as dav
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as exp
+on dav.id_for_vendor=exp.platform_device_id
+and dav.experiment_started_meta<exp.meta_received_at
+and exp.app_name='editor'
+and exp.feature_name='ai_scenes'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` as exports
+on dav.id_for_vendor=exports.platform_device_id
+and  exports.export_source='ai_scenes'
+and exports.app_name='editor'
+and dav.experiment_started_meta<exports.meta_received_at
+
+left join `ltx-dwh-prod-raw.analytics.ios_editor_subscription_presented` as efs
+    on dav.id_for_vendor = efs.id_for_vendor
+    and dav.experiment_started_meta<efs.meta_received_at 
+    and efs.source in ('ai_scenes.pro_filter','ai_scenes','ai_scenes.rate_limiter','ai_scenes.save'
+    --,
+    --'ai_cars'
+    )
+left join `ltx-dwh-prod-raw.analytics.ios_editor_subscription_purchase_succeeded` as subs
+on efs.id_for_vendor=subs.id_for_vendor
+and efs.presentation_id=subs.presentation_id
+group by 1
+
+--limit 100
+)

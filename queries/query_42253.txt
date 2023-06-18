@@ -1,0 +1,31 @@
+/*
+    Name: Facetune: AI Selfie Accepts
+    Query ID: 42253
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-27T18:57:01.803Z
+    */
+    with usage as (
+    select distinct
+        timestamp_trunc(meta_received_at, {{period}}) as period,
+        feature_name,
+        reason,
+        TRIM(SPLIT(kv, ':')[OFFSET(0)], '" ') AS key,
+        TRIM(SPLIT(kv, ':')[OFFSET(1)], '" ') AS value,
+        feature_usage_id,
+        platform_device_id,
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_ended`
+        ,UNNEST(SPLIT(REGEXP_REPLACE(JSON_EXTRACT(sub_feature_state, '$.deviceState'), r'[{}\s]', ''))) AS kv
+    where app_name = 'facetune2'
+    and meta_received_at >= '2023-05-20'
+    and feature_name = 'aiSelfies'
+)
+
+select
+    period,
+    count(distinct feature_usage_id) as feature_ends,
+    100*count(distinct case when reason = 'accepted' then feature_usage_id end)/count(distinct feature_usage_id) as accept_rate,
+    100*count(distinct case when reason = 'accepted' then platform_device_id end)/count(distinct platform_device_id) as pct_accepters,
+from usage
+where value = 'true'
+group by 1
+order by 1

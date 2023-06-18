@@ -1,0 +1,64 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1076] Your photo showcase - Questionnaire Funnel - Backwards Navigation
+    Query ID: 41202
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-20T12:13:37.445Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1076] Your photo showcase')
+    and display_type = '{{display_type}}'
+),
+
+q_responses as (
+    select distinct
+        u.id_for_vendor, 
+        pq.platform_device_id q_id_for_vendor,
+        u.segmentation,
+        u.variant,
+        pq.origin_page_response,
+        origin_page_index,
+        destination_page_index,
+        u.experiment_started_meta
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on true
+        and app_name = 'facetune2'
+        and u.id_for_vendor = pq.platform_device_id
+        and pq.meta_received_at >= u.experiment_started_meta
+    where true
+    -- and (destination_page_index is null or destination_page_index > origin_page_index)
+    -- qualify row_number() over (partition by u.id_for_vendor, destination_page_index  order by pq.meta_received_at desc) = 1
+)
+
+select 
+    segmentation,
+    variant,
+    count(distinct id_for_vendor) num_users,
+    count(distinct case when origin_page_index = 2 and destination_page_index = 1 then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_returned_to_q1,
+    count(distinct case when origin_page_index = 3 and destination_page_index = 2 then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_returned_to_q2,
+    count(distinct case when origin_page_index = 4 and destination_page_index = 3 then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_returned_to_q3,
+    count(distinct case when origin_page_index = 5 and destination_page_index = 4 then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_returned_to_q4,
+from q_responses
+group by 1,2
+order by 1,2

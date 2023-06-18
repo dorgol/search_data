@@ -1,0 +1,36 @@
+/*
+    Name: feed_unnested validation
+    Query ID: 42113
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-28T06:46:55.318Z
+    */
+    
+    -- select
+    --     dt,
+    --     count(*) as num_rows,
+    --     count(distinct unique_key) as num_distinct_entries
+    -- from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` 
+    -- where dt >= "2023-01-10" and feed_type = "category.recommended_videoleap"
+    -- group by 1
+
+
+
+    select
+        date(meta_received_at) as dt,
+        meta_received_by,
+        count(*) as num_entries,
+        
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_usage_info`
+    where date(meta_received_at) >= "2022-09-10" 
+    group by 1,2
+    
+    union all 
+    
+    select
+        date(meta_received_at) as dt,
+        meta_received_by || "_new event" as meta_received_by,
+        count(*) as num_entries,
+        
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_usage_info`
+    where date(meta_received_at) >= "2023-01-10" 
+    group by 1,2

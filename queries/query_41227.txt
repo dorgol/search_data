@@ -1,0 +1,102 @@
+/*
+    Name: [FT-1067] Beauty Feed - export % by time from first feed
+    Query ID: 41227
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-04-30T06:46:40.400Z
+    */
+    with 
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app_name}}'
+    and lower(d.experiment) like lower('%{{experiment}}%') 
+    and display_type = '{{display}}'
+    and date(experiment_started_meta) >= '{{start_date}}'
+    and case when '{{variant}}' = 'all' then variant like 'Variant%' else variant = '{{variant}}' end
+),
+
+first_feed_presented as (
+select
+        segmentation,
+        variant,
+        f.platform_device_id,
+        experiment_started_meta,
+        meta_received_at as first_feed_ts,
+        device_timestamp as first_feed_device_ts,
+    from users u
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+        on true
+        and f.app_name = 'facetune2'
+        and f.platform_device_id = u.id_for_vendor
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '{{start_date}}'
+        and f.meta_received_at > u.experiment_started_meta
+    qualify row_number() over (partition by f.platform_device_id order by device_timestamp asc) = 1
+),
+
+series as (
+select * from unnest(generate_array(0,100)) as series_num
+),
+
+exports as (
+    select 
+        u.segmentation,
+        u.variant,
+        u.platform_device_id,
+        u.experiment_started_meta,
+        u.first_feed_ts,
+        u.first_feed_device_ts,
+        ex.editing_session_id,
+        ex.event_id,
+        ex.device_timestamp,
+        date_diff(ex.device_timestamp, u.first_feed_device_ts, day) as days_to_export
+    from first_feed_presented u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on ex.app_name = '{{app_name}}'
+        and date(ex.meta_received_at) >= '{{start_date}}'
+        and cast(app_version_code as int64) >= {{since_version}}
+        and u.platform_device_id = ex.platform_device_id
+        and ex.meta_received_at >= u.first_feed_ts
+        and ex.export_source like 'beauty%'
+)
+
+
+--in order for 2 exports / 3 exports to work, the query needs to be fixed to calculate cumulative number of exports per user and not just number of exports per day...
+    
+select
+    series_num as day,
+    --first_feed_ts,
+    count(distinct platform_device_id) as num_users,
+    100* safe_divide(count(distinct case when days_to_export <= s.series_num then platform_device_id end) , count(distinct platform_device_id)) as pct_users_1_export,
+    -- 100* safe_divide(count(distinct case when days_to_export <= s.series_num and num_exports > 1 then platform_device_id end) , count(distinct platform_device_id)) as pct_users_2_exports,
+    -- 100* safe_divide(count(distinct case when days_to_export <= s.series_num and num_exports > 2 then platform_device_id end) , count(distinct platform_device_id)) as pct_users_3_exports,
+from series s
+left join (
+    select
+        platform_device_id,
+        --date(first_feed_ts) first_feed_ts,
+        date_diff(current_date, date(first_feed_ts), day) as days_from_first_feed,
+        days_to_export,
+        count(distinct event_id) as num_exports
+    from exports ex
+    group by 1,2,3--,4
+    ) u
+on s.series_num < u.days_from_first_feed
+group by 1--,2
+having count(distinct platform_device_id) > 15000
+order by 1

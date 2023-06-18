@@ -1,0 +1,57 @@
+/*
+    Name: AI Generations By Hour
+    Query ID: 42206
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-25T09:32:07.863Z
+    */
+     select 
+ dt,
+ --sub_feature_name,
+ app_name,
+ count(distinct platform_device_id) as users_generating,
+ count(distinct sub_feature_usage_id) as generations,
+ max(total_users_generating) as total_users_generating,
+ max(total_generations) as total_generations,
+ max(total_users_generating_by_platform) as total_users_generating_by_platform,
+ max(total_generations_by_platform) as total_generations_by_platform,
+ --count(distinct platform_device_id) over(partition by dt) as total_users_generating,
+ --count(distinct sub_feature_usage_id) over(partition by dt) as total_generations,
+ from
+  (select distinct
+  --sub_feature_name
+  date_trunc(subf.meta_received_at,{{ date granularity }}) as dt,
+  app_name,
+  case when app_name ='editor' then platform_device_id 
+        when app_name='editor_android' then installation_id end as platform_device_id,
+  feature_usage_id,
+  sub_feature_usage_id,
+  open_project_id,
+  --app_version_code,
+  case when sub_feature_name like ('Custom%') then 'Custom' else sub_feature_name end as sub_feature_name,
+  count(distinct case when app_name ='editor' then platform_device_id 
+        when app_name='editor_android' then installation_id end) over(partition by date_trunc(subf.meta_received_at,{{ date granularity }})) as total_users_generating,
+          count(distinct case when app_name ='editor' then platform_device_id 
+        when app_name='editor_android' then installation_id end) over(partition by app_name , date_trunc(subf.meta_received_at,{{ date granularity }})) as total_users_generating_by_platform,
+  count(distinct sub_feature_usage_id) over(partition by date_trunc(subf.meta_received_at,{{ date granularity }})) as total_generations,
+  count(distinct sub_feature_usage_id) over(partition by app_name , date_trunc(subf.meta_received_at,{{ date granularity }})) as total_generations_by_platform,
+  from
+  `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_started` as subf
+    where 
+     case  
+     when '{{ Feature }}'= 'Cars' then subf.root_feature_name in ('ai_cars')
+ when '{{ Feature }}'= 'Scenes' then subf.root_feature_name in ( 'ai_scenes')
+ when '{{ Feature }}'= 'Selfies' then subf.root_feature_name in ( 'ai_selfies','ai_selfie')
+ when '{{ Feature }}'= 'Rooms' then subf.root_feature_name in ( 'ai_rooms')
+ when '{{ Feature }}'= 'Anime' then subf.root_feature_name in ( 'ai_anime')
+ when '{{ Feature }}'= 'Tattoos' then  subf.root_feature_name in ('ai_tattoos') end
+    
+    and subf.app_name in ('editor','editor_android')
+    and date(subf.meta_received_at)>=date_add(current_date(),interval -{{ last x days }} day)
+    --"2023-05-09"
+    and sub_feature_name not in ('edit_screen','results','selection.custom')
+    and case when '{{ subscribed }}' = 'Subscribed' then is_subscriber= true
+        when '{{ subscribed }}' ='Non Subscribed' then is_subscriber= false
+        else true end 
+    and cast(app_version_code as int64)  >= 4490
+    )
+    group by 1,2

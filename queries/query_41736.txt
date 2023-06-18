@@ -1,0 +1,160 @@
+/*
+    Name: VL iOS - Feed Feature Ranking (SMB's + Influencers) - Felix
+    Query ID: 41736
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-10T10:57:33.401Z
+    */
+    with users as (
+    select distinct
+         pq.platform_device_id,
+         case when origin_page_response like '%influencer%' then 'business'
+              when origin_page_response like '%business%' then 'business'
+              else 'other' end as response
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+    where pq.app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    qualify row_number() over (partition by pq.platform_device_id order by pq.meta_received_at desc) = 1
+),
+
+impressions as (
+    select distinct
+        ii.post_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        date_trunc(date(ii.meta_received_at), {{time granularity}}) as dt,
+        count(distinct ii.action_id) as impressions,
+        count(distinct ii.platform_device_id) as impression_users
+    from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` ii
+    inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    inner join users on ii.platform_device_id = users.platform_device_id
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and actions = 'become_ready' -- impressions
+        and ii.application = 'videoleap'
+        and response = 'business'    
+    group by 1,2,3
+)
+
+, clicks as (
+    select distinct
+        pc.post_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        date_trunc(date(ii.meta_received_at), {{time granularity}}) as dt,
+        count(distinct ii.action_id) as clicks,
+        count(distinct ii.platform_device_id) as click_users
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ii
+        inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+        inner join users on users.platform_device_id = ii.platform_device_id    
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and action = 'use_template' -- clicks
+        and ii.meta_source = 'videoleap'
+        and ii.meta_platform = 'ios'
+        and response = 'business'
+    group by 1,2,3
+)
+
+, exports as (
+    select distinct
+        pc.post_id,
+        case when pc.parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        date_trunc(date(ex.meta_received_at), {{time granularity}}) as dt,
+        count(distinct ex.export_id) as exports,
+        count(distinct ex.id_for_vendor) as export_users
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` ex
+        inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on lower(ex.parent_template_id) = pc.template_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+        inner join users on users.platform_device_id = ex.id_for_vendor
+    where date(ex.meta_received_at) >= '{{from_date}}'
+        and response  = 'business'
+    group by 1,2,3
+),
+
+
+posts as (
+    select
+        post_id,
+        template_id,
+        parent_template_id is null as is_original,
+        split(requirements_flat, ".")[offset(0)] as effect_name,
+        requirements_flat as effect_full,
+        max(root_template_id) as root_template_id,
+        min(date(created_at)) as dt,
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`,
+        unnest(requirements) as requirements_flat
+    where date(created_at) > "2022-05-20"
+        and date(created_at) <= current_date()
+        and app_name = "videoleap"
+    group by 1,2,3,4,5
+)
+
+, effects as (
+    select
+        case when effect_full like "%transition%" then "transition"
+         when effect_full like "%soundEffect%" then "sound_effect"
+         when effect_full like "%voiceOver%" then "voice_over"
+         when effect_name in ("fishEye", "shake", "offset", "rays", "defocus", "crystal", "prism", "lensFlare", "colorfy", "vignette", "kaleidoscope","kaleidoscopeGrid", "filmGrain", "strobe" ) then "effects"
+         when effect_name in ("crt", "pixelate", "pulsar") then "glitch"
+         when effect_name in ("adjust", "text", "clip", "sticker", "audio", "filters", "mixer", "toneLab", "canvas", "cutout") then effect_name
+        else "other" end as effect_name,
+        is_original,
+        post_id
+    from posts p
+    --left join posts as t
+    --    using(post_id)
+    group by 1,2,3
+)
+
+, agg_per_post as (
+    select
+        i.dt,
+        i.post_type,
+        i.post_id,
+        effect_name,
+        i.impressions,
+        i.impression_users,
+        c.clicks,
+        c.click_users,
+        e.exports,
+        e.export_users,
+        is_original
+    from impressions i
+        left join clicks c
+            on c.post_id = i.post_id
+            and c.dt = i.dt
+        left join exports e
+            on e.post_id = i.post_id
+            and e.dt = i.dt
+        left join effects ef on ef.post_id = i.post_id    
+    --where is_original = false    
+    )
+
+select
+--    dt,
+    effect_name,
+    count(distinct post_id) as count_posts,
+    count(distinct case when is_original is false then post_id end) as count_remakes_posts,
+    sum(impressions) as sum_impressions,
+    sum(case when is_original is false then impressions end) as sum_remake_impressions,
+    --sum(impression_users) as sum_impression_users,
+    sum(clicks) as sum_clicks,
+    sum(case when is_original is false then clicks end) as sum_remake_clicks,
+    --sum(click_users) as sum_click_users,
+    sum(exports) as sum_exports,
+    sum(case when is_original is false then exports end) as sum_remake_exports,
+    --sum(export_users) as sum_export_users,
+    (sum(exports)/sum(impressions))*100 as export_rate,
+    (sum(case when is_original is false then exports end)/sum(case when is_original is false then impressions end))*100 as remake_export_rate
+    
+
+from agg_per_post
+group by 1
+order by 1
+    
+

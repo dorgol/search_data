@@ -1,0 +1,85 @@
+/*
+    Name: VL iOS- Landing Screen Experiment - Hub Funnel
+    Query ID: 42361
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-06-05T10:41:11.382Z
+    */
+    with experiment_users as (
+    select distinct
+        variant,
+        id_for_vendor,
+        experiment_started_device,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and experiment = 'vl_landing_screen_experiment_05_2023_local'
+        and variant not like "%Baseline"
+        and case when '{{segments}}' = 'All Users' then segmentation = "01 All Users"
+                 when '{{segments}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segments}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+)
+
+, hub_flow_started as (
+    select distinct
+        device_timestamp,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_hub_flow_started`
+    where app_name = "videoleap"
+        --and meta_received_at >= experiment_started_device
+        --and button_identifier in ("home_plus_button", "create_button")
+)
+
+, hub_view_presented as (
+    select distinct
+        device_timestamp,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_hub_view_presented`
+    where app_name = "videoleap"
+        --and meta_received_at >= experiment_started_device
+)
+
+, hub_item_interacted as (
+    select distinct
+        device_timestamp,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_hub_item_interacted`
+    where app_name = "videoleap"
+        --and meta_received_at >= experiment_started_device
+    
+    union all
+     
+     select distinct
+        device_timestamp,
+        platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started`
+    where app_name = "videoleap" and action = 'use_template' and screen_name like '%landing%'
+    
+    )
+
+, data as (
+    select
+        ex.variant,
+        count(distinct ex.id_for_vendor) as total_users,
+        count(distinct h1.platform_device_id) as hub_flow_started_users,
+        count(distinct h2.platform_device_id) as hub_view_presented_users,
+        count(distinct h3.platform_device_id) as hub_item_interacted_users,
+
+    from experiment_users as ex
+    left join hub_flow_started as h1
+        on h1.platform_device_id = ex.id_for_vendor
+        and h1.device_timestamp >= experiment_started_device
+    left join hub_view_presented as h2
+        on h2.platform_device_id = ex.id_for_vendor
+        and h2.device_timestamp >= experiment_started_device
+    left join hub_item_interacted as h3
+        on h3.platform_device_id = ex.id_for_vendor
+        and h3.device_timestamp >= experiment_started_device
+
+    group by 1
+)
+
+select 
+    *,
+    hub_flow_started_users / total_users * 100 as hub_flow_started_pct,
+    hub_view_presented_users / total_users * 100 as hub_view_presented_pct,
+    hub_item_interacted_users / total_users * 100 as hub_item_interacted_pct,
+from data

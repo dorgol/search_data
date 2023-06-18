@@ -1,0 +1,15 @@
+/*
+    Name: Felix - Active Subscribers (Onboarding)
+    Query ID: 41195
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-20T13:41:05.406Z
+    */
+    -- How many active subscriptions on VL
+
+select 
+    count(distinct lt_subscription_id) as count_subscriptions
+from 
+    `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions`
+where 
+    vertical = 'Videoleap'    
+    and subscription.current_is_active = True

@@ -1,0 +1,19 @@
+/*
+    Name: FT iOS - Video - Preview to Editor - Flat
+    Query ID: 40177
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-09T09:29:49.381Z
+    */
+    select 
+    count(distinct ss.id_for_vendor) num_users_saw_preview,
+    count(distinct case when ftv_reason = 'apply' then se.id_for_vendor end) num_users_entered_editor,
+    count(distinct case when ftv_reason = 'apply' then se.id_for_vendor end)/count(distinct ss.id_for_vendor)*100 pct_users_saw_editor,
+    count(distinct case when ftv_reason = 'apply' then se.event_id end)/count(distinct ss.event_id)*100 pct_previews_saw_editor,
+    count(distinct case when ftv_reason = 'cancel' then se.event_id end)/count(distinct ss.event_id)*100 pct_previews_canceled,
+    count(distinct case when ftv_reason is null then ss.event_id end)/count(distinct ss.event_id)*100 pct_previews_not_ended
+from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_import_preview_session_started` ss
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_import_preview_session_ended` se
+    on true
+    and se.ftv_import_preview_session_id = ss.ftv_import_preview_session_id
+where true
+and ss.meta_received_at >= '2021-12-01'

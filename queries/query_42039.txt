@@ -1,0 +1,159 @@
+/*
+    Name: 20230106 - FT2 iOS - Quickstart V2 - First Quickstart and Feature Chosen - Questionnaire Q3 Not Skipped - V3 Only
+    Query ID: 42039
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-19T14:24:38.427Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1058] Import Quickstart V2')
+    and display_type = 'displayed'
+    and variant = 'Variant 3'
+),
+
+questionnaire_users as (
+    select
+        *
+    from (
+        select distinct
+            u.*,
+            platform_device_id,
+            meta_received_at,
+            origin_page_response,
+            origin_page_index,
+            origin_page_name,
+            destination_page_index,
+            count(distinct platform_device_id) over () total_num_users
+        from users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on true
+            and app_name = 'facetune2'
+            and platform_device_id = id_for_vendor
+            and meta_received_at >= experiment_started_meta
+            and origin_page_index = 3
+            and origin_page_index < ifnull(destination_page_index, 100)
+        where true
+        qualify row_number() over (partition by u.id_for_vendor, origin_page_index order by meta_received_at desc) = 1
+    )
+    where origin_page_response is not null and origin_page_response != '' and origin_page_response != '[]'
+),
+
+first_quickstart_flow as (
+    select
+        u.segmentation,
+        u.variant,
+        u.id_for_vendor,
+        case 
+            when is_subscriber = true then 'subscribed_before_qs' 
+            when is_subscriber = false then 'did_not_subscribe_before_qs' 
+        end as category,
+        u.experiment_started_meta, 
+        a.quickstart_screen_id as first_quickstart_screen_id,
+        a.meta_received_at as first_quickstart_appeared_ts,
+        a.features_presented
+    from questionnaire_users u 
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_appeared` a
+        on u.id_for_vendor = a.id_for_vendor
+        and a.meta_received_at >= experiment_started_meta
+    where true
+    qualify row_number() over (partition by variant,segmentation,id_for_vendor order by a.meta_received_at asc) = 1
+),
+
+first_quickstart_to_editor as (
+    select distinct
+        segmentation,
+        variant,
+        a.id_for_vendor,
+        experiment_started_meta,
+        category,
+        first_quickstart_screen_id,
+        first_quickstart_appeared_ts,
+        features_presented,
+        d.feature,
+        d.sub_feature,
+        d.feature || '.'|| sub_feature as full_choice,
+        d.feature_position,
+        d.reason,
+        qte.editing_session_id,
+        qte.feature_usage_id,
+        count(distinct a.id_for_vendor) over (partition by segmentation, variant,category) as total_users,
+    from first_quickstart_flow a
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_dismissed` d
+        on d.meta_received_at >= experiment_started_meta
+        and d.quickstart_screen_id = a.first_quickstart_screen_id
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_to_editor` qte
+        on qte.meta_received_at >= experiment_started_meta
+        and d.quickstart_screen_id = qte.quickstart_screen_id
+),
+users_and_sfs as (
+    select
+        segmentation,
+        variant,
+        f.category,
+        split(ft,'.')[safe_offset(1)] sub_feature,
+        1+i as feature_position,
+        count(distinct id_for_vendor) total_saw_sf
+    from first_quickstart_to_editor f, unnest(split(replace(replace(features_presented,'[',''),']',''),',')) ft with offset as i
+    group by 1,2,3,4,5
+),
+quickstart_and_exports as 
+(
+    select 
+        e.*,
+        ie.event_id as export_event_id
+    from first_quickstart_to_editor e
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_image_exported` ie
+        on true
+        and ie.meta_received_at >= experiment_started_meta
+        and ie.editing_session_id = e.editing_session_id
+    where true
+    qualify row_number() over (partition by variant,segmentation,id_for_vendor order by ie.meta_received_at asc) = 1
+)
+
+
+select 
+    segmentation,
+    variant,
+    q.category as did_sub,
+    case 
+        when reason = 'feature_chosen' then full_choice 
+        when reason = 'skip_to_main_editor' then 'skip' 
+    end as feature_chosen,
+    feature_position,
+    count(distinct id_for_vendor) as total_clicked_users,
+    max(total_saw_sf) total_saw_sf,
+    max(total_users) total_users,
+    count(distinct id_for_vendor)/max(total_users)*100 as pct_chose_feature_first_qs_of_all,
+    count(distinct id_for_vendor)/max(total_saw_sf)*100 as pct_chose_feature_first_qs_of_saw_sf,
+    count(distinct case when export_event_id is not null then id_for_vendor end)/max(total_users)*100 as pct_exported_by_feature_chosen_first_qs,
+    count(distinct case when export_event_id is not null then id_for_vendor end)/count(distinct id_for_vendor)*100 as pct_exported_of_feature_chosen_first_qs,
+from quickstart_and_exports q
+left join users_and_sfs
+    using(segmentation,variant, sub_feature, feature_position)
+where true
+and case when {{is_subscriber}} = true then q.category = 'subscribed_before_qs'
+when {{is_subscriber}} = false then q.category = 'did_not_subscribe_before_qs' 
+end
+group by 1,2,3,4,5
+having true
+-- and users >= 20
+-- and feature_chosen is not null
+order by 1,2,3, 5

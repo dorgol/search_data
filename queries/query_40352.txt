@@ -1,0 +1,271 @@
+/*
+    Name: [FT-1067] Beauty Feed - Comparing Editor funnel to Feed funnel
+    Query ID: 40352
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-19T13:19:44.431Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and d.segmentation in ('02 New Users' ,'03 Existing Users' )
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+),
+
+reached_feed_or_editor as
+(    
+select 
+    segmentation,
+    variant,
+    id_for_vendor,
+    experiment_started_meta,
+    first_presets_in_navigation_ts,
+    first_presets_in_qs_ts,
+    first_presets_in_editor_ts,
+    first_presets_via_wn,
+    least(first_presets_in_navigation_ts, first_presets_in_qs_ts, first_presets_in_editor_ts, first_presets_via_wn) as first_feed_ts,
+    least(first_presets_in_navigation_ts, first_presets_in_qs_ts, first_presets_in_editor_ts, first_presets_via_wn) <  '2099-01-01' as reached_feed,
+    first_editor_ts,
+    first_editor_ts <  '2099-01-01' as reached_editor,
+    first_editor_ts > '2099-01-01' or least(first_presets_in_navigation_ts, first_presets_in_qs_ts, first_presets_in_editor_ts, first_presets_via_wn) >  '2099-01-01' as problem
+from (
+select
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+        min(case when n.device_timestamp is not null then n.device_timestamp else '2099-01-01' end) as first_presets_in_navigation_ts,
+        min(case when q.device_timestamp is not null then q.device_timestamp else '2099-01-01' end) as first_presets_in_qs_ts,
+        min(case when w.feature_name = 'BeautyPresets' and source not like 'beauty%' then w.device_timestamp else '2099-01-01' end) as first_presets_in_editor_ts,
+        min(case when d.device_timestamp is not null then d.device_timestamp else '2099-01-01' end) as first_presets_via_wn,
+        min(case when w.source not like 'beauty%' then w.device_timestamp else '2099-01-01' end) as first_editor_ts,
+    from users u
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` n
+        on true
+        and n.app_name = '{{app_name}}'
+        and n.platform_device_id = u.id_for_vendor
+        and cast(n.app_version_code as int64) >= {{since_version}}
+        and date(n.meta_received_at) >= '{{start_date}}'
+        and n.meta_received_at > u.experiment_started_meta
+        and n.screen_name = 'home_screen'
+        and n.button_identifier = 'beautyFeed'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_dismissed` q
+        on true
+        and q.app_name = '{{app_name}}'
+        and q.platform_device_id = u.id_for_vendor
+        and cast(q.app_version_code as int64) >= {{since_version}}
+        and date(q.meta_received_at) >= '{{start_date}}'
+        and q.meta_received_at > u.experiment_started_meta
+        and q.screen_name = 'beauty_quickstart'
+        and q.destination = 'beauty_feed'
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > u.experiment_started_meta
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented` m
+        on true
+        and m.app_name = '{{app_name}}'
+        and m.platform_device_id = u.id_for_vendor
+        and cast(m.app_version_code as int64) >= {{since_version}}
+        and date(m.meta_received_at) >= '{{start_date}}'
+        and m.meta_received_at > u.experiment_started_meta
+        and m.message_name = 'beautyFeedWhatsNew'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` d
+        on true
+        and d.app_name = '{{app_name}}'
+        and d.platform_device_id = m.platform_device_id
+        and cast(d.app_version_code as int64) >= {{since_version}}
+        and date(d.meta_received_at) >= '{{start_date}}'
+        and d.meta_received_at > u.experiment_started_meta
+        and d.flow_id = m.flow_id
+        and d.reason = 'accepted'
+    group by 1,2,3,4
+    )),
+    
+
+feed_feature_ended as (
+    select
+        segmentation,
+        variant,
+        fe.platform_device_id,
+        event_id,
+        device_timestamp,
+        feature_name,
+        reason,
+        experiment_started_meta,
+        editing_session_id,
+        feature_usage_id
+    from reached_feed_or_editor u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on app_name = '{{app_name}}'
+        and meta_received_at >= '{{start_date}}'
+        and cast(app_version_code as int64) >= {{since_version}}
+        and feature_name = 'BeautyPresets'
+        and reason in ('accepted','edit')
+        and fe.platform_device_id = u.id_for_vendor
+        and fe.meta_received_at >= u.experiment_started_meta
+        and fe.device_timestamp > u.first_feed_ts
+),
+
+exports as (
+select distinct
+    export_type,
+    segmentation,
+    variant,
+    event_id,
+    platform_device_id,
+from (
+select 
+        'feed export' as export_type,
+        segmentation,
+        variant,
+        fe.experiment_started_meta,
+        fe.editing_session_id,
+        ex.platform_device_id,
+        ex.event_id,
+        ex.device_timestamp,
+from feed_feature_ended fe
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+    on ex.app_name = '{{app_name}}'
+    and meta_received_at >= '{{start_date}}'
+    and cast(app_version_code as int64) >= {{since_version}}
+    and fe.platform_device_id = ex.platform_device_id
+    and case when fe.reason = 'edit' then ends_with(fe.feature_usage_id, ex.editing_session_id) else fe.editing_session_id = ex.editing_session_id end
+    and ex.device_timestamp > fe.device_timestamp
+
+union all
+
+select 
+    'feed export' as export_type,
+    u.segmentation,
+    u.variant,
+    u.experiment_started_meta,
+    ex.editing_session_id,
+    ex.platform_device_id,
+    ex.event_id,
+    ex.device_timestamp,
+from reached_feed_or_editor u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+    on ex.app_name = '{{app_name}}'
+    and date(meta_received_at) >= '{{start_date}}'
+    and cast(app_version_code as int64) >= {{since_version}}
+    and u.id_for_vendor = ex.platform_device_id
+    and ex.meta_received_at >= u.experiment_started_meta
+    and ex.export_source like 'beauty%'
+    and ex.device_timestamp > u.first_feed_ts
+    
+union all
+
+select 
+    'editor export' as export_type,
+    u.segmentation,
+    u.variant,
+    u.experiment_started_meta,
+    ex.editing_session_id,
+    ex.platform_device_id,
+    ex.event_id,
+    ex.device_timestamp,
+from reached_feed_or_editor u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+    on ex.app_name = '{{app_name}}'
+    and date(meta_received_at) >= '{{start_date}}'
+    and cast(app_version_code as int64) >= {{since_version}}
+    and u.id_for_vendor = ex.platform_device_id
+    and ex.meta_received_at >= u.experiment_started_meta
+    and ex.export_source not like '%save_all%'
+    and ex.export_source not like 'beauty%'
+    and ex.device_timestamp > u.first_editor_ts
+)
+)
+    
+
+select
+    segmentation,
+    variant,
+    num_users,
+    num_users_reached_feed_or_editor,
+    100* num_users_reached_feed_or_editor / num_users as pct_users_reached_feed_or_editor,
+    num_users_reached_feed,
+    100* num_users_reached_feed / num_users as pct_users_reached_feed,
+    num_users_reached_feed_only,
+    100* num_users_reached_feed_only / num_users as pct_users_reached_feed_only,
+    num_users_reached_editor,
+    100* num_users_reached_editor / num_users as pct_users_reached_editor,
+    num_users_reached_editor_only,
+    100* num_users_reached_editor_only / num_users as pct_users_reached_editor_only,
+    num_users_reached_editor_and_feed,
+    100* num_users_reached_editor_and_feed / num_users as pct_users_reached_editor_and_feed,
+    num_users_exported_from_feed,
+    100* num_users_exported_from_feed / num_users_reached_feed pct_users_exported_from_feed_from_reached,
+    num_users_exported_from_editor,
+    100* num_users_exported_from_editor / num_users_reached_editor pct_users_exported_from_editor_from_reached,
+    num_users_exported_from_feed_and_editor,
+    100* num_users_exported_from_feed_and_editor / num_users_reached_editor_and_feed pct_users_exported_from_editor_and_feed_from_reached,
+from (    
+    
+select
+    segmentation,
+    variant,
+    count(distinct id_for_vendor) as num_users,
+    count(distinct case when reached_feed or reached_editor then id_for_vendor end) as num_users_reached_feed_or_editor,
+    count(distinct case when reached_feed then id_for_vendor end) as num_users_reached_feed,
+    count(distinct case when reached_feed and not reached_editor then id_for_vendor end) as num_users_reached_feed_only,
+    count(distinct case when reached_editor then id_for_vendor end) as num_users_reached_editor,
+    count(distinct case when reached_editor and not reached_feed then id_for_vendor end) as num_users_reached_editor_only,
+    count(distinct case when reached_editor and reached_feed then id_for_vendor end) as num_users_reached_editor_and_feed,
+    count(distinct case when num_feed_exports > 0 then id_for_vendor end) as num_users_exported_from_feed,
+    count(distinct case when num_editor_exports > 0 then id_for_vendor end) as num_users_exported_from_editor,
+    count(distinct case when num_editor_exports > 0 and num_feed_exports > 0 then id_for_vendor end) as num_users_exported_from_feed_and_editor,
+from (
+select
+    r.segmentation,
+    r.variant,
+    r.id_for_vendor,
+    r.reached_feed,
+    r.reached_editor,
+    count(distinct case when export_type = 'feed export' then event_id end) as num_feed_exports,
+    count(distinct case when export_type = 'editor export' then event_id end) as num_editor_exports,
+from reached_feed_or_editor r
+left join exports ex
+    on ex.platform_device_id = r.id_for_vendor
+    and ex.segmentation = r.segmentation
+    and ex.variant = r.variant
+where true
+group by 1,2,3,4,5
+)
+group by 1,2
+)
+order by 1,2

@@ -1,0 +1,28 @@
+/*
+    Name: Feed - total uploaded posts duration over time
+    Query ID: 40825
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-02T19:10:44.308Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        parent_template_id is null as is_original,
+        date(created_at) as dt,
+        cast(duration / 1000 as float64) as duration_sec
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where date(created_at) <= current_date()
+    qualify (row_number() over (partition by post_id order by server_timestamp) = 1)
+)
+
+select
+    date_trunc(dt, {{period}}) as dt,
+    is_original,
+    count(distinct post_id) as num_posts,
+    sum(duration_sec) as total_uploaded_posts_duration,
+    sum(duration_sec) * 16 as cost,
+    sum(duration_sec) * 16 / 1000000 as units,
+    sum(duration_sec) / count(distinct post_id) as avg_post_duration
+from posts
+where dt >= date_sub(current_date(), interval 6 month)
+group by 1,2

@@ -1,0 +1,89 @@
+/*
+    Name: FTA - Device Levels Breakdown - Last 30 days
+    Query ID: 41610
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-04T07:09:55.735Z
+    */
+    with
+all_devices as (
+    select 
+        il.gpu_renderer,
+        il.device_model,
+        il.device_manufacturer,
+        count(distinct il.installation_id) num_devices,
+    from `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_device_info_log` il
+    join `ltx-dwh-prod-processed`.`agg`.`app_device_date` ad
+        on true
+        and app_name = 'facetune2_android'
+        and ad.dt >= date_sub(current_date(), interval 30 day)
+        and ad.installation_id = il.installation_id
+    group by 1, 2,3
+),
+
+unified_devices_w_device_class as (
+    select distinct
+        gpu_renderer,
+        device_model,
+        device_manufacturer,
+        case 
+            -- low
+            when i.device_model in ('SM-A217M', 'SM-A217F', 'SM-A305GT', 'SM-A505GT', 'STK-LX1', 'SM-A205F', 'SM-A305F', 'SM-A307G', 'SM-A530F') then 'low'
+            when gpu_renderer in ('Mali-G51','Mali-T830','Adreno (TM) 506','PowerVR Rogue GE8320','Adreno (TM) 505','Mali-G52 MC2','Mali-G72 MP3','Mali-T880','Adreno (TM) 509','Adreno (TM) 530','PowerVR Rogue GM9446','Adreno (TM) 510','Adreno (TM) 430','Mali-G57 MC3','Mali-G57 MC2') then 'low'
+            
+            -- mid
+            when i.device_model in (
+                -- mid-low
+                'SM-A515F', 'SM-A505FN', 'motorola one vision',  
+                -- mid
+                'SM-G955F',
+                -- mid-top
+                'Redmi Note 8 Pro', 'SM-N950F', 'YAL-L21', 'SM-G970F', 'RMX2001') 
+            then 'mid'
+            when gpu_renderer in (
+                -- mid-low
+                'Adreno (TM) 612','Mali-G71','Adreno (TM) 610','Adreno (TM) 512','Mali-G52','Adreno (TM) 616','Adreno (TM) 615',
+                -- mid
+                'Mali-G76 MC4','Adreno (TM) 619',
+                -- mid-top
+                'Mali-G72','Adreno (TM) 618','Adreno (TM) 540','Adreno (TM) 620'
+                ) 
+            then 'mid'
+            
+            -- high
+            when i.device_model in ('SM-N770F') then 'high'
+            when gpu_renderer in ( 
+                'Mali-G76',
+                'Mali-G76 MC16',
+                'Mali-G76 MP12',
+                'Mali-G76 MP10',
+                'Mali-G77',
+                'Mali-G77 MP11',
+                'Mali-G78',
+                'Mali-G78 MP14',
+                'Mali-G78 MP12',
+                'Mali-G78 MP20',
+                'Mali-G78 MP24',
+                'Adreno (TM) 630',
+                'Adreno (TM) 640',
+                'Adreno (TM) 650',
+                'Adreno (TM) 660',
+                "Adreno (TM) 730",
+                "ANGLE (Samsung Xclipse 920) on Vulkan 1.1.179",
+                "Mali-G610 MC6",
+                "Mali-G710 MC10",
+                "Mali-G710"
+            ) then 'high'
+            -- other
+            when gpu_renderer in ('Adreno (TM) 308','Mali-T720','PowerVR Rogue GE8300','Mali-T860','PowerVR Rogue GE8100','Mali-T760','Adreno (TM) 306','Adreno (TM) 508','Adreno (TM) 405','PowerVR Rogue GE8322','Mali-T820','Adreno (TM) 304','Adreno (TM) 504') then 'total junk'
+            else 'unclassified' 
+        end as device_class,
+        num_devices
+    from all_devices i
+)
+
+select
+    device_class,
+    sum(num_devices) num_devices
+from unified_devices_w_device_class
+group by 1
+order by 2 desc

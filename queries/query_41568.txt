@@ -1,0 +1,127 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 - purchases and revenue per variant
+    Query ID: 41568
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-22T06:56:37.101Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and lower(d.experiment) not like lower('%AU_UK%')
+        and d.display_type = 'reached beauty feed'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+),
+
+purchased_asset as (
+ select
+        u.variant,
+        u.segmentation,
+        w.platform_device_id,
+        w.meta_received_at,
+        w.event_id,
+        w.device_timestamp,
+        w.result
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_flow_started` f
+        on true
+        and f.app_name = '{{app_name}}'
+        and f.platform_device_id = u.id_for_vendor
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '{{start_date}}'
+        and f.meta_received_at > u.experiment_started_meta
+        and f.product_type = 'consumable_item'
+        and f.source like 'beauty%'
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_store_purchase_process_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = f.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.flow_id = f.flow_id
+    ),
+    
+
+total_users as (
+select distinct
+    day,
+    variant,
+    count(id_for_vendor) over (partition by day, variant) as reached_feed_users,
+    count(id_for_vendor) over (partition by variant order by day asc) as cum_reached_feed_users,
+from (
+    SELECT
+        id_for_vendor,
+        variant,
+        min(date(experiment_started_meta_by_type)) as day, --change to experiment_started_meta if you want total users to be all users that were assigned by each day
+    FROM users u
+    group by 1,2
+    )
+)
+    
+
+select 
+    t.variant,
+    segmentation,
+    t.day,
+    t.cum_reached_feed_users,
+    num_purchased,
+    100* safe_divide(num_purchased , t.cum_reached_feed_users) as pct_purchased, --from reached feed
+    num_purchases,
+    100* safe_divide(num_purchases , t.cum_reached_feed_users) as purchases_per_100_users, --from reached feed
+    safe_divide(num_purchases , num_purchased) as purchases_per_purchaser,
+    num_failed_purchases,
+    100* safe_divide(num_failed_purchases , total_initiated_purchases) as pct_failed_purchases,
+    num_canceled_purchases,
+    100* safe_divide(num_canceled_purchases , total_initiated_purchases) as pct_canceled_purchases
+from (
+     select
+            variant,
+            segmentation,
+            date(meta_received_at) as day,
+            count(distinct case when result = 'success' then platform_device_id end) as num_purchased,
+            count(distinct event_id) as total_initiated_purchases,
+            count(distinct case when result = 'success' then event_id end) as num_purchases,
+            count(distinct case when result = 'failure' then event_id end) as num_failed_purchases,
+            count(distinct case when result = 'cancel' then event_id end) as num_canceled_purchases,
+        from purchased_asset
+        group by 1,2,3
+    ) p
+join total_users t
+    on t.day = p.day
+    and t.variant = p.variant
+

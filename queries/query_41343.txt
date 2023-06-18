@@ -1,0 +1,31 @@
+/*
+    Name: VL iOS - Main effects export rate
+    Query ID: 41343
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-25T13:12:26.208Z
+    */
+    with projects as (
+        select 
+        new_object_class_name,
+        count(distinct u.open_project_id) as num_projects,
+        count(distinct e.open_project_id) as num_exports,
+        count(distinct case when u.is_subscriber is true then u.open_project_id end) as num_vip_projects,
+        count(distinct case when u.is_subscriber is false then u.open_project_id end) as num_free_projects,
+        count(distinct case when u.is_subscriber is true then e.open_project_id end) as num_vip_exports,
+        count(distinct case when u.is_subscriber is false then e.open_project_id end) as num_free_exports,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_used` u
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` e
+        on e.open_project_id = u.open_project_id
+    where date(u.meta_received_at) >=date_sub(current_date(), interval 7 day)
+        and date(u.meta_received_at) < current_date()
+        and action_source = "feature_drawer"
+        and action_name like "%_accept"
+        and app_name = "videoleap"
+    group by 1)
+    
+select
+*,
+safe_divide(num_exports, num_projects)*100 as total_export_rate,
+safe_divide(num_free_exports, num_free_projects)*100 as free_export_rate,
+safe_divide(num_vip_exports, num_vip_projects)*100 as vip_export_rate 
+from projects

@@ -1,0 +1,19 @@
+/*
+    Name: Felix - New Sub Offer Revenue (Main - Revenue)
+    Query ID: 41646
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-05T15:30:41.224Z
+    */
+    declare start_date timestamp default '2022-01-01';
+
+
+    select distinct
+        date_trunc(purchase_date, month) as purchase_month,
+        sum(payments.actual_proceeds) as revenue,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_offer_purchase_succeeded` succ
+    --left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_offer_purchase_initiated` init on offer.presentation_id = init.presentation_id
+    --left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_offer_purchase_succeeded` succ on init.presentation_id = succ.presentation_id
+    inner join  `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions` tran on succ.original_transaction_id = tran.subscription.original_transaction_id
+    where date(purchase_date) >= '2022-01-01'
+    group by 1
+    order by 1

@@ -1,0 +1,34 @@
+/*
+    Name: Videoleap iOS - Subscription Offer (Previous)
+    Query ID: 42175
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-24T07:15:19.014Z
+    */
+    select
+    expiration_date,
+    churn_status,
+    case when churn_status like '%Auto-renew OFF%' then -1 else 1 end * num_subscriptions as num_subscriptions
+    --num_subscriptions
+from (
+    select
+        date_trunc(date(s.payments.last_expiration_date), month) expiration_date,
+        case 
+            when subscription.current_is_auto_renew_status_on is true and subscription.subscription_duration = '1m' then 'Auto-renew ON - Monthly'
+            when subscription.current_is_auto_renew_status_on is true and subscription.subscription_duration = '1y' then 'Auto-renew ON - Yearly'
+            when subscription.current_is_auto_renew_status_on is false and subscription.subscription_duration = '1m' then 'Auto-renew OFF - Monthly' 
+            when subscription.current_is_auto_renew_status_on is false and subscription.subscription_duration = '1y' then 'Auto-renew OFF - Yearly' 
+            --when subscription.current_is_active is false then 'Terminated' 
+            --when subscription.current_is_active is true then 'renewed' else 'churned' 
+        end as churn_status,
+        count(distinct coalesce(subscription.original_transaction_id, subscription.payment_source_id)) num_subscriptions
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation_cross_sell` s
+    --where true
+    where application = 'videoleap'
+    --and date(s.payments.last_expiration_date) between current_date() and date_add(current_date(), interval 180 day)
+    and date(s.payments.last_expiration_date) between date_sub(current_date(), interval 180 day) and current_date() 
+    --and subscription.current_is_active = false
+    and payments.revenue_so_far_alloc_cs > 0
+    group by 1,2
+)
+where churn_status is not null
+order by 1,2

@@ -1,0 +1,71 @@
+/*
+    Name: VL iOS - RecSys in categories experiment - feed templates interactions
+    Query ID: 40698
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-23T07:37:03.170Z
+    */
+    with experiment_users as (
+    select distinct
+        experiment,
+        variant,
+        segmentation,
+        id_for_vendor,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = "videoleap"
+        and experiment = "feed_ios_recommendation_categories_02_20"
+        and display_type like "displayed%"
+        and case when '{{segmentation}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segmentation}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segmentation}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                end
+        and variant <> "Overrides"
+)
+
+, data as (
+    select
+        ex.variant,
+        "impressions" as step,
+        count(distinct f.post_id) as num_templates
+    from experiment_users as ex
+    join `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` as f
+        on ex.id_for_vendor = f.platform_device_id
+        and ex.experiment_started_device < f.meta_received_at
+    where true
+        and f.feed_type like "%category%"
+        and f.actions = "become_ready"
+    group by 1
+    having(count(distinct ex.id_for_vendor) > 20)
+    
+    union all
+    
+    select
+        ex1.variant,
+        "exports" as step,
+        count(distinct ac.post_id) as num_templates
+    from experiment_users as ex1
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ex.id_for_vendor = ex1.id_for_vendor
+        and ex.device_timestamp > ex1.experiment_started_device
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as te
+        on te.open_project_id = ex.open_project_id
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac
+        on te.action_identifier = ac.action_id
+    where true
+        and ac.screen_name like "%category%"
+    group by 1
+)
+
+select
+    *,
+    num_exported_templates / num_seen_templates * 100 as pct_exported_templates,
+    num_seen_templates / num_exported_templates as seen_to_export_ratio
+from (
+    select
+        variant,
+        sum(case when step = "exports" then num_templates end) as num_exported_templates,
+        sum(case when step = "impressions" then num_templates end) as num_seen_templates,
+    from data
+    group by 1
+    having(sum(case when step = "exports" then num_templates end)) > 10
+)

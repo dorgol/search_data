@@ -1,0 +1,27 @@
+/*
+    Name: Facetune: Late Subscriptions per Period (2023/02)
+    Query ID: 40316
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-15T13:43:42.269Z
+    */
+    with trans as (
+    select
+        date_trunc(date(original_purchase_date), {{period}}) as period,
+        round(count(distinct case when timestamp_trunc(attribution.attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription.subscription_duration = '1y' then lt_subscription_id end),0) as late_yearly_subs,
+        round(count(distinct case when timestamp_trunc(attribution.attribution_timestamp, month) < timestamp_trunc(original_purchase_date,month) and subscription.subscription_duration = '1m' then lt_subscription_id end),0) as late_monthly_subs,
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation` t
+    where application = 'facetune2'
+    and date_trunc(date(original_purchase_date), {{period}}) > '2023-01-01'
+    and date_trunc(date(original_purchase_date), {{period}}) <= '2023-03-10'
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(original_purchase_date), {{period}})
+    and payments.revenue_so_far > 0
+    and case 
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then subscription.current_subscription_store_country not in ('US','CN')
+        else subscription.current_subscription_store_country = '{{countries}}' end
+    group by 1
+)
+select
+    trans.*,
+from trans
+order by 1

@@ -1,0 +1,24 @@
+/*
+    Name: PP Creators - Test Query
+    Query ID: 40855
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-03T14:44:33.119Z
+    */
+    with user_group as (
+
+select
+    d.id,
+    case when email like '%lightricks%' then 'like %lightricks%'
+         when email like '%popular%' then 'like %popular%'
+         when email like '%poppays%' then 'like %poppays%'
+         when email like '%test%' then 'like %test%'
+         when email not like '%@%' then 'not like %@%' else 'valid' end as categorised
+from users d
+)
+
+
+select
+    categorised,
+    count(distinct id) as creator_users
+from user_group
+group by 1

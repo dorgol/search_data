@@ -1,0 +1,29 @@
+/*
+    Name: VL iOS - Mini-Editor Dashboard - Remake Export Source
+    Query ID: 41132
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-18T15:30:10.551Z
+    */
+    with exports as (
+    select
+        date_trunc(ex.meta_received_at, {{Time granularity}}) as dt,
+        case when export_screen_name = "template_editor" then 'Mini_Editor' else 'Full-Editor' end as remake_export_source,
+        count(distinct ex.open_project_id) as total_remakes_exports
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` u
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_ended` as te
+        on u.platform_device_id = te.id_for_vendor
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ex.open_project_id = te.open_project_id
+    where date(ex.meta_received_at) >= '{{start date}}'
+        and case when '{{Day}}' = "day0" then date(ex.meta_received_at) = date(u.first_active_dt)
+                     when '{{Day}}' = "non day0" then date(ex.meta_received_at) > date(u.first_active_dt) 
+                     else true end
+        and u.app_name = 'videoleap'
+    group by 1,2
+)
+
+select
+    dt,
+    remake_export_source,
+    total_remakes_exports
+from exports

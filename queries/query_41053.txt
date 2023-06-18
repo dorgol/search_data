@@ -1,0 +1,26 @@
+/*
+    Name: [WIP] Weekly targets vs actuals
+    Query ID: 41053
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-16T14:24:50.836Z
+    */
+    SELECT 
+  date(dt) as month,
+    forecast_type as revenue_type,
+  sum(revenue) as revenue
+FROM `ltx-dwh-prod-rivery.finance.growth_goals`
+where vertical = "Videoleap"
+  and forecast_type in ("Target", "tier 1")
+--   and purchase_platform = "total"     -- Android/total/iOS/Web
+group by 1,2
+
+union all
+
+select
+  month,
+  "actual" as revenue_type,
+  sum(revenue) as revenue
+from `ltx-dwh-prod-processed.finance.weekly_management_dashboard_tiers`
+where vertical = "Videoleap"
+  and forecast_type = "projected actual"
+group by 1,2

@@ -1,0 +1,144 @@
+/*
+    Name: Facetune Android: Looks version filtered
+    Query ID: 40311
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-29T07:09:18.925Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.installation_id,
+        d.experiment_started_meta,
+        d.display_type,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    join `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_assignment_state_changed` a
+        on a.installation_id = d.installation_id
+        and d.experiment = a.experiment
+        and d.variant = a.variant
+        and a.version_code >= 1101476
+        and meta_received_at >= '2023-03-08'
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+),
+
+subs as (
+    select
+        u.experiment,
+        u.country,
+        u.first_day, 
+        u.variant,
+        u.installation_id,
+        u.experiment_started_meta, 
+        s.installation_id is not null as subscribed,
+        s.revenue_so_far,
+        s.first_payment_amount,
+        s.sol_sub,
+        s.subscription_duration,
+    from users u 
+    left join `ltx-dwh-prod-processed.ab_test.raw_final_subs_and_variant` s
+        on u.experiment = s.experiment
+        and u.variant = s.variant
+        and u.segmentation = s.segmentation
+        and u.installation_id = s.installation_id
+        and s.original_purchase_date >= u.experiment_started_meta
+        and s.subscription_duration != 'l'
+)
+
+,
+
+exports as (
+    select
+        u.experiment,
+        u.first_day, 
+        u.country,
+        u.variant,
+        u.installation_id,
+        u.experiment_started_meta, 
+        e.installation_id is not null as exporter,
+        count(distinct e.event_id) as num_exports,
+    from users u 
+    left join `ltx-dwh-prod-processed`.`devices`.`unified_app_export` e
+        on u.installation_id = e.installation_id
+        and e.meta_received_at >= experiment_started_meta
+        and e.meta_received_at >= '2023-03-08'
+        and e.application = '{{app}}'
+    group by 1,2,3,4,5,6,7
+)
+
+,
+
+retention as (
+    select
+        u.experiment,
+        u.first_day, 
+        u.country,
+        u.variant,
+        u.installation_id,
+        u.experiment_started_meta, 
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 7, false) as week_0_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 14, false) as week_1_user,
+        max(date_diff(dt, date(experiment_started_meta), day) between 1 and 7) as retained_week_0,
+        max(date_diff(dt, date(experiment_started_meta), day) between 8 and 14) as retained_week_1,
+    from users u 
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device_date` d
+        on u.installation_id = d.installation_id
+        and d.dt >= date(experiment_started_meta)
+        and d.dt >= '2023-03-08'
+        -- and d.dt <= date_add(date(experiment_started_meta), interval 14 day)
+        and d.app_name = '{{app}}'
+    group by 1,2,3,4,5,6
+)
+
+select 
+    segmentation,
+    experiment,
+    case 
+        when '{{countries}}' = 'Global' then 'Global' 
+        when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+        else country end as country,
+    variant,
+    display_type,
+    count(distinct installation_id) as num_devices,
+    -- count(distinct case when subscribed then installation_id end) as num_subscribers,
+    -- count(distinct case when subscribed and revenue_so_far > 0 then installation_id end) as num_paid_subscribers,
+    -- count(distinct case when exporter then installation_id end) as num_exporters,
+    -- sum(num_exports) as num_exports,
+    100*count(distinct case when subscribed then installation_id end)/count(distinct installation_id) as cvr,
+    100*count(distinct case when subscribed and not sol_sub then installation_id end)/count(distinct installation_id) as non_sol_cvr,
+    100*count(distinct case when subscribed and revenue_so_far > 0 then installation_id end)/count(distinct installation_id) as paid_cvr,
+    100*count(distinct case when subscribed and sol_sub and revenue_so_far > 0 then installation_id end)/count(distinct installation_id) as paid_sol_cvr,
+    sum(revenue_so_far)/count(distinct installation_id) as revenue_per_device_new_subs,
+    100*count(distinct case when subscribed and subscription_duration = '1y' and revenue_so_far > 0 then installation_id end)/count(distinct case when subscribed and revenue_so_far > 0 then installation_id end) as pct_yearly_of_paid,
+    100*count(distinct case when subscribed and subscription_duration = '1m' and revenue_so_far > 0 then installation_id end)/count(distinct case when subscribed and revenue_so_far > 0 then installation_id end) as pct_monthly_of_paid,
+    100*count(distinct case when subscribed and subscription_duration = 'l' and revenue_so_far > 0 then installation_id end)/count(distinct case when subscribed and revenue_so_far > 0 then installation_id end) as pct_otp_of_paid,
+    100*count(distinct case when exporter then installation_id end)/count(distinct installation_id) as pct_exporters,
+    sum(num_exports)/count(distinct installation_id) as exports_per_device,
+    100*count(distinct case when retained_week_0 and week_0_user then installation_id end)/count(distinct case when week_0_user then installation_id end) as pct_retained_week_0,
+    100*count(distinct case when retained_week_1 and week_1_user then installation_id end)/count(distinct case when week_1_user then installation_id end) as pct_retained_week_1,
+    count(distinct case when week_0_user then installation_id end) as week_0_users,
+    count(distinct case when week_1_user then installation_id end) as week_1_users,
+from users
+left join subs 
+    using(experiment, first_day, variant, installation_id,experiment_started_meta,country)
+left join exports
+    using(experiment, first_day, variant, installation_id,experiment_started_meta,country)
+left join retention
+    using(experiment, first_day, variant, installation_id,experiment_started_meta,country)
+where case when '{{display}}' = 'All' then true else  display_type = '{{display}}' end
+and case 
+    when '{{countries}}' = 'Global' then true 
+    when '{{countries}}' = 'Rest of the World' then country not in ('United States','China')
+    when '{{countries}}' = 'All' then true
+    else country = '{{countries}}' end
+group by 1,2,3,4,5
+order by 1,2,3,4

@@ -1,0 +1,50 @@
+/*
+    Name: VL iOS - AI Template Clicks by Hour
+    Query ID: 41773
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-06-05T07:36:01.732Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        template_id,
+        parent_template_id,
+        root_template_id,
+        case when requirements_flat like '%aiTransform%' then "AI_Transform"
+         when requirements_flat like '%aiImageTransformSelfies%' then "AI_Selfies"
+         when requirements_flat like '%aiImageTransformAnime%' then "AI_Anime" else "error" end as requirements_flat,
+        app_name,
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`,
+        unnest(requirements) as requirements_flat
+    where app_name = "videoleap"
+        AND (
+            requirements_flat LIKE '%aiTransform%'
+            OR requirements_flat LIKE '%aiImageTransformSelfies%'
+            OR requirements_flat LIKE '%aiImageTransformAnime%'
+            -- Add more conditions as needed
+        )
+        
+)
+
+, stats as (
+    select
+        date_add(date_trunc(meta_received_at, hour), interval 1 hour) as dt,
+        requirements_flat,
+        count(distinct action_id) as ai_template_clicks,
+    from posts p
+    inner join (select distinct action_id, action, screen_name, post_id, meta_received_at from
+                    `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started` as ac
+                where ac.meta_source = 'videoleap' and ac.meta_platform = 'ios'
+                 union all 
+                select distinct action_id, action, screen_name, post_id, meta_received_at from
+                    `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac2
+                 where ac2.meta_source = 'videoleap' and ac2.meta_platform = 'ios') rd
+                     on rd.post_id = p.post_id
+        and action in ('use_template', 'purchase_template')
+    group by 1,2)
+
+
+select
+*
+from stats
+where date(dt) > '2023-05-07'

@@ -1,0 +1,72 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Patch Users and CVR - First Sub State
+    Query ID: 40250
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-12T11:19:53.098Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1072]Lama Inpainting')
+    and display_type = 'entered photo editor'
+),
+
+users_and_subs_post_exp as (
+    select
+        u.*,
+        s.original_purchase_date
+    from users u
+    left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+        on true
+        and u.experiment = s.experiment
+        and u.segmentation = s.segmentation
+        and u.variant = s.variant
+        and u.display_type = s.display_type
+        and u.id_for_vendor = s.id_for_vendor
+        and s.original_purchase_date >= s.experiment_started_meta
+)
+
+select
+    segmentation,
+    variant,
+    count(distinct id_for_vendor) num_feature_users,
+    count(distinct case when original_purchase_date is not null then id_for_vendor end) num_post_exp_start_subs,
+    count(distinct case when original_purchase_date is not null then id_for_vendor end)/count(distinct id_for_vendor)*100 conversion_rate
+from (
+    select
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        original_purchase_date,
+        meta_received_at,
+        is_subscriber
+    from users_and_subs_post_exp u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2023-03-01'
+        and fs.meta_received_at >= experiment_started_meta
+        and fs.platform_device_id = u.id_for_vendor
+        and feature_name = 'Patch'
+    where true
+    qualify row_number() over (partition by segmentation, variant, id_for_vendor order by meta_received_at asc) = 1
+)
+where is_subscriber = {{first_usage_as_subscriber}} 
+group by 1,2
+order by 1,2

@@ -1,0 +1,120 @@
+/*
+    Name: Feed Creators - best selling users
+    Query ID: 41061
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-16T16:06:06.575Z
+    */
+    with purchases as (
+    select distinct 
+        date(r.created_at) as dt,
+        u.transaction.transaction_id,
+        r.transaction_id as redeemed_match,
+        split(r.consumable_id, '.')[offset(4)] original_post_id,
+        split(r.consumable_id, '.')[offset(5)] purchased_post_id,
+        u.payments.actual_proceeds,
+        u.payments.gross_proceeds,
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions` as u
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`redeemed_coins` as r
+        on cast(r.transaction_id as string) = u.transaction.transaction_id
+    where u.vertical = 'Videoleap'
+        and u.subscription.product_sub_category = "template"
+        and date(u.original_purchase_date) >= "2023-01-01"
+        and date(u.original_purchase_date) < "2023-04-01"
+)
+
+, creators_accounts as (
+    select
+        post_id,
+        account_id
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` as be
+    qualify (row_number() over (partition by post_id order by server_timestamp desc) = 1)
+)
+
+, purchases_per_template as (
+    select distinct
+        date_trunc(p.dt, month) as month,
+        original_post_id,
+        account_id,
+        count(distinct transaction_id) as num_transactions,
+        sum(actual_proceeds) as net_revenues
+    from purchases as p
+    left join creators_accounts as a
+        on a.post_id = p.original_post_id
+    group by 1,2,3
+)
+
+, accounts as (
+    select distinct
+        r.lt_id,
+        r.account_id
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_client_register` as r
+    join purchases_per_template as p
+        on p.account_id = r.account_id
+    where date(server_timestamp) >= date_sub(current_date, interval 5 month)
+    qualify (row_number() over (partition by account_id order by server_timestamp desc) = 1)
+)
+
+, names as (
+    select distinct 
+        n.lt_id,
+        n.value as name,
+        a.account_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_profile_features` as n
+    join accounts as a
+        on n.lt_id = a.lt_id
+    where lower(action) in ("add", "replace")
+        and feature = "username"
+    qualify (row_number() over (partition by lt_id order by meta_received_at desc) = 1)
+)
+
+, purchases_per_creator as (
+    select
+        p.account_id,
+        n.lt_id,
+        n.name,
+        case when p.account_id in ("bec04c27-f000-4975-86e0-bf3527aed041",
+                                    "66e995df-9c23-4533-a783-9bdd0f64a2a5",
+                                    "911b44a0-a88e-4c9c-8604-a0ea15b318c2",
+                                    "574591ce-96a2-4b95-88a1-23c39d6d54e9",
+                                    "0e6a85dc-1ba2-43c7-9c1d-dd39c93738d4",
+                                    "196a7772-fb29-4326-8271-02f3cf9f0431",
+                                    "8f5478b6-539e-4bf7-8d0d-96da6174d599",
+                                    "6c265a4c-f8f8-446d-91d1-cefab69f7469",
+                                    "9c873679-95db-4f96-94db-3df80c52fb02",
+                                    "c69e5be4-015a-42ed-be41-f2504dc7e620",
+                                    "5555e72e-d6db-4ab1-9404-e8f815fee762",
+                                    "4a4efac6-5fbf-4475-b876-a0c9f609bd0a",
+                                    "dff125a0-5347-40e1-b3ac-043a3fa7ab0c",
+                                    "525d373d-44d6-4502-93e4-4c88ca335836",
+                                    "2c98c781-8cf6-4c14-8579-d8e35a8440ad",
+                                    "cb5d4368-5b26-45c0-b762-182d930e4e74",
+                                    "190ad8bd-a02b-43a7-bb2e-cf2f8fd51beb",
+                                    "5a311bd3-df82-40ba-8747-744a64798951",
+                                    "9b1a0db0-dd5e-403d-9a23-9aeea01efefb",
+                                    "35d4bd26-e371-4fee-a489-557f3825f708") then "paid UGC" else "unpaid" end as user_type,
+        sum(p.num_transactions) as total_purchases,
+        sum(p.net_revenues) as total_net_revenues,
+        sum(case when p.month = "2023-01-01" then p.net_revenues end) * 0.4 as jan_rev_share,
+        sum(case when p.month = "2023-02-01" then p.net_revenues end) * 0.4 as feb_rev_share,
+        sum(case when p.month = "2023-03-01" then p.net_revenues end) * 0.4 as mar_rev_share,
+    from purchases_per_template as p
+    left join names as n
+        on n.account_id = p.account_id
+    where p.account_id is not null
+    group by 1,2,3,4
+)
+
+select distinct
+    account_id,
+    lt_id,
+    name,
+    user_type,
+    total_purchases,
+    total_net_revenues,
+    total_net_revenues * 0.4 as rev_share,
+    jan_rev_share,
+    feb_rev_share,
+    mar_rev_share,
+from purchases_per_creator
+where (jan_rev_share > 10 or feb_rev_share > 10 or mar_rev_share > 10)
+order by total_net_revenues desc

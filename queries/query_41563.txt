@@ -1,0 +1,325 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 High Level Usage Funnel
+    Query ID: 41563
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-22T12:15:05.436Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and lower(d.experiment) not like lower('%AU_UK%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true 
+        end
+        and case 
+            when '{{variant}}' = 'Variant1' then d.variant = 'Variant1' 
+            when '{{variant}}' = 'Variant2' then d.variant = 'Variant2' 
+            when '{{variant}}' = 'Variant3' then d.variant = 'Variant3'
+            when '{{variant}}' = 'All' then true
+        end
+        and case when '{{period}}' = 'day0' then timestamp_diff(current_timestamp(), d.experiment_started_meta, day) > 0
+            when '{{period}}' = 'day7' then timestamp_diff(current_timestamp(), d.experiment_started_meta, day) > 7
+            when '{{period}}' = 'day14' then timestamp_diff(current_timestamp(), d.experiment_started_meta, day) > 14
+            when '{{period}}' = 'day21' then timestamp_diff(current_timestamp(), d.experiment_started_meta, day) > 21
+            when '{{period}}' = 'day28' then timestamp_diff(current_timestamp(), d.experiment_started_meta, day) > 28
+            when '{{period}}' = 'day35' then timestamp_diff(current_timestamp(), d.experiment_started_meta, day) > 35
+            when '{{period}}' = 'all' then true
+        end
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+),
+
+
+funnel as (
+
+    select
+        '01 - Reached Home Screen' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct u.id_for_vendor) num_users
+    from users u
+    group by 1,2
+    
+    union all
+    
+    select
+        '02 - Reached Feed' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct f.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+        on true
+        and f.app_name = 'facetune2'
+        and f.platform_device_id = u.id_for_vendor
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '{{start_date}}'
+        and f.meta_received_at > u.experiment_started_meta
+        and case when '{{period}}' = 'day0' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 0
+        when '{{period}}' = 'day7' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 7
+        when '{{period}}' = 'day14' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 14
+        when '{{period}}' = 'day21' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 21
+        when '{{period}}' = 'day28' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 28
+        when '{{period}}' = 'day35' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 35
+        when '{{period}}' = 'all' then true
+        end
+    group by 1,2   
+    
+    union all
+    
+    select
+        '02a - Clicked on Presets in Navigation' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.screen_name = 'home_screen'
+        and w.button_identifier = 'beautyFeed'
+        and case when '{{period}}' = 'day0' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 0
+        when '{{period}}' = 'day7' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 7
+        when '{{period}}' = 'day14' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 14
+        when '{{period}}' = 'day21' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 21
+        when '{{period}}' = 'day28' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 28
+        when '{{period}}' = 'day35' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 35
+        when '{{period}}' = 'all' then true
+        end
+    group by 1,2   
+    
+    union all
+    
+    select
+        '02b - Accepted Whats new' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented` m
+        on true
+        and m.app_name = '{{app_name}}'
+        and m.platform_device_id = u.id_for_vendor
+        and cast(m.app_version_code as int64) >= {{since_version}}
+        and date(m.meta_received_at) >= '{{start_date}}'
+        and m.meta_received_at > u.experiment_started_meta
+        and m.message_name = 'beautyFeedWhatsNew'
+        and case when '{{period}}' = 'day0' then timestamp_diff(m.meta_received_at, u.experiment_started_meta, day) <= 0
+            when '{{period}}' = 'day7' then timestamp_diff(m.meta_received_at, u.experiment_started_meta, day) <= 7
+            when '{{period}}' = 'day14' then timestamp_diff(m.meta_received_at, u.experiment_started_meta, day) <= 14
+            when '{{period}}' = 'day21' then timestamp_diff(m.meta_received_at, u.experiment_started_meta, day) <= 21
+            when '{{period}}' = 'day28' then timestamp_diff(m.meta_received_at, u.experiment_started_meta, day) <= 28
+            when '{{period}}' = 'day35' then timestamp_diff(m.meta_received_at, u.experiment_started_meta, day) <= 35
+            when '{{period}}' = 'all' then true
+        end
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = m.platform_device_id
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.flow_id = m.flow_id
+        and w.reason = 'accepted'
+    group by 1,2   
+    
+    union all
+    
+    select
+        '02c - Started Presets Feature in Editor' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and source not like 'beauty%'
+        and case when '{{period}}' = 'day0' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 0
+            when '{{period}}' = 'day7' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 7
+            when '{{period}}' = 'day14' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 14
+            when '{{period}}' = 'day21' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 21
+            when '{{period}}' = 'day28' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 28
+            when '{{period}}' = 'day35' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 35
+            when '{{period}}' = 'all' then true
+        end
+    group by 1,2   
+    
+    union all
+    
+    ---we will need to add filter for external flow id once it exists. Otherwise, when there is another kind of feed present, we will see all.
+    select
+        '03 - Tried Preset' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct w.platform_device_id) num_users
+    from users u
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+        on true
+        and f.app_name = '{{app_name}}'
+        and f.platform_device_id = u.id_for_vendor
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '{{start_date}}'
+        and f.meta_received_at > u.experiment_started_meta
+        and case when '{{period}}' = 'day0' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 0
+            when '{{period}}' = 'day7' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 7
+            when '{{period}}' = 'day14' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 14
+            when '{{period}}' = 'day21' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 21
+            when '{{period}}' = 'day28' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 28
+            when '{{period}}' = 'day35' then timestamp_diff(f.meta_received_at, u.experiment_started_meta, day) <= 35
+            when '{{period}}' = 'all' then true
+        end
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_app_feed_user_action_started` w
+        on true
+        --and w.app_name = '{{app_name}}'
+        and w.meta_source = '{{app_name}}'
+        and w.platform_device_id = f.platform_device_id
+        and w.flow_id = f.flow_id
+        --and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > f.meta_received_at
+        and w.action = 'use_template'
+    group by 1,2   
+    
+        union all
+        
+      select
+        '04 - Attempted Export/Accept/Continue to Edit' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct case when ex.platform_device_id is not null or w.platform_device_id is not null or s.platform_device_id is not null then u.id_for_vendor end) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = u.id_for_vendor
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '{{start_date}}'
+        and ex.meta_received_at > u.experiment_started_meta
+        and (ex.export_source like 'beauty_feed_in_home_tab%')
+        and case when '{{period}}' = 'day0' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 0
+            when '{{period}}' = 'day7' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 7
+            when '{{period}}' = 'day14' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 14
+            when '{{period}}' = 'day21' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 21
+            when '{{period}}' = 'day28' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 28
+            when '{{period}}' = 'day35' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 35
+            when '{{period}}' = 'all' then true
+        end
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > u.experiment_started_meta
+        and ((w.screen_name = 'beautyPresets_photo_editor_screen' and button_identifier = 'accept')
+            or (w.screen_name = 'beautyFeed_export_screen' and button_identifier = 'edit'))
+        and case when '{{period}}' = 'day0' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 0
+            when '{{period}}' = 'day7' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 7
+            when '{{period}}' = 'day14' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 14
+            when '{{period}}' = 'day21' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 21
+            when '{{period}}' = 'day28' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 28
+            when '{{period}}' = 'day35' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 35
+            when '{{period}}' = 'all' then true
+        end
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_store_view_presented` s
+        on true
+        and s.app_name = '{{app_name}}'
+        and s.platform_device_id = u.id_for_vendor
+        and cast(s.app_version_code as int64) >= {{since_version}}
+        and date(s.meta_received_at) >= '{{start_date}}'
+        and s.meta_received_at > u.experiment_started_meta
+        and s.view_name = 'beautyFeed_payment_drawer'
+        and case when '{{period}}' = 'day0' then timestamp_diff(s.meta_received_at, u.experiment_started_meta, day) <= 0
+            when '{{period}}' = 'day7' then timestamp_diff(s.meta_received_at, u.experiment_started_meta, day) <= 7
+            when '{{period}}' = 'day14' then timestamp_diff(s.meta_received_at, u.experiment_started_meta, day) <= 14
+            when '{{period}}' = 'day21' then timestamp_diff(s.meta_received_at, u.experiment_started_meta, day) <= 21
+            when '{{period}}' = 'day28' then timestamp_diff(s.meta_received_at, u.experiment_started_meta, day) <= 28
+            when '{{period}}' = 'day35' then timestamp_diff(s.meta_received_at, u.experiment_started_meta, day) <= 35
+            when '{{period}}' = 'all' then true
+        end
+    group by 1,2   
+    
+    union all
+    select
+        '05 - Exported/Accepted/Continued to Edit' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct case when ex.platform_device_id is not null or w.platform_device_id is not null then u.id_for_vendor end) num_users
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = u.id_for_vendor
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '{{start_date}}'
+        and ex.meta_received_at > u.experiment_started_meta
+        and (ex.export_source like 'beauty_feed_in_home_tab%')
+        and case when '{{period}}' = 'day0' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 0
+            when '{{period}}' = 'day7' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 7
+            when '{{period}}' = 'day14' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 14
+            when '{{period}}' = 'day21' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 21
+            when '{{period}}' = 'day28' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 28
+            when '{{period}}' = 'day35' then timestamp_diff(ex.meta_received_at, u.experiment_started_meta, day) <= 35
+            when '{{period}}' = 'all' then true
+        end
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.reason in ('edit', 'accepted')
+        and case when '{{period}}' = 'day0' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 0
+            when '{{period}}' = 'day7' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 7
+            when '{{period}}' = 'day14' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 14
+            when '{{period}}' = 'day21' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 21
+            when '{{period}}' = 'day28' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 28
+            when '{{period}}' = 'day35' then timestamp_diff(w.meta_received_at, u.experiment_started_meta, day) <= 35
+            when '{{period}}' = 'all' then true
+        end
+    group by 1,2   
+
+    )
+
+
+
+select
+    *
+from funnel
+where stage in ({{stages}})

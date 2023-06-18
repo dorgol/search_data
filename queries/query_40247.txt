@@ -1,0 +1,37 @@
+/*
+    Name: debug
+    Query ID: 40247
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-12T10:23:25.109Z
+    */
+    with 
+face_counts as (
+    select
+        process_id,
+        platform_device_id as id_for_vendor,
+        meta_received_at,
+        json_extract(process_details, '$.isFaceInVideo') has_faces,
+        lead(meta_received_at) over (partition by platform_device_id order by meta_received_at asc) next_face_detection_ts
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_ended`
+    where true
+    and app_name = 'facetune2'
+    and meta_received_at >= '2023-02-26'
+    and process_name = 'face detection'
+)
+
+select
+    process_id,
+    fc.has_faces,
+    timestamp_trunc(fc.meta_received_at, day) day,
+    ve.ftv_editing_session_id,
+    fc.meta_received_at,
+    ve.meta_received_at,
+    next_face_detection_ts
+
+from face_counts fc
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported` ve
+    on true
+    and ve.meta_received_at between fc.meta_received_at and next_face_detection_ts
+    and ve.id_for_vendor = fc.id_for_vendor
+-- where fc.has_faces = 'false'
+limit 1000

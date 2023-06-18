@@ -1,0 +1,25 @@
+/*
+    Name: VL iOS - Num users adding StoryBlocks audio over time
+    Query ID: 40280
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-13T09:29:23.585Z
+    */
+    with raw as (
+    select distinct
+        date_trunc(date(meta_received_at), month) as dt,
+        imported_item_type,
+        ifnull(is_subscriber, false) as is_subscriber,
+        id_for_vendor
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_audio_added` as au
+    where date(meta_received_at) >= date_sub(current_date(), interval 18 month)
+        and provider = "storyblocks"
+)
+
+select distinct
+    dt,
+    is_subscriber,
+    imported_item_type,
+    count(distinct id_for_vendor) over (partition by dt) as total_users_added,
+    count(distinct id_for_vendor) over (partition by dt, is_subscriber) as users_added_subs,
+    count(distinct id_for_vendor) over (partition by dt, imported_item_type) as users_added_by_type,
+from raw

@@ -1,0 +1,105 @@
+/*
+    Name: VLA - subscription tiers experiment - CVR/PCVR by product and response
+    Query ID: 42302
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-06-08T11:29:29.518Z
+    */
+    with experiment_users as (
+    select distinct 
+        ex.variant,
+        ex.segmentation,
+        ex.installation_id,
+        ex.experiment_started_device,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on ex.installation_id = u.installation_id
+        and u.app_name = 'videoleap_android'
+    where true    
+        and ex.application = "videoleap_android"
+        and ex.experiment = "business_subscription_tiers"
+)
+
+, response as (
+    select  
+         u.variant,
+         u.segmentation,
+         u.experiment_started_device,
+         u.installation_id,
+         case when   origin_page_response is null then                'No answer'
+                when origin_page_response like '%business%' then 'Promoting a business' 
+                when origin_page_response like '%myself%' then 'Editing for myself' 
+                when origin_page_response like '%friends%' then 'Sharing with friends/family'
+                when origin_page_response like '%influencer%' then 'I’m an influencer'
+                when origin_page_response like '%creator%' then 'I’m a creator'
+                when origin_page_response like '%Other%' then 'Other'
+                else origin_page_response end as response
+    from experiment_users as u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.installation_id = pq.installation_id
+        and app_name = 'videoleap_android'      
+        and origin_page_index = 0
+        and origin_page_name in ('So, what brings you here? v2', 'So, what brings you here?')
+    where true
+    qualify row_number() over (partition by u.installation_id order by pq.meta_received_at desc) = 1
+)
+
+, raw_data as (
+    select distinct
+        ex.variant,
+        ex.installation_id,
+        ex.experiment_started_device,
+        ex.response,
+        case when s.subscription.product_id = "v2_vl_gp_vip_sub_1m_p3_t7_ip0x.0" then "Pro+"
+             when s.subscription.product_id = "v2_vl_gp_vip_sub_1m_p3_t0_ip0x" then "Pro+ and CX"
+             when s.subscription.product_id = "v2_vl_gp_vip_sub_1m_p1_t0_ip0x.0" then "monthly"
+             when s.subscription.product_id = "v2_vl_gp_vip_sub_1y_p0_t7_ip0x.0" then "yearly with trial"
+             when s.subscription.product_id = "v2_vl_gp_vip_sub_1y_p1_t0_ip0x.0" then "yearly without trial"
+        else s.subscription.product_id end as product_id,
+        -- s.subscription.product_id,
+        s.original_purchase_date,
+        s.payments.revenue_so_far_alloc_cs as revenue_so_far,
+    from response as ex
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`purchase_to_verified_devices` as ptd
+        on ptd.installation_id = ex.installation_id
+        and ptd.original_purchase_date > ex.experiment_started_device
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation_cross_sell` as s
+        on ptd.lt_subscription_id = s.lt_subscription_id
+        and s.subscription.product_category = "subscription"
+        and s.vertical = "Videoleap"
+)
+
+, total_users as (
+    select
+        variant,
+        response,
+        -- case when assignment_day_from_install = 0 or assignment_day_from_install is null then "day0" else "non day0" end as day0,
+        count(distinct installation_id) as num_devices
+    from raw_data
+    group by 1,2
+)
+
+select
+    *, 
+    num_subs / num_devices * 100 as CVR,
+    num_paid_subs / num_devices * 100 as PCVR,
+    num_subs_by_product / num_devices * 100 as product_CVR,
+    num_paid_subs_by_product / num_devices * 100 as product_PCVR,
+from (
+    select distinct
+        t.variant,
+        t.response,
+        r.product_id,
+        t.num_devices,
+        count(distinct case when r.original_purchase_date is not null then installation_id end) over (partition by variant, response) as num_subs,
+        count(distinct case when r.original_purchase_date is not null then installation_id end) over (partition by variant, product_id, response) as num_subs_by_product,
+        count(distinct case when r.original_purchase_date is not null and r.revenue_so_far > 0 then installation_id end) over (partition by variant, response) as num_paid_subs,
+        count(distinct case when r.original_purchase_date is not null and r.revenue_so_far > 0 then installation_id end) over (partition by variant, product_id, response) as num_paid_subs_by_product,
+    from raw_data as r
+    left join total_users as t
+        using(variant, response)
+    where original_purchase_date is not null
+)
+where true
+    and num_subs_by_product > 5
+    and case when '{{variant}}' = 'All' then true else variant = "{{variant}}" end
+order by 1,2,3

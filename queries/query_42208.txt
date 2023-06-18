@@ -1,0 +1,21 @@
+/*
+    Name: VL iOS - New Subs vs Churned
+    Query ID: 42208
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-25T10:30:43.918Z
+    */
+    select
+dt,
+sum(new_subs) as new_subs,
+sum(new_paid_subs) as new_paid_subs,
+sum(active_subs) as active_subs,
+sum(active_paying_subs) as active_paying_subs,
+sum(churn_subs)*-1 as churn_subs,
+sum(churn_paid_subs)*-1 as churn_paid_subs,
+sum(new_paid_subs) - sum(churn_paid_subs) as net_new_paid_subs
+from `ltx-dwh-prod-processed`.`agg`.`subs_metrics_by_date_cs`
+where app_name = 'videoleap' 
+    and dt >= '2022-01-01' and dt < date_trunc(date(current_date()), week)
+    and platform = 'ios'
+    and time_granularity = '{{period}}'
+group by 1

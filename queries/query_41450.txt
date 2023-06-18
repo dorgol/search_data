@@ -1,0 +1,60 @@
+/*
+    Name: VL iOS: Usage Retention (targets)
+    Query ID: 41450
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-28T15:29:57.615Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(first_session_icloud_app_ts), {{period}}) as cohort_period,
+        date_diff(current_date(), date(first_session_icloud_app_ts), {{period}}) as total_periods,
+        f.platform_device_id,
+        case when f.last_platform_user_id = 'unknown' then f.platform_device_id else f.last_platform_user_id end as user_id,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` f
+    where date_trunc(date(first_session_icloud_app_ts), {{period}}) >= '2022-10-01'
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(first_session_icloud_app_ts), {{period}})
+    and f.app_name = 'videoleap'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+)
+
+, user_per_period as (
+    select distinct
+        cohort_period,
+        total_periods,
+        periods,
+        count(distinct user_id) over (partition by cohort_period) as total_users_for_period
+    from users
+    join unnest(generate_array(0,30)) as periods
+    where periods <= total_periods
+)
+
+, usage as (
+    select
+        date_trunc(date(first_session_icloud_app_ts), {{period}}) as cohort_period,
+        date_diff(dt, date(first_session_icloud_app_ts), {{period}}) as active_period,
+        count(distinct case when f.last_platform_user_id = 'unknown' then f.platform_device_id else f.last_platform_user_id end) as active_users,
+    from users as u
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device_date` f
+        on u.platform_device_id = f.platform_device_id
+        and date_trunc(date(first_session_icloud_app_ts), {{period}}) >= date_sub(current_date(), interval 1 year)
+        and date_trunc(current_date(), {{period}}) != date_trunc(dt, {{period}})
+        and f.app_name = 'videoleap'
+    group by 1,2
+)
+
+select distinct
+    format_date('%y-%m-%d', upp.cohort_period) as cohort_period,
+    u.active_period,
+    '{{period}} ' || cast (u.active_period as string) || ' retention' as period_name,
+    active_users,
+    total_users_for_period,
+    round(100*active_users/total_users_for_period,2) as retention,
+from user_per_period as upp
+join usage as u
+    on upp.periods = u.active_period
+    and upp.cohort_period = u.cohort_period
+where u.active_period > 0 and u.active_period < 4
+order by 1,2

@@ -1,0 +1,88 @@
+/*
+    Name: 20230329 - [FT-1081] Feature Touchpoint Subscription - Experiment Convergence
+    Query ID: 41722
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-10T06:55:11.282Z
+    */
+    create temp table devices as (
+    select
+        timestamp_diff(experiment_started_meta, first_day, day) as days_from_assignment_time,
+        lt_defacto_id,
+        experiment,
+        experiment_started_device,
+        experiment_started_meta,
+        first_day,
+        variant,
+        segmentation,
+        display_type
+        --count(distinct lt_defacto_id) as num_devices,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d 
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+    and case when '{{display}}' = 'All' then true else  display_type = '{{display}}' end
+    and case when '{{country}}' = 'Global' then true
+        when '{{country}}' in ('China','United States') then country = '{{country}}'
+        else country not in ('China','United States') end
+   
+
+);
+
+create temp table device_sub as (
+select distinct
+    std.lt_defacto_id,
+    `lt_subscription_id`
+from devices d
+join `ltx-dwh-prod-processed`.`subscriptions`.`purchase_to_devices` std
+    on d.lt_defacto_id = std.lt_defacto_id
+    and original_purchase_date >= experiment_started_meta
+    and date_diff(date(original_purchase_date), date(experiment_started_meta), day) <= {{days to convert}}
+    and product_category = 'subscription'
+);
+
+create temp table subsday0 as (
+    select distinct
+        d.days_from_assignment_time,
+        s.lt_subscription_id,
+        d.lt_defacto_id,
+        d.variant,
+        s.revenue_so_far,
+        s.had_trial,
+        s.subscription_duration,
+        s.original_purchase_date
+    from devices d 
+    left join device_sub ds
+        on ds.lt_defacto_id = d.lt_defacto_id
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_state` s
+        on ds.lt_subscription_id = s.lt_subscription_id
+        and s.application = '{{app}}'
+    where  days_from_assignment_time >= {{start_day}} 
+    and (select max(days_from_assignment_time) from devices)-days_from_assignment_time >= {{days to remove}}
+);
+
+
+create temp table array_days as(
+select day_of_experiment
+    from(select generate_array(0,50) as days_array),unnest(days_array) as day_of_experiment
+);
+
+select
+    day_of_experiment,
+    variant,
+    count(distinct lt_defacto_id) as num_devices,
+    count(distinct lt_subscription_id) as num_sub,
+    count(distinct case when revenue_so_far > 0 then lt_subscription_id end) as num_eventually_paid_sub,
+    count(distinct lt_subscription_id) / count(distinct lt_defacto_id) *100 as cum_cvr,
+    count(distinct case when revenue_so_far > 0 then lt_subscription_id end) / count(distinct lt_defacto_id) *100 as cum_paid_cvr,
+    case when count(distinct case when subscription_duration = '1y' and had_trial then lt_subscription_id end) > 0 then count(distinct case when subscription_duration = '1y' and had_trial and revenue_so_far > 0 then lt_subscription_id end) / count(distinct case when subscription_duration = '1y' and had_trial then lt_subscription_id end) *100 else 0 end as cum_trial_to_paid_ratio
+from subsday0
+cross join array_days
+where days_from_assignment_time <= day_of_experiment
+and day_of_experiment >= {{start_day}} and day_of_experiment < (select max(days_from_assignment_time) from devices) - {{days to remove}}
+group by 1,2
+order by 1,2

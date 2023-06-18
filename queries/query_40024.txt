@@ -1,0 +1,29 @@
+/*
+    Name: FT2A - Feature Export Rate
+    Query ID: 40024
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-05T08:19:55.734Z
+    */
+    select
+    fs.feature,
+    case 
+        when coalesce(fe.is_subscriber, fs.is_subscriber) is not null then cast(coalesce(fe.is_subscriber, fs.is_subscriber) as string)
+        else 'unknown'
+    end as is_subscriber,
+    `ltx-dwh-playground.bi.getCurrentFeatureOrderFT2A_Photo`(fs.feature) feature_order,
+    count(distinct fe.image_session_id) num_accepted_sessions,
+    count(distinct ie.image_session_id) num_export_sessions,
+    count(distinct ie.image_session_id)/nullif(count(distinct fe.image_session_id),0)*100 export_rate_of_feature_accepted,
+from `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_feature_started` fs
+left join `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_feature_ended` fe
+    on date(fe.meta_received_at) >= date_sub(current_date(), interval {{days_back}} day)
+    and fe.feature_usage_id = fs.feature_usage_id
+    and accepted
+left join `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_image_exported` ie
+    on date(ie.meta_received_at) >= date_sub(current_date(), interval {{days_back}} day)
+    and fe.image_session_id = ie.image_session_id
+where fs.feature not like '%FTV%'
+and date(fs.meta_received_at) >= date_sub(current_date(), interval {{days_back}} day)
+group by 1,2,3
+having num_accepted_sessions >= 5000
+order by 3,2

@@ -1,0 +1,21 @@
+/*
+    Name: VL iOS - Feed - Manual Tags
+    Query ID: 41750
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-23T10:58:02.679Z
+    */
+    with posts as (
+    select
+        date_trunc((date(st.created_at)), {{period}}) as dt,
+        count(distinct st.export_id) as og_posts,
+        count(distinct case when title like '%#%' then st.export_id end) as og_tag_posts,
+        safe_divide(count(distinct case when title like '%#%' then st.export_id end), count(distinct st.export_id))*100 as pct_og_posts
+    from `ltx-dwh-prod-raw.analytics.backend_feed_post_create` as st
+    where st.app_name = "videoleap"
+        and parent_template_id is null
+        and date_trunc((date(st.created_at)), {{period}}) >= '2023-01-01'
+        and date_trunc((date(st.created_at)), {{period}}) < date_trunc(current_date(), {{period}})
+    group by 1
+)
+
+select * from posts

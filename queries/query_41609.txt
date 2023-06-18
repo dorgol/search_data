@@ -1,0 +1,37 @@
+/*
+    Name: [FT-1096] Post Export Video “Ad”: Video Load to Export Rate
+    Query ID: 41609
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-04T06:26:56.235Z
+    */
+    with users as (
+    select
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = 'facetune2'
+    and display_type = '{{display}}'
+    and experiment = '[FT-1096] Post Export Video “Ad” 1.1'
+    and segmentation in ('02 New Users', '03 Existing Users')
+)
+ 
+select
+    segmentation,
+    variant,
+    count(distinct l.event_id) as videos_loaded,
+    count(distinct e.event_id) as videos_exported,
+    count(distinct l.event_id)/count(distinct u.id_for_vendor) as videos_loaded_per_device,
+    100*count(distinct e.event_id)/count(distinct l.event_id) as video_load_to_export_rate,
+from users u
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_loaded` l
+    on u.id_for_vendor = l.id_for_vendor
+    and l.meta_received_at >= u.experiment_started_meta_by_type
+    and l.meta_received_at >= '2023-05-02'    
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported` e
+    on u.id_for_vendor = e.id_for_vendor
+    and e.meta_received_at >= u.experiment_started_meta_by_type
+    and e.meta_received_at >= '2023-05-02'
+group by 1,2
+order by 1,2

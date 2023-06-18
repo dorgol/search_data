@@ -1,0 +1,34 @@
+/*
+    Name: Felix Onboarding - MRR (Subscriptions)
+    Query ID: 41167
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-19T14:09:05.879Z
+    */
+    -- Pull transactions on a transaction ID level
+-- calculate monthly recurring revenue
+
+with transactions as (
+
+    select distinct 
+        transaction.transaction_id  as transaction_id,
+        date_trunc(purchase_date, month) as sub_start,
+        date_trunc(subscription.subscription_renewal_date_calc, month) as sub_end,
+        subscription.subscription_duration,
+        payments.gross_proceeds
+    from 
+        `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions` us
+    where
+        payments.gross_proceeds > 0
+        and purchase_date > '2022-01-01'
+)
+
+
+select *
+from transactions
+/*cross join (select distinct 
+                sub_start as transaction_month
+            from transactions) where transaction_month >= transactions.sub_start and transaction_month <= transactions.sub_end*/
+           
+
+
+    

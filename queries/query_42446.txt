@@ -1,0 +1,19 @@
+/*
+    Name: Facetune: Total Beauty Feed Purchases
+    Query ID: 42446
+    Created By: Nicky Kamins
+    Last Updated At: 2023-06-13T07:05:31.338Z
+    */
+    SELECT  
+    subscription.product_sub_category,
+    subscription.product_id,
+    count(distinct lt_transaction_id) as purchases,
+    sum(payments.actual_proceeds_alloc_cs) as revs,
+FROM `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation_cross_sell` 
+where true
+and application = 'facetune2'
+and original_purchase_date >= '2023-05-16'
+and subscription.product_category = 'asset'
+and subscription.product_sub_category = 'template'
+group by 1,2
+order by 1,2

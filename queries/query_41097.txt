@@ -1,0 +1,174 @@
+/*
+    Name: [FT-1058] Quickstart V2 - first flow funnel -week1 retention rate by category
+    Query ID: 41097
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-17T16:25:19.631Z
+    */
+    with users as (
+    select  
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else d.country end as country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.experiment_started_meta_by_type,
+        d.experiment_started_device,
+        d.experiment_started_device_by_type,
+        d.display_type,
+        max(case when a.original_transaction_id is not null then s.id_for_vendor end) as subscriber_id,
+        min(case when a.original_transaction_id is not null then s.device_timestamp end) as subscription_time,
+        max(current_is_in_trial_period) as current_is_in_trial_period,
+        max(revenue_so_far) > 0 as paid,
+        max(revenue_so_far) as rev,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_user_subscribed` s
+        on d.id_for_vendor = s.id_for_vendor
+        and s.meta_received_at >= '2023-01-05'
+    left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` a
+        using(original_transaction_id)
+    where case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+                else true end
+    and  d.application = 'facetune2'
+    and d.experiment like '%[FT-1058]%'
+    and d.display_type = 'displayed'
+    and case 
+    when '{{countries}}' = 'Global' then true 
+    when '{{countries}}' = 'Rest of the World' then d.country not in ('US','CN')
+    when '{{countries}}' = 'All' then true
+    else d.country = '{{countries}}' end  
+    group by 1,2,3,4,5,6,7,8,9,10,11
+),
+
+
+first_quickstart_flow as (
+    select
+        u.display_type,
+        u.segmentation,
+        u.experiment,
+        u.country,
+        u.first_day, 
+        u.variant,
+        u.id_for_vendor,
+        case 
+            when subscription_time < experiment_started_device_by_type then 'subscribed_before_qs' 
+            else 'did_not_subscribe_before_qs' 
+        end as category,
+        u.experiment_started_meta, 
+        a.quickstart_screen_id as first_quickstart_screen_id,
+        a.meta_received_at as first_quickstart_appeared_ts,
+        a.features_presented
+    from users u 
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_appeared` a
+        on u.id_for_vendor = a.id_for_vendor
+    where true --variant = 'Variant 1'
+    qualify row_number() over (partition by experiment,variant,country,display_type,segmentation,id_for_vendor order by a.meta_received_at asc) = 1
+),
+
+
+first_quickstart_retention as (
+select distinct
+    experiment,
+    country,
+    first_day, 
+    variant,
+    a.id_for_vendor,
+    category,
+    experiment_started_meta, 
+    first_quickstart_screen_id,
+    first_quickstart_appeared_ts,
+    features_presented,
+    d.feature,
+    d.sub_feature,
+    d.feature_position,
+    d.reason,
+    case when date(experiment_started_meta) + 13 < current_date then true else false end as week1_relevant_user,
+    case when date(experiment_started_meta) + 13 < current_date and f.id_for_vendor is not null then true else false end as retained_week1
+from first_quickstart_flow a
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_dismissed` d
+    on d.id_for_vendor = a.id_for_vendor
+    and d.quickstart_screen_id = a.first_quickstart_screen_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_app_foreground` f
+    on a.id_for_vendor = f.id_for_vendor
+    and date(f.meta_received_at) >= '2023-01-05'
+    and date(f.meta_received_at) between date(experiment_started_meta) + 7 and date(experiment_started_meta) + 13
+),
+
+
+
+baseline_retention as (
+select
+    u.experiment,
+    u.first_day, 
+    u.variant,
+    u.segmentation,
+    u.country,
+    u.id_for_vendor,
+    case 
+        when subscription_time < experiment_started_device_by_type then 'subscribed_before_qs' 
+        else 'did_not_subscribe_before_qs' 
+    end as category,
+    u.experiment_started_meta,
+    u.experiment_started_meta_by_type,
+    u.display_type,
+    case when date(experiment_started_meta) + 13 < current_date then true else false end as week1_relevant_user,
+    case when date(experiment_started_meta) + 13 < current_date and f.id_for_vendor is not null then true else false end as retained_week1
+from users u
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_app_foreground` f
+    on u.id_for_vendor = f.id_for_vendor
+    and date(f.meta_received_at) >= '2023-01-05'
+    and date(f.meta_received_at) between date(experiment_started_meta) + 7 and date(experiment_started_meta) + 13
+where variant = 'baseline'
+),
+
+baseline_retention_rate as (
+select 
+    category,
+    count(distinct case when retained_week1 then id_for_vendor end) as baseline_retained,
+    count(distinct case when week1_relevant_user then id_for_vendor end) as baseline_relevant_users,
+from baseline_retention b
+group by 1--,2
+)
+
+select distinct
+    experiment,
+    country,
+    variant,
+    category,
+    case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end as feature,
+
+                                                                 
+    count(distinct id_for_vendor) over (partition by variant, category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) as cnt_devices,                                                             
+    count(distinct case when retained_week1 then id_for_vendor end) over (partition by variant, category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) as cnt_devices_retained_category,
+                                                                 
+    count(distinct case when week1_relevant_user then id_for_vendor end) over (partition by variant, category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) as week1_relevant_users_category,                                                            
+                                                                 
+    100*count(distinct case when retained_week1 then id_for_vendor end) over (partition by variant, category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) /
+    count(distinct case when week1_relevant_user then id_for_vendor end) over (partition by variant, category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) as pct_devices_retained_category,
+
+    100*baseline_retained / baseline_relevant_users as baseline_retention_rate
+from first_quickstart_retention
+join baseline_retention_rate 
+    using(category)
+-- where category = '{{category_name}}'
+

@@ -1,0 +1,57 @@
+/*
+    Name: VL iOS - Onboarding - What do you feel like doing?
+    Query ID: 41812
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-12T11:14:41.723Z
+    */
+    with users as (
+  select distinct
+    date(date_trunc(d.dt, {{Time granularity}} )) as dt,
+    d.platform_device_id,
+    d.first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where dt >= "2023-01-01"
+    --and dt < date_trunc(current_date, {{Time granularity}})
+    and d.app_name = "videoleap"
+    and d.platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then d.dt = d.first_active_dt
+             when '{{Day}}' = "non day0" then d.dt > d.first_active_dt
+             else true end
+)
+
+
+, response as (
+    select  
+         u.platform_device_id,
+         case when lower(origin_page_response) like '%basic editing%' then 'Some basic editing' 
+              when lower(origin_page_response) like '%social media trend%' then 'Recreate a social media trend'
+              when lower(origin_page_response) like '%not sure yet%' then 'Not sure yet'
+              when lower(origin_page_response) like '%original video%' then 'Making my own original video'
+              else null end as response,
+    from users u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        --and origin_page_index = 0
+        and lower(origin_page_name) = 'what do you feel like doing?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+
+select  
+    u.dt,
+    case when response is null then 'No Answer' else response end as response,
+    count(distinct u.platform_device_id) as users,
+    sum(count(distinct u.platform_device_id)) over (partition by dt) as total_users,
+    count(distinct u.platform_device_id) / sum(count(distinct u.platform_device_id)) over (partition by dt) *100 as pct_response
+from users u
+left join response r
+    on r.platform_device_id = u.platform_device_id
+group by 1,2
+    order by 1,2 desc

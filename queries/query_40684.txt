@@ -1,0 +1,34 @@
+/*
+    Name: VL iOS - ARPPU -- country source
+    Query ID: 40684
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-28T16:21:43.830Z
+    */
+    with transactions as (
+    select distinct 
+        lt_subscription_id,
+        lt_transaction_id,
+        date(ss.original_purchase_date) as original_purchase_date,
+        date(ss.purchase_date) as purchase_date,
+        ss.actual_proceeds,
+        subscription_duration,
+        cc.country_name
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_state` ss
+    left join `ltx-dwh-prod-processed`.`devices`.`country_codes` cc
+        on cc.country_code = ss.app_store_country
+    where application ='videoleap'
+    and date(ss.purchase_date) >= '2022-01-01'
+    and actual_proceeds > 0
+        )
+
+select
+    date_trunc(purchase_date,{{time granularity}}) as dt,
+    case when country_name in ('United States', 'United Kingdom', 'China') then country_name
+         else 'Other' end as country_name,
+    count(distinct lt_subscription_id) as subs,
+    count(distinct  lt_transaction_id) as transactions,
+    sum(actual_proceeds) as revs,
+    avg(actual_proceeds) as avg_revs
+from transactions
+group by 1,2
+    

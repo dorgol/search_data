@@ -1,0 +1,191 @@
+/*
+    Name: Creators - purchases and revenues per creator (PX data) - 30% Share - All Dates
+    Query ID: 42204
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-25T07:51:43.157Z
+    */
+    with purchases as (
+    select distinct 
+        date(r.created_at) as dt,
+        r.transaction_id,
+        split(r.consumable_id, '.')[offset(4)] original_post_id,
+        split(r.consumable_id, '.')[offset(5)] purchased_post_id,
+        u.payments.actual_proceeds,
+        u.payments.gross_proceeds,
+        case when '{{all time or month}}' = 'all time' then 'all time' else '{{purchase month}}' end as month
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions` as u
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`redeemed_coins` as r
+        on cast(r.transaction_id as string) = u.transaction.transaction_id
+    where u.vertical = 'Videoleap'
+        and u.subscription.product_sub_category = "template"
+        and case when '{{all time or month}}' = 'all time' then true
+                 when '{{all time or month}}' = 'month' then '{{purchase month}}' = date_trunc(date(u.original_purchase_date), month) end
+        
+)
+
+, creators_accounts as (
+    select
+        post_id,
+        account_id
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` as be
+    qualify (row_number() over (partition by post_id order by server_timestamp desc) = 1)
+)
+
+, purchases_per_template as (
+    select distinct
+        month,
+        original_post_id,
+        account_id,
+        purchased_post_id,
+        count(distinct transaction_id) as num_transactions,
+        sum(actual_proceeds) as net_revenues
+    from purchases as p
+    left join creators_accounts as a
+        on a.post_id = p.original_post_id
+    group by 1,2,3,4
+)
+
+, accounts as (
+    select distinct
+        r.lt_id,
+        r.account_id,
+        r.meta_received_at
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_registered` as r
+
+
+    union all
+
+    select distinct
+        r.lt_id,
+        r.account_id,
+        r.meta_received_at
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_registered` as r
+)
+
+, accounts2 as (
+    select distinct
+        lt_id,
+        account_id
+    from accounts
+        qualify (row_number() over (partition by account_id order by meta_received_at desc) = 1)
+        )
+
+, names as (
+    select distinct 
+        n.lt_id,
+        n.value as name,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_profile_features` as n
+    where true 
+        and lower(action) in ("add", "replace")
+        and feature = "username"
+    qualify (row_number() over (partition by lt_id order by meta_received_at desc) = 1)
+)
+
+, details as (
+    select distinct 
+        n.lt_id,
+        n.name,
+        a.account_id
+    from accounts2 a
+    left join names n
+        on n.lt_id = a.lt_id
+)
+
+, purchases_per_creator as (
+    select
+        month,
+        n.account_id,
+        n.lt_id,
+        n.name,
+        case when n.account_id in ("bec04c27-f000-4975-86e0-bf3527aed041",
+                                    "66e995df-9c23-4533-a783-9bdd0f64a2a5",
+                                    "911b44a0-a88e-4c9c-8604-a0ea15b318c2",
+                                    "574591ce-96a2-4b95-88a1-23c39d6d54e9",
+                                    "0e6a85dc-1ba2-43c7-9c1d-dd39c93738d4",
+                                    "196a7772-fb29-4326-8271-02f3cf9f0431",
+                                    "8f5478b6-539e-4bf7-8d0d-96da6174d599",
+                                    "6c265a4c-f8f8-446d-91d1-cefab69f7469",
+                                    "9c873679-95db-4f96-94db-3df80c52fb02",
+                                    "c69e5be4-015a-42ed-be41-f2504dc7e620",
+                                    "5555e72e-d6db-4ab1-9404-e8f815fee762",
+                                    "4a4efac6-5fbf-4475-b876-a0c9f609bd0a",
+                                    "dff125a0-5347-40e1-b3ac-043a3fa7ab0c",
+                                    "525d373d-44d6-4502-93e4-4c88ca335836",
+                                    "2c98c781-8cf6-4c14-8579-d8e35a8440ad",
+                                    "cb5d4368-5b26-45c0-b762-182d930e4e74",
+                                    "190ad8bd-a02b-43a7-bb2e-cf2f8fd51beb",
+                                    "5a311bd3-df82-40ba-8747-744a64798951",
+                                    "9b1a0db0-dd5e-403d-9a23-9aeea01efefb",
+                                    "35d4bd26-e371-4fee-a489-557f3825f708") then "paid UGC" 
+                                    
+            when n.account_id in (
+                                    "1dbe77e9-95cd-4d4f-9de8-3b1148af0e77",
+                                    "4bfff1e9-e374-4100-93ff-bc3890a11fae",
+                                    "574591ce-96a2-4b95-88a1-23c39d6d54e9",
+                                    "7ecab4e1-0e4a-4d1e-a86c-4347e7362fcd",
+                                    "a07c05dd-0cb9-4483-bec2-0d4e5d7c112e",
+                                    "35d4bd26-e371-4fee-a489-557f3825f708",
+                                    "cb5d4368-5b26-45c0-b762-182d930e4e74",
+                                    "0e6a85dc-1ba2-43c7-9c1d-dd39c93738d4",
+                                    "8f5478b6-539e-4bf7-8d0d-96da6174d599",
+                                    "2e88c25d-5178-4cfc-8eff-3fb8c75c4e82",
+                                    "5a311bd3-df82-40ba-8747-744a64798951",
+                                    "525d373d-44d6-4502-93e4-4c88ca335836",
+                                    "ecd82eee-0e03-4049-9846-bab2085daa8c",
+                                    "911b44a0-a88e-4c9c-8604-a0ea15b318c2",
+                                    "196a7772-fb29-4326-8271-02f3cf9f0431",
+                                    "64676842-93a8-4b8e-a831-f1f5f0eb2016",
+                                    "66e995df-9c23-4533-a783-9bdd0f64a2a5",
+                                    "9c873679-95db-4f96-94db-3df80c52fb02",
+                                    "9eea0220-2f9e-4646-b04a-60c9b5e509a0",
+                                    "192d7d85-9f50-4ff6-a0f2-c3be3557a695",
+                                    "b72710e0-08db-4d92-8a80-e9f16fef7d26",
+                                    "190ad8bd-a02b-43a7-bb2e-cf2f8fd51beb",
+                                    "df98b5d6-a90a-4fc1-807c-2c67755efc98",
+                                    "9b1a0db0-dd5e-403d-9a23-9aeea01efefb",
+                                    "5555e72e-d6db-4ab1-9404-e8f815fee762",
+                                    "d6e869a2-ef29-47c7-9a4b-8f47a3a4004e",
+                                    "69bc1045-6d1f-4f9a-962b-d921983299d3",
+                                    "6c265a4c-f8f8-446d-91d1-cefab69f7469",
+                                    "77fd9a1f-0e00-428d-8ecd-c344e4932ce1",
+                                    "bec04c27-f000-4975-86e0-bf3527aed041",
+                                    "b6de8480-24b4-42aa-b546-5556e7638fc3",
+                                    "7e0145c3-e5ca-478f-9037-f5e93c00e3ec",
+                                    "4eae029b-9140-41a1-9082-c36ee940a785",
+                                    "86dfe040-2826-43d9-96eb-a6ab6ff610f3",
+                                    "7aa8c997-5c9a-43bc-a35f-dc4415a5d492",
+                                    "8906618d-d143-44bb-8b73-6aca7c17d86d",
+                                    "0ea04697-ea65-496d-9ea4-6afacf29b6f3",
+                                    "c63458ad-8602-4720-88e1-6ad6b05eaf0d",
+                                    "4a4efac6-5fbf-4475-b876-a0c9f609bd0a",
+                                    "2c98c781-8cf6-4c14-8579-d8e35a8440ad",
+                                    "2747bc6a-5a76-4864-bd52-b7a63afaeb92",
+                                    "5d5e023e-9abf-420b-a874-bc1ff9bcb156",
+                                    "2696cefb-59c0-4759-8e7e-032b2e59daa0",
+                                    "aa48912f-c6b2-45bd-895c-1a31acdf73f5",
+                                    "f161d5c4-43ea-4a36-8cc8-9380eebb9724",
+                                    "dff125a0-5347-40e1-b3ac-043a3fa7ab0c",
+                                    "5d2db113-5f30-4ad5-9a57-ac058b7bfb4e") then 'paid UGC - new' else "unpaid" end as user_type,
+        sum(p.num_transactions) as total_purchases,
+        sum(p.net_revenues) as total_net_revenues
+    from details n 
+    left join purchases_per_template as p
+        on n.account_id = p.account_id
+    group by 1,2,3,4
+)
+
+select distinct
+    month,
+    account_id,
+    lt_id,
+    name,
+    user_type,
+    total_purchases,
+    total_net_revenues,
+    total_net_revenues / total_purchases as avg_template_price,
+    total_net_revenues * 0.3 as pay_to_creator,
+    sum(total_net_revenues * 0.3) over () as total_payments_to_creators
+from purchases_per_creator
+where case when '{{user_type}}' = 'all' then true
+           when '{{user_type}}' = 'all paid UGC' then user_type in ('paid UGC', 'paid UGC - new') else user_type = '{{user_type}}' end
+order by pay_to_creator desc

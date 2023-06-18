@@ -1,0 +1,15 @@
+/*
+    Name: Filtertune: New Subscribers
+    Query ID: 40297
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-13T12:26:05.548Z
+    */
+    select
+    timestamp_trunc(original_purchase_date, month) as purchase,
+    subscription.subscription_duration,
+    count(distinct lt_subscription_id) as subs,
+from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation`
+where application = 'venus'
+and payments.revenue_so_far > 0
+group by 1,2
+order by 1,2

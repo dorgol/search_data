@@ -1,0 +1,125 @@
+/*
+    Name: delete
+    Query ID: 40840
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-03T10:51:08.081Z
+    */
+    select
+    'purchasers' as segment,
+    case when target is null then 'other' else target end as target,
+    count(distinct ex.export_id) as exports,
+    count(distinct ex.id_for_vendor) as exporters,
+
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` ex
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_share` xs
+        on ex.export_id = xs.export_id
+        
+    inner join (select distinct st.platform_device_id
+                    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started`as st
+                    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended`as en
+                        on st.action_id = en.action_id
+                        and en.reason = "succeeded"
+                        and st.action = "purchase_template") pu
+                on pu.platform_device_id = ex.id_for_vendor
+                
+where date(ex.meta_received_at) >= '{{from date}}'
+group by 1,2
+
+union all 
+
+         
+select
+    'all subs' as segment,
+    case when target is null then 'other' else target end as target,
+    count(distinct ex.export_id) as exports,
+    count(distinct ex.id_for_vendor) as exporters,
+
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` ex
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_share` xs
+        on ex.export_id = xs.export_id
+        
+    left join (select distinct st.platform_device_id
+                    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started`as st
+                    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended`as en
+                        on st.action_id = en.action_id
+                        and en.reason = "succeeded"
+                        and st.action = "purchase_template") pu
+                on pu.platform_device_id = ex.id_for_vendor
+                
+where date(ex.meta_received_at) >= '{{from date}}'
+and ifnull(ex.is_subscriber, false) is true
+group by 1,2
+
+union all 
+
+         
+select
+    'non subs' as segment,
+    case when target is null then 'other' else target end as target,
+    count(distinct ex.export_id) as exports,
+    count(distinct ex.id_for_vendor) as exporters,
+
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` ex
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_share` xs
+        on ex.export_id = xs.export_id
+        
+    left join (select distinct st.platform_device_id
+                    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started`as st
+                    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended`as en
+                        on st.action_id = en.action_id
+                        and en.reason = "succeeded"
+                        and st.action = "purchase_template") pu
+                on pu.platform_device_id = ex.id_for_vendor
+                
+where date(ex.meta_received_at) >= '{{from date}}'
+and ifnull(ex.is_subscriber, false) is false
+group by 1,2
+
+union all 
+
+         
+select
+    'subs & purchasers' as segment,
+    case when target is null then 'other' else target end as target,
+    count(distinct ex.export_id) as exports,
+    count(distinct ex.id_for_vendor) as exporters,
+
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` ex
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_share` xs
+        on ex.export_id = xs.export_id
+        
+    left join (select distinct st.platform_device_id
+                    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started`as st
+                    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended`as en
+                        on st.action_id = en.action_id
+                        and en.reason = "succeeded"
+                        and st.action = "purchase_template") pu
+                on pu.platform_device_id = ex.id_for_vendor
+                
+where date(ex.meta_received_at) >= '{{from date}}'
+and ((ifnull(ex.is_subscriber, false) is true) or (pu.platform_device_id is not null))
+group by 1,2
+
+union all 
+
+         
+select
+    'all exporters' as segment,
+    case when target is null then 'other' else target end as target,
+    count(distinct ex.export_id) as exports,
+    count(distinct ex.id_for_vendor) as exporters,
+
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` ex
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_share` xs
+        on ex.export_id = xs.export_id
+        
+    left join (select distinct st.platform_device_id
+                    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started`as st
+                    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended`as en
+                        on st.action_id = en.action_id
+                        and en.reason = "succeeded"
+                        and st.action = "purchase_template") pu
+                on pu.platform_device_id = ex.id_for_vendor
+                
+where date(ex.meta_received_at) >= '{{from date}}'
+group by 1,2

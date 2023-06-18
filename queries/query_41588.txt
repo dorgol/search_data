@@ -1,0 +1,61 @@
+/*
+    Name: PL ios Avg Sessions Per User within day3 split By Scenes User vs Non User
+    Query ID: 41588
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-03T13:18:31.450Z
+    */
+    with scenes_users as
+(select distinct
+dev.first_active_dt,
+fs.platform_device_id
+FROM `ltx-dwh-prod-processed.agg.app_device_date`  as dev
+ inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as fs
+ on fs.app_name= '{{ app_name }}'
+ and fs.feature_name='ai_scenes'
+ and date(fs.meta_received_at)=dev.first_active_dt
+ and fs.platform_device_id=dev.platform_device_id
+ WHERE 
+ --dt = "2023-05-03" 
+ --and 
+dev.app_name= '{{ app_name }}'
+ 
+ --'editor'
+ 
+ and first_active_dt >="2023-04-01"
+ and first_active_dt=dt
+ )
+
+
+
+
+
+
+
+SELECT 
+dev.first_active_dt,
+case when su.platform_device_id is not null then 'Scenes User'
+    else 'Non Scenes User' end as category,
+count(distinct lt_defacto_id) as users,
+sum(cntd_sessions_foreground) as sessions,
+sum(sum_sessions_length) as session_length,
+sum(cntd_sessions_foreground)/count(distinct lt_defacto_id) as sessions_per_user,
+sum(sum_sessions_length)/sum(cntd_sessions_foreground) as avg_session_length
+
+ FROM `ltx-dwh-prod-processed.agg.app_device_date`  dev
+ left join scenes_users as su
+ on dev.first_active_dt=su.first_active_dt
+ and dev.platform_device_id=su.platform_device_id
+ 
+ WHERE 
+ --dt = "2023-05-03" 
+ --and 
+ app_name= '{{ app_name }}'
+ --'editor'
+ 
+ and dev.first_active_dt >="2023-04-01"
+and date_diff( dt, dev.first_active_dt, day)>=0
+and date_diff( dt, dev.first_active_dt, day)<3
+and date_diff(current_date(), dev.first_active_dt, day) >2
+group by 1,2
+order by 1
+ 

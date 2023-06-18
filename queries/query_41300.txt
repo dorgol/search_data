@@ -1,0 +1,76 @@
+/*
+    Name: VL Android Onboarding check
+    Query ID: 41300
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-24T09:58:35.293Z
+    */
+    with questionnaire_lt_defacto as 
+(SELECT
+date(meta_received_at) as questionnaire_date,
+app_name as application,
+case when platform = 'ios' then farm_fingerprint(app_name || platform_device_id)
+     when platform = 'android' then farm_fingerprint (installation_id)
+     else null end as lt_defacto_id
+FROM `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_presented`
+WHERE DATE(_PARTITIONTIME) >= "2022-07-01" 
+      and date(_PARTITIONTIME) <= date_add(current_date(), interval -1 day)
+      and app_name in ('videoleap','videoleap_android')
+group by 1,2,3)
+
+, questionnaire_answers as 
+    (select 
+    u.questionnaire_date as questionnaire_date ,
+    u.application as application,
+    u.lt_defacto_id as lt_defacto_id,
+         case   when   origin_page_response is null then                'No answer'
+                when origin_page_response like '%business%' then 'Promoting a business' 
+                when origin_page_response like '%myself%' then 'Editing for myself' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%friends%' then 'Sharing with friends/family'
+                when origin_page_response like '%influencer%' then 'I’m an influencer'
+                when origin_page_response like '%creator%' then 'I’m a creator'
+                when origin_page_response like '%Other%' then 'Other'
+                else 'Other' end as response
+    from questionnaire_lt_defacto u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.lt_defacto_id = case when pq.platform = 'ios' then farm_fingerprint(pq.app_name || pq.platform_device_id)
+                                  when pq.platform = 'android' then farm_fingerprint (pq.installation_id)
+                                  else null end
+        and origin_page_index = 0
+        and origin_page_name in ('So, what brings you here? v2', 'So, what brings you here?')
+    qualify row_number() over (partition by u.lt_defacto_id order by pq.meta_received_at desc) = 1)
+    
+    , att_questionnaire as 
+(
+    select distinct 
+    u.application as application,
+    attribution_user_id as attribution_user_id,
+    date(u.attribution_timestamp) as attribution_date,
+    response as response
+from `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` as u
+inner join questionnaire_answers qu
+on u.lt_defacto_id = qu.lt_defacto_id
+and date(u.attribution_timestamp) <= questionnaire_date
+    and (date(u.next_attribution_user_group_timestamp)> questionnaire_date or u.next_attribution_user_group_timestamp is null)
+where questionnaire_date >= "2022-07-01" 
+and date(questionnaire_date) <= date_add(current_date(), interval -1 day)
+qualify row_number() over (partition by u.attribution_user_id order by qu.questionnaire_date desc) = 1
+)
+
+select *
+from (
+        select *, 
+            sum (users) over (partition by day) as users_day, 
+            safe_divide(users, sum (users) over (partition by day)) as rate
+        from
+            (
+                select  date_trunc (attribution_date, day)  as day, 
+                        response, count (distinct attribution_user_id) as users
+                from att_questionnaire
+                where application = 'videoleap_android'
+                    and attribution_date >= '2023-01-01'
+                group by 1,2
+            )
+      )
+where response = 'No answer'
+order by 1,2

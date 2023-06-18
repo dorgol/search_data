@@ -1,0 +1,46 @@
+/*
+    Name: VL Product Data Glossary - Daily Usage Retention
+    Query ID: 41140
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-05T14:49:19.924Z
+    */
+    declare max_range default 30;
+
+-- User Id's, their first active date and all days that they were activated (represented as time since launch)
+with dayn_users as (
+
+    select distinct 
+        u.attribution_user_id,
+        --date(date_trunc(first_active_dt, day)) as first_active_dt,
+        date(u.dt) as dt,
+        date(date_trunc(first_active_dt, month)) as first_active_month,
+        date_diff(date(u.dt), date(first_active_dt), day) as day_n
+    from 
+        `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` u
+    where first_active_dt > date_sub(current_date(), interval 365 day)
+        and timestamp_diff(u.dt, first_active_dt, day) <= max_range
+        and app_name = 'videoleap'
+),
+
+-- Total Count of users for each start date (first launch date) (Denominator in the retention percentage calculation)
+monthly_cohort as (
+
+    select distinct 
+        first_active_month,
+        count(distinct attribution_user_id) as cohort_size
+    from 
+        dayn_users
+    group by 1
+)
+
+select 
+    first_active_month,
+    cohort_size,
+    day_n,
+    count(distinct attribution_user_id) as count_users,
+    (count(distinct attribution_user_id)/cohort_size)*100 as retention
+from dayn_users
+inner join monthly_cohort using (first_active_month)
+group by 1,2,3
+order by 1,3
+

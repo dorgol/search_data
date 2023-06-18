@@ -1,0 +1,31 @@
+/*
+    Name: [FT-1067] Beauty Feed - Num V3 users who subscribed and paid after seeing feed
+    Query ID: 40765
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-30T07:56:25.578Z
+    */
+    select  
+    s.experiment,
+    s.variant,
+    s.segmentation,
+    s.display_type,
+    s.subscription_duration,
+    count(distinct s.id_for_vendor) as num_users
+from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+    on true
+    and s.application = '{{app_name}}'
+    and lower(s.experiment) like lower('%{{experiment}}%')
+    and s.display_type = 'activated_for_device'
+    and s.segmentation = '01 All Users' 
+    and s.variant = 'Variant3'
+    and date(s.experiment_started_meta) >= '2023-02-19'
+    and f.app_name = 'facetune2'
+    and f.platform_device_id = s.id_for_vendor
+    and cast(f.app_version_code as int64) >= {{since_version}}
+    and date(f.meta_received_at) >= '2023-02-19'
+    and s.original_purchase_date > f.meta_received_at --subscribed after feed presented
+    and s.revenue_so_far > 0 
+    --and is_in_trial_period
+group by 1,2,3,4,5
+    

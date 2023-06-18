@@ -1,0 +1,147 @@
+/*
+    Name: Photoleap  - SOL Subscription Screens Presented
+    Query ID: 41809
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-12T10:38:07.124Z
+    */
+    with first_launch as (
+    select 
+        lt_defacto_id,
+        d.attribution_user_id,
+        first_session_id,
+        first_session_id_ts,
+        first_app_version_code,
+        date(first_session_id_ts) as first_session_date,
+        winning_lt_defacto_id
+    FROM `ltx-dwh-prod-processed.agg.app_attribution_user` d
+    join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` g
+        on g.attribution_user_id = d.attribution_user_id
+        and g.application = 'editor'
+    WHERE true
+    and app_name = 'editor'
+    and date_trunc(date(first_session_id_ts), day) >= date_sub(current_date(), interval 180 day)
+    and date_trunc(current_date(), day) != date_trunc(date(first_session_id_ts), day)
+    and cast(first_app_version_code as int64)  >= {{at_least_version}}
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Non-China' then current_store_country not in ('CN')
+        when '{{countries}}' = 'Rest of the World (non US and China)' then current_store_country not in ('US','CN')
+        else current_store_country = '{{countries}}' end
+)
+
+select
+    *,
+    100*num_users/max(num_users) over (partition by first_session_date) as pct_of_launched,
+from (
+
+select
+    *
+from (
+    
+    
+    select
+        substring(se.screen_type,25) as screen_type,
+            -- when se.source = 'homescreen_importSubscriptionAlert' then 'saw_homescreen_import_sub_screen'
+         date_trunc(first_session_date,{{period}}) as first_session_date,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_editor_subscription_presented` se
+        on farm_fingerprint('editor'|| se.id_for_vendor) = l.lt_defacto_id
+        and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 180 day)
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(se.meta_received_at) = l.first_session_date
+        and se.source in ('SubscriptionPageSourceOnboardingPromotion') --,'homescreen_importSubscriptionAlert')  
+    group by 1,2
+ /*       
+    union all
+    
+    select
+        '09. ' || 'reached_home_screen' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_content_screen_presented`  il
+        on farm_fingerprint('editor'|| il.platform_device_id) = l.lt_defacto_id
+     
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(il.meta_received_at) = l.first_session_date
+        and il.app_name='editor'
+        and il.screen_name='home_screen_carousel'
+        and il.platform='ios'
+    -- union all
+    
+    -- select
+    --     'quick_start_appeared' as label,
+    --     count(distinct l.lt_defacto_id) as num_users,
+    -- from first_launch l
+    -- join `ltx-dwh-prod-raw.analytics.ios_facetune2_quickstart_screen_appeared` il
+    --     on farm_fingerprint('facetune2'|| il.id_for_vendor) = l.lt_defacto_id
+   
+    --     and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+    --     and date(il.meta_received_at) = l.first_session_date
+        
+    union all
+    
+    select
+        '11. ' || 'feature_started' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_started` fs
+        on farm_fingerprint('facetune2'|| fs.id_for_vendor) = l.lt_defacto_id
+   
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+        
+    union all
+    
+    select
+        '12. ' || 'subfeature_started' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_sub_feature_started` fs
+        on farm_fingerprint('facetune2'|| fs.id_for_vendor) = l.lt_defacto_id
+     
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+    
+    union all
+    
+    select
+        '13. ' || 'feature_accept_attempted' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_button_pressed` fs
+        on farm_fingerprint('facetune2'|| fs.id_for_vendor) = l.lt_defacto_id
+       
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+        and destination in ( 'blocking_subscription_screen','main_photo_editor_screen')
+        and button_identifier = 'accept'
+        
+    union all
+    
+    select
+        '14. ' || 'feature_accepted' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_ended` fs
+        on farm_fingerprint('facetune2'|| fs.id_for_vendor) = l.lt_defacto_id
+        and fs.accepted
+     
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(fs.meta_received_at) = l.first_session_date
+        
+    union all
+    
+    select
+        '15. ' || 'exported_image' as label,
+        count(distinct l.lt_defacto_id) as num_users,
+    from first_launch l
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_exported` ex
+        on farm_fingerprint('facetune2'|| ex.id_for_vendor) = l.lt_defacto_id
+      
+      
+        and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+        and date(ex.meta_received_at) = l.first_session_date
+
+*/
+))

@@ -1,0 +1,53 @@
+/*
+    Name: Facetune: New User Avg Exports per Period
+    Query ID: 40626
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-28T08:14:43.462Z
+    */
+    with usage as (
+    select distinct
+        date_trunc(dt, {{period}}) as period,
+        attribution_user_id as user_id,
+        sum(coalesce(cntd_exports,0)) as exports_in_period
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` f
+    where date_trunc(dt, {{period}}) >= date_sub(current_date(), interval 30 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(attribution_timestamp), {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(dt, {{period}})
+    and date_trunc(date(attribution_timestamp), day) <= date_sub(current_date(), interval 14 day)
+    and date_trunc(dt, day) <= date_add(date(attribution_timestamp), interval 14 day)
+    and f.app_name = 'facetune2'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+    group by 1,2
+)
+
+-- select
+--     *
+-- from usage
+-- order by 2,1
+-- limit 1000
+
+, avg_usage as (
+    select
+        user_id,
+        cast(round(avg(exports_in_period)*2)/2*10 as int64) as avg_exports_in_period,
+    from usage
+    group by 1
+)
+
+select
+    *,
+    100*sum(users) over (order by avg_exports desc)/total_period_users as cum_pct_of_users
+from(
+    select distinct
+        avg_exports_in_period/10 as avg_exports,
+        count(distinct user_id) over (partition by avg_exports_in_period) as users,
+        count(distinct user_id) over () as total_period_users,
+        100*count(distinct user_id) over (partition by avg_exports_in_period)/count(distinct user_id) over () as pct_of_period_users,
+    from avg_usage
+)
+where true
+qualify cum_pct_of_users >= 1
+order by 1 asc

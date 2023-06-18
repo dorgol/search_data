@@ -1,0 +1,26 @@
+/*
+    Name: FT iOS - Avatar Purchase Amounts
+    Query ID: 42482
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-05T08:26:45.779Z
+    */
+    select
+    num_purchases,
+    count(distinct attribution_user_id) num_users,
+    count(distinct attribution_user_id)/MAX(total_avatar_buyers)*100 pct_total_avatar_buyers
+from (
+    select
+        *,
+        count(distinct attribution_user_id) over () total_avatar_buyers
+    from (               
+        SELECT 
+          attribution.attribution_user_id,
+          count(distinct lt_transaction_id) num_purchases
+        FROM `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` 
+        where application = 'facetune2'
+        and subscription.product_sub_category in ('youniverse', 'unknown')
+        group by 1      
+    )
+)
+group by 1
+order by 1

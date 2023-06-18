@@ -1,0 +1,40 @@
+/*
+    Name: FT iOS - Face Count Distribution
+    Query ID: 40099
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-06T14:43:04.132Z
+    */
+    with 
+face_counts as (
+    select
+        process_id,
+        json_extract_array(process_details, '$.face_counts') face_count,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_ended`
+    where true
+    and app_name = 'facetune2'
+    and meta_received_at >= '2023-02-26'
+    and process_name = 'face detection'
+    and json_extract(process_details, '$.isFaceInVideo') = 'true'
+)
+
+select
+    face_count,
+    num_appearances,
+    pct_total_appearances,
+    -- sum(pct_total_appearances) over (order by face_count desc) cumul_sum_pct_total
+from (
+    select
+        face_count,
+        count(process_id) num_appearances,
+        count(process_id)/max(total_num_appearances)*100 pct_total_appearances
+    from (
+        select
+            round(safe_cast(face_count as bignumeric), 3) face_count,
+            count(process_id) over () total_num_appearances,
+            process_id
+        from face_counts, unnest(face_count) face_count
+    )
+    -- where face_count > 0
+    group by 1
+)
+order by 1 asc

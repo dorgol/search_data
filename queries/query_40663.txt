@@ -1,0 +1,35 @@
+/*
+    Name: PP - Self-Serve Customer Details - Campaign Status
+    Query ID: 40663
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-28T10:24:55.715Z
+    */
+    with brand_orgs as (
+    select distinct
+        a.id as agency_id,
+        a.name,
+        a.created_at,
+        subscription_type
+    from agencies a
+    inner join subscriptions s
+        on s.agency_id = a.id
+        and s.subscription_type = 'platform_free'
+    inner join merchants m
+        on m.agency_id = a.id
+    where true
+        and primary_email not like '%lightricks%'
+        and primary_email not like '%codicate%'
+        and a.name != 'TZLILBRAND')
+
+
+
+select
+c.aasm_state,
+count(distinct c.id) as campaigns
+    
+from brand_orgs a
+inner join merchants m
+    on m.agency_id = a.agency_id
+left join campaigns c
+    on m.id = c.merchant_id
+group by 1

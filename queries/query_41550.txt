@@ -1,0 +1,55 @@
+/*
+    Name: Facetune Android: Vanish - Feature - Repeated Accepts
+    Query ID: 41550
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-02T16:29:09.069Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.installation_id,
+        d.experiment_started_device,
+        d.display_type,
+        count(distinct installation_id) over (partition by segmentation, experiment, variant) as total_users,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and application = 'facetune2_android'
+    and lower(d.experiment) like '%vanish%'
+    and d.display_type = 'reached_photo_editor'
+)
+
+select
+    segmentation,
+    variant,
+    total_users,
+    feature_name,
+    count(distinct installation_id) as multi_accepters,
+    100*count(distinct installation_id)/total_users as pct_multi_accepters,
+from (
+    select
+        segmentation,
+        variant,
+        total_users,
+        e.feature as feature_name,
+        e.installation_id,
+        count(distinct e.image_session_id) as times_accepted,
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics`.`android_facetune2_feature_ended` e
+        on u.installation_id = e.installation_id
+        and accepted
+        and e.meta_received_at >= '2023-03-29'
+        and e.device_timestamp >= experiment_started_device
+    group by 1,2,3,4,5
+)
+where times_accepted > 1
+group by 1,2,3,4
+order by 1,2,4

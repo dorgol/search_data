@@ -1,0 +1,40 @@
+/*
+    Name: VL iOS - Conversion Monitoring - Avg Yearly Payment Amount by Store
+    Query ID: 41963
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-16T19:32:05.082Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(f.attribution_timestamp), {{period}}) as cohort_period,
+        date(f.attribution_timestamp) cohort_time,
+        f.attribution_user_id as user_id,
+        f.attribution_user_group_number,
+        s.lt_subscription_id is not null as is_subscriber,
+        s.lt_transaction_id,
+        projected.adjusted_actual_proceeds_alloc_cs,
+        s.purchase_date,
+        subscription.subscription_duration,
+        subscription.current_subscription_store_country,
+        floor(timestamp_diff(s.purchase_date,f.attribution_timestamp,hour)/24) as time_to_sub,
+    from `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_subs` f
+    inner join `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation_cross_sell` s
+        on f.lt_subscription_id = s.lt_subscription_id
+        and date(s.original_purchase_date) >= date(f.attribution_timestamp)
+        and s.application in ('videoleap')
+        and s.projected.adjusted_actual_proceeds_alloc_cs > 0
+    where date_trunc(date(f.attribution_timestamp), {{period}}) >= '2022-10-01'
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(f.attribution_timestamp), {{period}})
+    and f.application in ('videoleap')
+)
+
+select
+    cohort_period,
+    case when current_subscription_store_country in ('US', 'BR', 'GB', 'FR', 'AU') then current_subscription_store_country else 'Other' end
+                                        as current_subscription_store_country ,
+    avg(case when subscription_duration = '1y' and time_to_sub = 0 and date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day)> 7 
+                                then adjusted_actual_proceeds_alloc_cs end) as avg_day0_rev_yr,
+from users
+group by 1,2
+--having day0arps_yearly > 0
+order by 1 desc

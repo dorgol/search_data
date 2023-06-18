@@ -1,0 +1,15 @@
+/*
+    Name: HOME SCREEN ANALYSIS - PL Button Presses
+    Query ID: 41810
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-12T10:25:52.227Z
+    */
+    select distinct
+    date_trunc(date(meta_received_at), week) as dt,
+    concat(button_identifier,'.', button_location) as button_name_location,
+    count(distinct platform_device_id) as users
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` 
+where date(meta_received_at) >= '2023-01-01'
+    and app_name = 'editor'
+    and screen_name = 'home_screen'
+group by 1,2

@@ -1,0 +1,43 @@
+/*
+    Name: High res image imports per device kind
+    Query ID: 41138
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-04-20T11:31:44.959Z
+    */
+    SELECT 
+  device_kind, 
+  case when image_width * image_height > 4032*3024 then 'high_res'
+    when image_width * image_height <= 4032*3024 then 'low_res'
+    else 'null' end as resolution, 
+    count(distinct d.id_for_vendor) as num_devices,
+  count(distinct i.event_id) as num_imports
+FROM `ltx-dwh-prod-raw.analytics.ios_facetune2_device_info_log` d
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_loaded` i
+  on i.id_for_vendor = d.id_for_vendor
+  and i.device_info_id = d.device_info_id
+  and i.meta_received_at >= "2023-04-01" 
+where d.meta_received_at >= '2023-04-01'
+group by 1,2
+
+
+
+SELECT 
+  device_kind, 
+  image_width,
+  image_height,
+  case when image_width * image_height > 4032*3024 then 'high_res'
+    when image_width * image_height <= 4032*3024 then 'low_res'
+    else 'null' end as resolution, 
+    count(distinct d.id_for_vendor) as num_devices,
+  count(distinct i.event_id) as num_imports
+FROM `ltx-dwh-prod-raw.analytics.ios_facetune2_device_info_log` d
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_loaded` i
+  on i.id_for_vendor = d.id_for_vendor
+  and i.device_info_id = d.device_info_id
+  and i.meta_received_at >= "2023-04-01" 
+where d.meta_received_at >= '2023-04-01'
+and device_kind like '%IPad%' 
+and image_width * image_height > 4032*3024
+group by 1,2,3,4
+order by 5 desc
+limit 1000

@@ -1,0 +1,50 @@
+/*
+    Name: Felix - New Sub Offer Revenue (Main)
+    Query ID: 41644
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-23T10:02:17.309Z
+    */
+    declare start_date timestamp default '2022-05-01';
+
+with combined as (
+
+    select distinct
+        date_trunc(date(offer.meta_received_at), month) as event_timestamp_month,
+        date_trunc(date(offer.meta_received_at), week) as event_timestamp_week,
+        date_trunc(date(offer.meta_received_at), day) as event_timestamp_day,
+        original_transaction_id,
+        offer.id_for_vendor,
+        init.id_for_vendor as init_id,
+        succ.id_for_vendor as succ_id,
+        actual_proceeds,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_offer_presented` offer
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_offer_purchase_initiated` init on offer.presentation_id = init.presentation_id
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_subscription_offer_purchase_succeeded` succ on init.presentation_id = succ.presentation_id
+    left join (select  subscription.original_transaction_id as transaction_id,
+                       sum(payments.actual_proceeds) as actual_proceeds
+               from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions`
+               group by 1) tran on original_transaction_id = tran.transaction_id
+    where offer.meta_received_at >= '2022-01-01'
+    
+)
+
+
+select 
+    --case when event_timestamp_month <= '2022-07-01' then 'Before Termination' else 'After Termination' end as offer_state,
+    event_timestamp_month,
+    count(distinct id_for_vendor) as total_offers,
+    count(distinct init_id) as count_initiated_purchase,
+    count(distinct succ_id) as count_successful_purchase,
+    (count(distinct init_id)/count(distinct id_for_vendor))*100 as payment_initiated_rate,
+    (count(distinct succ_id)/count(distinct id_for_vendor))*100 as payment_successful_rate,
+    sum(actual_proceeds) as rev, --changing from original_transaction to transaction decreases rev figure substantially 
+    (count(distinct original_transaction_id)/count(distinct id_for_vendor))*100 as offer_conversion,
+    (count(distinct case when actual_proceeds > 0 then original_transaction_id end)/count(distinct id_for_vendor))*100 as offer_paid_conversion
+from combined
+where --event_timestamp_month <= '2022-07-01'
+ event_timestamp_month >= '2022-01-01'
+--and actual_proceeds > 0
+group by 1
+order by 1 asc
+
+

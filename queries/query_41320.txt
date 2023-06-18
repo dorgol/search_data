@@ -1,0 +1,63 @@
+/*
+    Name: 20230403 - FT2 iOS - [FT-1087] Material Makeup - Feature Acceptance
+    Query ID: 41320
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-22T11:16:26.688Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%Material Makeup%')
+    and display_type = 'entered_photo_editor'
+)
+
+select
+    segmentation,
+    variant,
+    case when feature_name = 'Material Makeup' then 'Makeup' else feature_name end as feature_name,
+    min(toolbar_item_index) toolbar_item_index,
+    count(distinct id_for_vendor) num_users_used,
+    count(distinct case when reason = 'accepted' then event_id end) num_accepts,
+    count(distinct case when reason = 'accepted' then id_for_vendor end) num_acceptors,
+    count(distinct case when reason = 'accepted' then event_id end)/ count(distinct event_id)*100 as accept_rate_events,
+    count(distinct case when reason = 'accepted' then id_for_vendor end)/ count(distinct id_for_vendor)*100 as accept_rate_users,
+    count(distinct case when reason = 'accepted' then id_for_vendor end)/max(total_num_users_used_a_feature)*100 pct_of_all_users_accepted
+from (
+    select
+        segmentation,
+        variant,
+        fs.feature_name,
+        toolbar_item_index,
+        fs.platform_device_id as id_for_vendor,
+        fs.event_id,
+        reason,
+        count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_num_users_used_a_feature,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2023-04-03'
+        and fs.meta_received_at >= experiment_started_meta
+        and fs.platform_device_id = u.id_for_vendor
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fs.feature_usage_id = fe.feature_usage_id
+)
+group by 1,2,3
+having num_users_used >= 100
+order by 4,1,2

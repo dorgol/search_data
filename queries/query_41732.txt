@@ -1,0 +1,18 @@
+/*
+    Name: VL iOS - Screen Capture Block Message Check
+    Query ID: 41732
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-12T08:37:18.737Z
+    */
+    select distinct
+message_name, 
+message_destination,
+count(distinct mp.platform_device_id) as users
+from 
+--`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented`
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` md
+  on mp.flow_id = md.flow_id
+where message_name like '%screen_capture%'
+and date(mp.meta_received_at) >= '2023-05-01'
+group by 1,2

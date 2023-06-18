@@ -1,0 +1,60 @@
+/*
+    Name: Photoleap iOS- AI Scenes Experiment
+    Query ID: 41312
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-24T12:05:56.854Z
+    */
+    with devices as
+(
+select 
+distinct
+id_for_vendor,
+variant,
+segmentation,
+is_in_trial_period,
+auto_renewal_disabling_date,
+revenue_so_far,
+is_renewing,
+original_purchase_date
+from
+
+`ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant`
+where application='editor'
+and experiment='Free Trial Value Reminder'
+and segmentation= '02 New Users'
+and had_trial= true
+and subscription_duration='1y'
+and display_type='activated_for_device'
+--and id_for_vendor='24179840-46FD-48EF-9079-3F3461E2C866'
+and variant !='Enabled'
+and original_purchase_date >= experiment_started_meta
+)
+--group by 1
+
+select
+    *,
+    feature_users / total_users * 100 as ratio,
+    safe_divide(feature_uses_count,feature_users) as uses_per_feature_user,
+    safe_divide(feature_accepts,feature_uses_count) *100 as feature_acceptance_rate 
+from (
+    select distinct
+        dav.variant,
+        dav.segmentation,
+        case 
+            when fv.feature_name in ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette') then 'Effects'
+            when fv.feature_name in ('Doodle', 'EffectsBrush') then 'Brush'
+            when fv.feature_name in ('Fill', 'Inpaint','RemoveObject') then 'Heal'
+            else fv.feature_name end as feature_name,
+        count(distinct dav.id_for_vendor) over (partition by dav.variant, dav.segmentation) as total_users,
+        count(distinct fv.id_for_vendor) over (partition by dav.variant, dav.segmentation, case when fv.feature_name in ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette') then 'Effects' when fv.feature_name in ('Doodle', 'EffectsBrush') then 'Brush' when fv.feature_name in ('Fill', 'Inpaint','RemoveObject') then 'Heal' else fv.feature_name end) as feature_users,
+        count(distinct fv.event_id) over (partition by dav.variant, dav.segmentation, case when fv.feature_name in ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette') then 'Effects' when fv.feature_name in ('Doodle', 'EffectsBrush') then 'Brush' when fv.feature_name in ('Fill', 'Inpaint','RemoveObject') then 'Heal' else fv.feature_name end) as feature_uses_count,
+        count(distinct case when fv.dismiss_action = 'ENFeatureExitStateAccepted' then  fv.event_id end) over (partition by dav.variant, dav.segmentation, case when fv.feature_name in ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette') then 'Effects' when fv.feature_name in ('Doodle', 'EffectsBrush') then 'Brush' when fv.feature_name in ('Fill', 'Inpaint','RemoveObject') then 'Heal' else fv.feature_name end) as feature_accepts
+    
+    from devices as dav
+
+    left join `ltx-dwh-prod-raw.analytics.ios_editor_feature_visited` as fv
+        on dav.id_for_vendor = fv.id_for_vendor
+        
+        and dav.original_purchase_date <= fv.meta_received_at 
+        and fv.feature_name in ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette', 'Doodle', 'EffectsBrush', 'Fill', 'Inpaint', 'Cutout', 'LayerCrop', 'Filter', 'Adjust', 'Frame', 'Target', 'Reshape', 'Blur','Retouch','RemoveObject')
+    )

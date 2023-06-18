@@ -1,0 +1,13 @@
+/*
+    Name: Felix - Installation vs Usage (Onboarding)
+    Query ID: 41086
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-17T15:54:02.289Z
+    */
+    select 
+    count(distinct event_id) as count_events,
+    count(distinct id_for_vendor) as count_users
+from 
+    `ltx-dwh-prod-processed`.`devices`.`unified_device_info_log` 
+where 
+    application = 'videoleap'

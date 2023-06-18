@@ -1,0 +1,54 @@
+/*
+    Name: Unified devices - app_store_country comparison
+    Query ID: 40127
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-07T11:38:25.879Z
+    */
+    select 
+    ifnull(app_store_country,"unknown") as country,
+    "unified_devices" as source,
+    -- play_store_country,
+    count(distinct installation_id)
+-- from `ltx-dwh-prod-processed`.`agg`.`app_device`
+-- from `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_device_info_log`
+from `ltx-dwh-prod-processed`.`devices`.`unified_device_info_log`
+where true
+    and application = "videoleap_android"
+group by 1,2
+having (count(distinct installation_id) > 90000)
+
+union all 
+
+select 
+    ifnull(app_store_country,"unknown") as country,
+    "unified device info log" as source,
+    count(distinct installation_id)
+from `ltx-dwh-prod-processed`.`devices`.`unified_device_info_log`
+where true
+    and application = "videoleap_android"
+group by 1,2
+having (count(distinct installation_id) > 90000)
+
+union all
+
+select 
+    ifnull(play_store_country,"unknown") as country,
+    "app_device info log" as source,
+    -- play_store_country,
+    count(distinct installation_id)
+from `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_device_info_log`
+where true
+group by 1,2
+having (count(distinct installation_id) > 90000)
+
+union all 
+
+select 
+    ifnull(current_store_country,"unknown") as country,
+    "app device" as source,
+    count(distinct installation_id)
+from `ltx-dwh-prod-processed`.`agg`.`app_device`
+where true
+    and app_name = "videoleap_android"
+group by 1
+having (count(distinct installation_id) > 90000)

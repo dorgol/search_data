@@ -1,0 +1,32 @@
+/*
+    Name: VL iOS - template_editing end reason distribution by version
+    Query ID: 40425
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-22T13:23:14.534Z
+    */
+    with versions as (
+select distinct
+    app_version,
+    app_version_short
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_device_info_log`
+where app_version_short <>  "Instagram"
+    and app_version_short > "1.22"
+group by 1,2
+-- having (count(distinct id_for_vendor) > 100)
+)
+
+select
+    v.app_version,
+    case when en.template_editing_flow_id is null then "No ended event" else en.reason end as reason,
+    count(distinct st.event_id) as num_started,
+    -- count(distinct case when en.reason = "fail" then st.event_id end) as num_ended_fail,
+    -- count(distinct case when en.reason = "fail" then st.event_id end) / count(distinct st.event_id) * 100 as pct_ended_fail,
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as st
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_ended` as en
+    using(template_editing_flow_id)
+join versions as v
+    on v.app_version = st.app_version
+where case when '{{flow_name}}' = "assets_first" then st.flow_name = "assets_first"
+                 when '{{flow_name}}' = "use_template" then st.flow_name = "use_template" or st.flow_name is null
+                 else true end
+group by 1,2

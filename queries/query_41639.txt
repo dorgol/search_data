@@ -1,0 +1,113 @@
+/*
+    Name: VL iOS - Assets CVR
+    Query ID: 41639
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-04T18:45:51.923Z
+    */
+    -- VL Feed Funnel
+
+
+with users as (
+    select  
+         d.platform_device_id,
+         d.first_active_dt,
+         case when origin_page_response is null then 'No Answer' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as response,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on pq.platform_device_id = d.platform_device_id
+        and pq.app_name = 'videoleap'
+        and d.app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by d.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+        
+, actions as (
+       
+         select
+            'App Launched' as action,
+            u.response,
+            date_trunc(date(dd.dt), week) as dt,
+            count(distinct u.platform_device_id) as users
+        from users u 
+        inner join `ltx-dwh-prod-processed`.`agg`.`app_device_date` dd
+            on u.platform_device_id = dd.platform_device_id
+            and case when '{{day}}' = 'day0' then date(dd.dt) = date(u.first_active_dt)
+                 when '{{day}}' = 'non day0' then date(dd.dt) > date(u.first_active_dt)
+                 when '{{day}}' = 'all' then date(dd.dt) >= date(u.first_active_dt) end
+            and dd.app_name = 'videoleap'
+            and date(dd.dt) > '2023-01-01'
+        group by 1,2,3
+        
+        union all
+        
+         select
+            'Stock Asset Added' as action,
+            u.response,
+            date_trunc(date(ps.meta_received_at), week) as dt,
+            count(distinct ps.id_for_vendor) as users
+            
+                from users u 
+        inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_video_added` ps
+            on u.platform_device_id = ps.id_for_vendor
+            and provider is not null -- stock
+            --and imported_item_type in ('clip', 'mixer')
+            and case when '{{day}}' = 'day0' then date(ps.meta_received_at) = date(u.first_active_dt)
+                 when '{{day}}' = 'non day0' then date(ps.meta_received_at) > date(u.first_active_dt)
+                 when '{{day}}' = 'all' then date(ps.meta_received_at) >= date(u.first_active_dt) end
+            and date(ps.meta_received_at) > '2023-01-01'
+        group by 1,2, 3     
+        
+   union all
+
+   select
+       'Asset Purchased' as action,
+       u.response,
+       date_trunc(date(ps.meta_received_at), week) as dt,
+       count(distinct ps.id_for_vendor) as users
+       
+           from users u 
+   inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_assets_purchase_succeeded` ps
+       on u.platform_device_id = ps.id_for_vendor
+       and case when '{{day}}' = 'day0' then date(ps.meta_received_at) = date(u.first_active_dt)
+            when '{{day}}' = 'non day0' then date(ps.meta_received_at) > date(u.first_active_dt)
+            when '{{day}}' = 'all' then date(ps.meta_received_at) >= date(u.first_active_dt) end
+       and date(ps.meta_received_at) > '2023-01-01'
+   group by 1,2, 3     
+
+    
+        
+        
+        )
+    
+, total_users as (
+        select 
+        response,
+        dt,
+        max(users) as total_users
+        from actions a
+        where action = 'App Launched'
+        group by 1,2)
+    
+  --  select distinct action from actions
+        
+    select
+        a.dt,
+        total_users,
+        a.response,
+        sum(case when action = 'Asset Purchased' then users end) as purchase_users,
+        sum(case when action = 'Stock Asset Added' then users end) as added_users,
+        sum(case when action = 'Asset Purchased' then users end)*100/total_users as purchase_pct_of_users,
+        sum(case when action = 'Stock Asset Added' then users end)*100/total_users as added_pct_of_users
+    from actions a
+    join total_users t
+        on t.response = a.response
+        and t.dt = a.dt
+    where action != 'App Launched' and a.response not like '%[%'
+    group by 1,2,3

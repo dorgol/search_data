@@ -1,0 +1,37 @@
+/*
+    Name: VL ios - Paid templates - Purchase end reasons distribution by app version
+    Query ID: 40117
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-07T08:33:41.348Z
+    */
+    with versions as (
+    select distinct
+        app_version, 
+        version_code
+    from `ltx-dwh-prod-processed`.`devices`.`unified_device_info_log`
+    where application = "videoleap"
+        and date(received_at) >= date_sub(current_date, interval 1 month)
+)
+
+select distinct
+    app_version_code,
+    reason,
+    count(distinct action_id) over (partition by reason, app_version_code) as num_purchase_actions,
+    count(distinct action_id) over (partition by app_version_code) as total_started_purchases,
+    count(distinct action_id) over (partition by reason, app_version_code) * 100 / count(distinct action_id) over (partition by app_version_code) as pct_purchase_actions
+from (
+    select distinct
+        -- date(st.meta_received_at) as dt,
+        v.app_version as app_version_code,
+        -- st.app_version_code,
+        case when reason is null then "missing data" else reason end as reason,
+        st.action_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as st
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` as en
+        on st.action_id = en.action_id
+    left join versions as v
+        on cast(v.version_code as string) = st. app_version_code
+    where st.action = "purchase_template"
+        and date(st.meta_received_at) >= date_sub(current_date(), interval {{last x days}} day)
+        and st.app_version_code not in ("0", "1")
+)

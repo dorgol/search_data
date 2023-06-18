@@ -1,0 +1,196 @@
+/*
+    Name: [FT-1067] Beauty Feed - Exporter Rate (from feature started) - without WN flow
+    Query ID: 40512
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-21T15:03:23.013Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and d.segmentation = '{{segmentation}}'
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+and case when '{{variant}}' = 'all' then true else variant = '{{variant}}' end
+),
+
+
+feature_started as
+(    
+select distinct
+        'BeautyPresets' as feature_name,
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+    from users u
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` n
+        on true
+        and n.app_name = '{{app_name}}'
+        and n.platform_device_id = u.id_for_vendor
+        and cast(n.app_version_code as int64) >= {{since_version}}
+        and date(n.meta_received_at) >= '{{start_date}}'
+        and n.meta_received_at > u.experiment_started_meta
+        and n.screen_name = 'home_screen'
+        and n.button_identifier = 'beautyFeed'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_dismissed` q
+        on true
+        and q.app_name = '{{app_name}}'
+        and q.platform_device_id = u.id_for_vendor
+        and cast(q.app_version_code as int64) >= {{since_version}}
+        and date(q.meta_received_at) >= '{{start_date}}'
+        and q.meta_received_at > u.experiment_started_meta
+        and q.screen_name = 'beauty_quickstart'
+        and q.destination = 'beauty_feed'
+    where n.platform_device_id is not null or q.platform_device_id is not null
+     
+    union all
+    
+    select distinct
+        feature_name,
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+    from users u
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > u.experiment_started_meta
+    ),
+    
+
+feature_ended as (
+    select
+        u.segmentation,
+        u.variant,
+        u.feature_name,
+        u.experiment_started_meta,
+        fe.platform_device_id,
+        fe.event_id,
+        fe.device_timestamp,
+        fe.reason,
+        fe.editing_session_id,
+        fe.feature_usage_id
+    from feature_started u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.app_name = '{{app_name}}'
+        and fe.meta_received_at >= '{{start_date}}'
+        and cast(fe.app_version_code as int64) >= {{since_version}}
+        and fe.feature_name = u.feature_name
+        and (fe.reason = 'accepted' or (fe.feature_name = 'BeautyPresets' and fe.reason = 'edit'))
+        and fe.platform_device_id = u.id_for_vendor
+        and fe.meta_received_at >= u.experiment_started_meta
+        
+),
+
+
+exports as (
+select distinct
+    feature_name,
+    segmentation,
+    variant,
+    event_id,
+    platform_device_id,
+from (
+select 
+        feature_name,
+        segmentation,
+        variant,
+        fe.experiment_started_meta,
+        fe.editing_session_id,
+        ex.platform_device_id,
+        ex.event_id,
+        ex.device_timestamp,
+from feature_ended fe
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+    on ex.app_name = '{{app_name}}'
+    and meta_received_at >= '{{start_date}}'
+    and cast(app_version_code as int64) >= {{since_version}}
+    and fe.platform_device_id = ex.platform_device_id
+    and case when fe.reason = 'edit' then ends_with(fe.feature_usage_id, ex.editing_session_id) else fe.editing_session_id = ex.editing_session_id end
+    and ex.export_source not like '%save_all%'
+    and ex.export_source not like 'beauty%'
+    and ex.device_timestamp > fe.device_timestamp
+
+union all
+
+select 
+    feature_name,
+    u.segmentation,
+    u.variant,
+    u.experiment_started_meta,
+    ex.editing_session_id,
+    ex.platform_device_id,
+    ex.event_id,
+    ex.device_timestamp,
+from feature_started u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+    on ex.app_name = '{{app_name}}'
+    and date(meta_received_at) >= '{{start_date}}'
+    and cast(app_version_code as int64) >= {{since_version}}
+    and u.id_for_vendor = ex.platform_device_id
+    and ex.meta_received_at >= u.experiment_started_meta
+    and ex.export_source like 'beauty%'
+)
+)
+    
+
+select
+    segmentation,
+    variant,
+    feature_name,
+    count(distinct id_for_vendor) as num_users,
+    count(distinct case when num_exports > 0 then id_for_vendor end) as num_users_exported,
+    100* count(distinct case when num_exports > 0 then id_for_vendor end) / count(distinct id_for_vendor) as started_to_export_rate
+from (
+select
+    r.feature_name,
+    r.segmentation,
+    r.variant,
+    r.id_for_vendor,
+    count(distinct event_id) as num_exports
+from feature_started r
+left join exports ex
+    on ex.feature_name = r.feature_name
+    and ex.platform_device_id = r.id_for_vendor
+    and ex.segmentation = r.segmentation
+    and ex.variant = r.variant
+where true
+group by 1,2,3,4
+)
+where feature_name not in ('ai_avatars','Material Makeup')
+group by 1,2,3
+order by 1,6 desc

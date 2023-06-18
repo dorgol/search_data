@@ -1,0 +1,94 @@
+/*
+    Name: [FT-1067] Beauty Feed - Feed Usage Retention
+    Query ID: 41763
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-11T08:32:59.478Z
+    */
+    with users as (
+    select  
+        d.experiment,
+        d.first_day, 
+        '{{variant}}' as variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        date(experiment_started_meta) as assignment_date,
+        min(date(meta_received_at)) as first_feed_active_dt,
+        date(date_trunc(min(date(meta_received_at)), week)) as cohort,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+        on f.platform_device_id = d.id_for_vendor
+        and f.app_name = 'facetune2'
+        and f.meta_received_at >= '{{start_date}}'
+        and d.segmentation = '{{segmentation}}'
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'reached home screen'
+        and d.variant = 'Variant1'
+    group by 1,2,3,4,5,6,7,8
+),
+
+cohorts as (
+    select  
+        d.experiment,
+        d.variant,
+        d.segmentation,
+        cohort,
+        date_diff(date_trunc(current_date(), week),date_trunc(first_feed_active_dt, week),week) as weeks_back,
+        count(distinct d.id_for_vendor) as total_users,
+    from users d
+    group by 1,2,3,4,5
+),
+
+
+usage_retention as (
+    select distinct
+        experiment,
+        variant,
+        segmentation,
+        country,
+        id_for_vendor,
+        experiment_started_meta,
+        display_type,
+        cohort,
+        floor(cast(date_diff(date(r.meta_received_at), first_feed_active_dt, day) as float64) / cast(7 as float64)) as week_diff,
+        floor(cast(date_diff(current_date(), first_feed_active_dt, day) as float64) / cast(7 as float64)) as weeks_from_first_usage,
+        date(first_feed_active_dt) as first_feed_active_dt
+    from users as l
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` as r
+        on app_name = 'facetune2'
+        and l.id_for_vendor = r.platform_device_id
+        and meta_received_at >= '{{start_date}}'
+        and first_feed_active_dt < date(r.meta_received_at)
+),
+
+ test_week as (
+    select week_num
+    from(select generate_array(0,9) as week_diff_array),unnest(week_diff_array) as week_num
+)
+
+select
+    c.experiment,
+    c.variant,
+    c.segmentation,
+    c.cohort,
+    c.total_users,
+    t.week_num,
+    count(distinct r.id_for_vendor) as retained,
+    100*count(distinct r.id_for_vendor)/total_users as pct_retained,
+    'week ' || cast (week_num as string) || ' retention' as period_name,
+from cohorts c
+join test_week t
+    on t.week_num < c.weeks_back
+left join usage_retention r
+    on c.experiment = r.experiment
+    and c.variant = r.variant
+    and c.segmentation = r.segmentation
+    and c.cohort = r.cohort
+    and r.week_diff = t.week_num
+where c.cohort != date_trunc(current_date(), week)
+and c.total_users >= 1000
+group by 1,2,3,4,5,6
+order by 1,2,3,4,6

@@ -1,0 +1,20 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 - Total Transactions
+    Query ID: 41932
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-16T09:15:15.325Z
+    */
+    SELECT distinct
+    date_trunc(t.purchase_date, {{period}}) as period,
+    t.subscription.product_id, 
+    count(distinct t.subscription.original_transaction_id) over (partition by date_trunc(t.purchase_date, {{period}}),t.subscription.product_id) as transactions,
+    count(distinct t.subscription.original_transaction_id) over () as total_transactions,
+    sum(projected.adjusted_actual_proceeds) over (partition by date_trunc(t.purchase_date, {{period}}),t.subscription.product_id) as revenue,
+    sum(projected.adjusted_actual_proceeds) over () as total_rev
+FROM `ltx-dwh-prod-processed.subscriptions.unified_transactions` t
+WHERE true
+and t.license_applications = '{{app_name}}'
+and DATE(t.purchase_date) >= '{{start_date}}'
+and date(t.original_purchase_date) >= '{{start_date}}'
+and t.subscription.product_id like '%Facetune2.FeedTemplate%'
+and payments.actual_proceeds > 0

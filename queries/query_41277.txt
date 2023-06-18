@@ -1,0 +1,42 @@
+/*
+    Name: VL Android - Q2 Targets - Renewal Rev
+    Query ID: 41277
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-23T17:36:22.398Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(t.purchase_date), {{period}}) as sub_period,
+        t.device.lt_defacto_id as user_id,
+        t.lt_subscription_id is not null as is_subscriber,
+        date(t.original_purchase_date) as sub_date,
+        t.lt_transaction_id,
+        date(t.purchase_date) as payment_date,
+        sum(t.projected.adjusted_actual_proceeds_alloc) as rev
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` t
+    where true
+        --and date_trunc(date(t.original_purchase_date), {{period}}) > date_trunc(date(device.install_time), {{period}}) -- not month0
+        and t.application = 'videoleap_android'
+        --and date_trunc(t.original_purchase_date, month) < date_trunc(t.purchase_date, month) -- not first purchase month
+        and date_trunc(current_date(), {{period}}) != date_trunc(date(t.purchase_date), {{period}})
+        and payments.month0_late_or_renewal = 'renewal'
+        and date_trunc(date(t.purchase_date), {{period}}) >= '2022-10-01'
+    group by 1,2,3,4,5,6
+)
+
+, total as (select
+    sub_period,
+    count(distinct u.user_id) as mau,
+    count(distinct case when date_trunc(date(payment_date), {{period}}) = sub_period
+                           and rev > 0 then u.user_id end) as subs,
+    sum(case when date_trunc(date(payment_date), {{period}}) = sub_period
+                           and rev > 0 then rev end) as late_rev
+from users u
+group by 1
+)
+
+select
+    *,
+    safe_divide(subs, mau)*100 as pcvr,
+    safe_divide(late_rev, subs) as arps
+from total

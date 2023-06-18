@@ -1,0 +1,28 @@
+/*
+    Name: VL iOS - Period Active Users - Total
+    Query ID: 41156
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-28T15:33:04.841Z
+    */
+    with dau as (
+    select
+        date_trunc(f.dt, {{period}}) as period,
+        count(distinct lt_defacto_id) as active_users,
+        count(distinct case when date_trunc(date(first_launch), {{period}}) = date_trunc(date(dt), {{period}}) 
+                        then lt_defacto_id end) as new_users,
+        count(distinct case when date_trunc(date(first_launch), {{period}}) < date_trunc(date(dt), {{period}}) 
+                        then lt_defacto_id end) as existing_users
+                        
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date` f
+    where date_trunc(dt, {{period}}) >= '2022-10-01'
+        and date_trunc(current_date(), {{period}}) != date_trunc(dt, {{period}})
+        and f.app_name = 'videoleap'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+    group by 1
+)
+
+select *, safe_divide(new_users, active_users)*100 as new_pct
+from dau

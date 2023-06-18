@@ -1,0 +1,65 @@
+/*
+    Name: 20230528 - FT2 iOS - [FT-1101] AI Selfies - Export Rate of Sessions - Comparison
+    Query ID: 42376
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-31T07:13:30.633Z
+    */
+    with users as (
+    select
+        segmentation,
+        application,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else country end as country,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and case
+        when '{{countries}}' = 'Global' then true
+        when '{{countries}}' = 'Rest of the world' then country not in ('US', 'CN')
+        else country = '{{countries}}' end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%[FT-1101]AI Selfies Exp%')
+    and display_type = 'entered_photo_editor'
+)
+
+select 
+    segmentation,
+    variant,
+    fs.feature_name,
+    count(distinct u.id_for_vendor) num_users,
+    count(distinct case when e.editing_session_id is not null then fe.editing_session_id end) as num_export_sessions,
+    count(distinct case when e.editing_session_id is not null then fe.editing_session_id end)/nullif(count(distinct fe.editing_session_id),0)*100 export_rate_of_accepted_in_session,
+    count(distinct e.event_id)/nullif(count(distinct u.id_for_vendor),0) exports_per_feature_user,
+    count(distinct e.event_id)/nullif(count(distinct e.platform_device_id),0) exports_per_exporter,
+from users u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+    on fs.app_name = 'facetune2'
+    and fs.meta_received_at >= '2023-05-28'
+    and fs.meta_received_at >= experiment_started_meta
+    and fs.platform_device_id = u.id_for_vendor
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+    on fe.app_name = 'facetune2'
+    and fe.meta_received_at >= '2023-05-28'
+    and fs.feature_usage_id = fe.feature_usage_id
+    and reason = 'accepted'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_ended` e
+    on e.app_name = 'facetune2'
+    and e.meta_received_at >= '2023-05-28'
+    and e.meta_received_at >= experiment_started_meta
+    and e.editing_session_id = fs.editing_session_id
+group by 1,2,3
+having num_users >= 1000
+order by 1,2,3
+

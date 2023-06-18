@@ -1,0 +1,150 @@
+/*
+    Name: VL iOS - Exports for features - Felix
+    Query ID: 41716
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-09T15:28:25.793Z
+    */
+    create temp table devices as (
+    select distinct
+        d.id_for_vendor,
+        d.install_time,
+        sa.open_project_id,
+        sa.is_subscriber,
+        e.session_analytics_id,
+        timestamp_trunc(sa.meta_received_at,week) as week_of_export
+    from `ltx-dwh-prod-processed`.`devices`.`unified_devices` d
+        --and s.original_purchase_date <= timestamp_add(d.install_time, interval +90 day) 
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` sa
+        on d.id_for_vendor = sa.id_for_vendor
+        and date(sa.meta_received_at) >= date_sub(current_date(), interval 1 year)
+        and sa.meta_received_at <= timestamp_add(d.install_time, interval +7 day) 
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` e
+        on e.export_id = sa.export_id
+        and e.parent_template_id is null
+        and date(e.meta_received_at) >= date_sub(current_date(), interval 1 year)
+    where d.application = 'videoleap'
+    and date(d.install_time) >= date_sub(current_date(), interval 1 year)
+    and case when '{{sub_type}}' = 'subscriber' then sa.is_subscriber is true
+        when '{{sub_type}}' = 'free user' then sa.is_subscriber is false
+        else true end
+    --and date(d.install_time) <= '2021-08-01'
+    );
+
+with devices_total as (
+    select
+    week_of_export,
+    count(distinct id_for_vendor) as num_total_devices,
+    count(distinct open_project_id) as num_total_projects,
+    count(distinct case when is_subscriber is true then id_for_vendor end) as num_total_vip_devices,
+    count(distinct case when is_subscriber is false then id_for_vendor end) as num_total_free_devices,
+    count(distinct case when is_subscriber is true then open_project_id end) as num_total_vip_projects,
+    count(distinct case when is_subscriber is false then open_project_id end) as num_total_free_projects
+    from devices
+    group by 1
+),
+
+
+exported_total as 
+(
+    select 
+        'Transition' as object_class_name,
+        week_of_export,
+        count(distinct d.id_for_vendor) as num_exporters,
+        count(distinct j.open_project_id) as num_exports,
+        count(distinct case when d.is_subscriber is true then j.open_project_id end) as num_vip_exports,
+        count(distinct case when d.is_subscriber is false then j.open_project_id end) as num_free_exports,
+        count(distinct case when d.is_subscriber is true then d.id_for_vendor end) as num_total_vip_exporters,
+        count(distinct case when d.is_subscriber is false then d.id_for_vendor end) as num_total_free_exporters
+    from devices d
+    join 
+        (select 
+            open_project_id, id_for_vendor,session_analytics_id,
+            JSON_EXTRACT_SCALAR(summary, "$.object_identifier") AS object_identifier,
+            JSON_EXTRACT_SCALAR(summary, "$.property_type") AS property_type,
+            --JSON_EXTRACT_SCALAR(summary, "$.property_value") AS property_value
+            
+        from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_summary_json` j
+        , UNNEST(JSON_EXTRACT_ARRAY(summary_json)) AS summary
+        where date(j.meta_received_at) >= date_sub(current_date(), interval 1 year)
+        ) j
+        on d.open_project_id = j.open_project_id
+        and d.id_for_vendor=j.id_for_vendor
+        and property_type =  'Transition'
+
+    group by 1,2
+    
+union all
+
+    select 
+        case when object_type in ('LensFlarePreset',
+         'Defocus',
+         'Prism',
+         'Kaleidoscope',
+         'ColorSplash',
+         'Vignette',
+         'EVDFilmGrainInputModel',
+         'FishEye',
+         'EVDOffsetInputModel',
+         'EVDShakeInputModel',
+         'EVDCrystalInputModel',
+         'EVDRaysInputModel',
+         'EVDStrobeInputModel'
+         ) then 'Effects' else object_type end as object_class_name,
+         week_of_export,
+        count(distinct d.id_for_vendor) as num_exporters,
+        count(distinct j.open_project_id) as num_exports,
+        count(distinct case when d.is_subscriber is true then j.open_project_id end) as num_vip_exports,
+        count(distinct case when d.is_subscriber is false then j.open_project_id end) as num_free_exports,
+        count(distinct case when d.is_subscriber is true then d.id_for_vendor end) as num_total_vip_exporters,
+        count(distinct case when d.is_subscriber is false then d.id_for_vendor end) as num_total_free_exporters
+    from devices d
+    join 
+        (select 
+            open_project_id, id_for_vendor,
+            JSON_EXTRACT_SCALAR(summary, "$.object_identifier") AS object_identifier,
+            JSON_EXTRACT_SCALAR(summary, "$.object_type") AS object_type,
+            --JSON_EXTRACT_SCALAR(summary, "$.property_value") AS property_value
+            
+        from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_outline_json` j
+        , UNNEST(JSON_EXTRACT_ARRAY(outline_json)) AS summary
+        where date(j.meta_received_at) >= date_sub(current_date(), interval 1 year)
+        ) j
+        on d.open_project_id = j.open_project_id
+        and d.id_for_vendor=j.id_for_vendor
+        and object_type in ( 'EVDFiltersLayerInputModel','Text','EVDAdjustInputModel',
+        'Sticker','Audio','Sound Effect','Voiceover','SelectiveAdjust','LensFlarePreset','Defocus','Prism','Kaleidoscope','ColorSplash','Vignette',
+         'EVDFilmGrainInputModel','FishEye','EVDOffsetInputModel','EVDShakeInputModel','EVDCrystalInputModel','EVDRaysInputModel','EVDStrobeInputModel')
+
+    group by 1,2
+)
+
+select 
+    week_of_export,
+    case when object_class_name = 'SelectiveAdjust' then 'Tone Lab' else object_class_name end as feature,
+    num_total_devices,
+    num_total_projects,
+    -- num_total_vip_devices,
+    -- num_total_free_devices,
+    -- num_total_vip_projects,
+    -- num_total_free_projects,
+    num_exporters,
+    num_exports,
+    -- num_vip_exports,
+    -- num_free_exports,
+    -- num_total_vip_exporters,
+    -- num_total_free_exporters,
+    -- num_total_vip_exporters/num_total_vip_devices *100 as pct_vip_exporters,
+    num_exporters/num_total_devices*100 as pct_exporters,
+    num_exports/num_total_projects*100 as pct_exports
+    
+
+from  exported_total 
+join devices_total using(week_of_export)
+--order by num_free_users
+
+
+
+
+
+
+

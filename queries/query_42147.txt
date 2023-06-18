@@ -1,0 +1,32 @@
+/*
+    Name: VL iOS - Subscription Churn
+    Query ID: 42147
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-23T09:14:27.624Z
+    */
+    with all_subs as (
+select distinct
+    date_trunc(date(subscription.subscription_cancellation_date), month) as subscription_end_month,
+    lt_subscription_id,
+    subscription.had_trial as if_trial,
+    subscription.current_is_active as if_renewed, 
+    subscription.current_is_auto_renew_status_on as if_auto_renewed
+    
+from  `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` s
+where  
+    license_applications = 'videoleap' -- videoleap_android
+    and license_platforms = 'ios'
+    and date(original_purchase_date) > date_sub(current_date(), interval 2 year)
+    --and subscription.subscription_cancellation_date is not null
+order by 2 asc
+)
+
+select 
+subscription_end_month,
+count(distinct case when if_renewed is true then  lt_subscription_id end) as count_renewed,
+count (distinct lt_subscription_id) as count_subs
+from all_subs
+group by 1
+order by 1 
+
+

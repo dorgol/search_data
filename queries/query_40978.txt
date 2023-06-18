@@ -1,0 +1,63 @@
+/*
+    Name: (Joe) VL Android - all users - Sub Country
+    Query ID: 40978
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-11T09:14:13.310Z
+    */
+    with installs as (
+    select 
+        d.installation_id,
+        date(first_launch) as first_launch
+    from `ltx-dwh-prod-processed`.`devices`.`unified_devices` as d
+    where true
+        and date(first_launch) >= '2023-03-01'
+        and application = 'videoleap_android'
+        and date_diff(date(current_date), date(d.first_launch), day) >7 -- out of trial period
+    )
+
+
+, subscriptions as (
+    select distinct 
+        i.installation_id,
+        date(first_launch) as first_launch,
+        date_trunc(first_launch, {{Time granularity}}) as first_launch_dt,
+        date(ss.original_purchase_date) as original_purchase_date,
+        subscription_source,
+        ss.revenue_so_far,
+        ss.is_in_trial_period,
+        ss.had_trial,
+        su.is_sol,
+        ss.device_country
+    from installs i
+    left join `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_state` ss
+        on ss.installation_id = i.installation_id
+        and date(ss.original_purchase_date) >= first_launch
+        and application ='videoleap_android'
+        --and days_until_subscription = 0
+        --and revenue_so_far >0
+        --and is_in_trial_period = false --only those out of trial period)
+    left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` su
+        on su.lt_subscription_id = ss.lt_subscription_id
+        )
+
+, final as 
+    (select
+        first_launch_dt,
+    
+        case when device_country in ('US', 'CN', 'CA', 'GB', 'BR', 'AU') then device_country else 'other' end as device_country ,
+
+        count(distinct case when first_launch < date_sub(date_trunc(current_date(),day), interval {{conversion day}} day)
+                                 and date_diff(date(original_purchase_date), date(first_launch), day) <= {{conversion day}} then installation_id end) as subs,
+        
+        count(distinct case when revenue_so_far >0 and is_in_trial_period = false and first_launch < date_sub(date_trunc(current_date(),day), interval {{conversion day}} day) 
+                                 and date_diff(date(original_purchase_date), date(first_launch), day) <= {{conversion day}} then installation_id end) as paid_subs,
+    
+    from subscriptions
+    group by 1,2
+    )
+
+select
+*
+from final
+--where users > 100
+    

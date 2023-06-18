@@ -1,0 +1,48 @@
+/*
+    Name: PL Layer Distribution
+    Query ID: 42214
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-25T11:11:02.997Z
+    */
+    
+with base as
+(select distinct dt,
+platform_device_id
+from
+`ltx-dwh-prod-processed`.`agg`.`app_device_date`
+where
+dt >= "2023-01-01"
+    and dt < date_trunc(current_date, {{Time granularity}})
+    and app_name = "editor"
+    and platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then dt = first_active_dt
+    when '{{Day}}' = "week0" then date_diff(dt, first_active_dt, day) <= 7
+        when '{{Day}}' = "non day0" then dt > first_active_dt
+        else true end
+)
+
+
+select
+   -- dav.variant,
+    date_trunc(dav.dt, {{Time granularity}}) as dt,
+    case 
+        when ma.open_project_id is not null then replace(replace(ma.action, 'LayerAddition', ''), 'ENLayerOperationType', '')
+        else 'Photo' end as layer_name,
+    count(distinct ma.layer_id) as num_of_layers,
+    count(distinct ma.id_for_vendor) as users,
+    
+from base as dav
+join `ltx-dwh-prod-raw.analytics.ios_editor_editor_editing_started` as es
+    on dav.platform_device_id = es.id_for_vendor
+    and dav.dt = date(es.meta_received_at)
+    and es.readymade_name is null
+left join `ltx-dwh-prod-raw.analytics.ios_editor_layer_menu_action` as ma
+    on es.id_for_vendor = ma.id_for_vendor
+    and es.open_project_id = ma.open_project_id
+    and date(ma.meta_received_at) = date(es.meta_received_at)
+    and ma.action like '%Addition%'
+    and ma.action <> 'ENLayerOperationTypeDismissedPhotoLayerAddition'
+    and case when '{{ first layer }}' = 'Include' then true else ma.import_screen_layer is false end
+group by 1,2
+--, 2, 3

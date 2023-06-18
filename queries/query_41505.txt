@@ -1,0 +1,16 @@
+/*
+    Name: VL iOS - resolution_720p button press bug
+    Query ID: 41505
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-02T06:53:02.728Z
+    */
+    select
+    date(b.meta_received_at) as dt,
+    timestamp_diff(b.device_timestamp, af.device_timestamp, second) < 1 as is_on_foreground,
+    count(distinct b.event_id)
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` as b
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_foreground` as af
+    on b.session_id = af.session_id
+    and date(b.meta_received_at) = date(af.meta_received_at)
+where b.button_identifier = "resolution_720p"
+group by 1,2

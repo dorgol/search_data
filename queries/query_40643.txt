@@ -1,0 +1,57 @@
+/*
+    Name: VL iOS - % Template Exporters of Active
+    Query ID: 40643
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-28T08:47:11.101Z
+    */
+    -- VL Feed Funnel
+
+with installs as (
+    select 
+        d.platform_device_id,
+        lt_defacto_id,
+        date(first_active_dt) as first_active_dt,
+        date(dt) as dt
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    where date(d.dt) >= '2022-01-02'
+     and d.app_name = "videoleap"
+     and d.platform = "ios"
+    --and date_diff(date(current_date), date(d.first_launch), day) >7 -- out of trial period
+    )
+ 
+        
+, actions as (
+        
+ 
+         select 
+             date_trunc(dt,{{period}}) as dt,
+             case when date(dt) <= date_add(date(first_active_dt), interval 7 day) then 'new'
+                   when date(dt) > date_add(date(first_active_dt), interval 7 day) then 'existing' end as new_existing,
+             count(distinct u.platform_device_id) as cohort,
+             count(distinct case when xx.parent_template_id is not null then xx.id_for_vendor end) as remake_exporters,
+             count(distinct case when xx.parent_template_id is null then xx.id_for_vendor end) as og_exporters,
+             count(distinct xx.id_for_vendor) as total_exporters,
+             count(distinct case when xx.parent_template_id is not null then xx.export_id end) as remake_exports,
+         from installs u
+         left join (select xs.id_for_vendor, xs.meta_received_at, xs.parent_template_id, xs.export_id,
+                        from `ltx-dwh-prod-raw.analytics.ios_videoleap_media_export_started` xs
+                       left join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_exported` ex
+                        on xs.id_for_vendor = ex.id_for_vendor
+                        and xs.export_id = ex.export_id
+                    ) xx
+                    on xx.id_for_vendor = u.platform_device_id
+                    and date(dt) = date(xx.meta_received_at)
+        where date_trunc(dt,{{period}}) < date_trunc(current_date(),{{period}})
+         group by 1,2
+    
+        )
+        
+    select
+        *,
+        safe_divide(remake_exporters, cohort)*100 as remake_exporter_pct,
+        safe_divide(remake_exports, cohort) as remake_exports_per_user,
+        safe_divide(og_exporters, cohort)*100 as og_exporter_pct,
+        safe_divide(total_exporters, cohort)*100 as total_exporter_pct
+    from actions a
+
+    

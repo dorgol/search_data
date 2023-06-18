@@ -1,0 +1,66 @@
+/*
+    Name: VL iOS: Late Subscribers by Cohort
+    Query ID: 40612
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-27T06:01:47.407Z
+    */
+    -- 5a) For each install cohort (as defined by the installation_month,
+--     what percent of users subscribed in month0 (same as install), vs. month1, month2, month3, etc.
+
+
+with installs as (
+        select 
+            d.lt_defacto_id,
+            timestamp_trunc(d.first_launch, month) as install_month,
+         from `ltx-dwh-prod-processed`.`devices`.`unified_devices` as d
+         where date(d.first_launch) >= '2022-01-01'
+            and date(d.first_launch) < timestamp_trunc(date(current_date), month) -- only cohorts up to last full month
+            and d.application = 'videoleap'
+         )
+
+, subscriptions as
+    (select 
+               i.lt_defacto_id,
+               i.install_month,
+               s.lt_subscription_id,
+               timestamp_trunc(s.original_purchase_date, month) as subscription_month,
+               date_diff(date(timestamp_trunc(s.original_purchase_date, month)),date(i.install_month), month) as install_to_sub_months
+           from installs i
+           inner join `ltx-dwh-prod-processed.devices.unified_otid_idfv_pairs` p
+               on i.lt_defacto_id = p.lt_defacto_id
+               and p.application = 'videoleap'
+           inner join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_state` s
+               on p.lt_subscription_id = s.lt_subscription_id
+               and s.application = 'videoleap'
+           where date_diff(date(timestamp_trunc(s.original_purchase_date, month)),date(i.install_month), month) >= 0 -- some have sub dates before install date
+                and date(s.original_purchase_date) < timestamp_trunc(date(current_date), month) -- only purchase months up to last full month
+    )
+
+, cohorts as (
+    select 
+        install_month,
+        count(distinct lt_defacto_id) as cohort_size
+    from installs
+    group by install_month)
+    
+, sub_cohorts as (
+    select
+        install_month,
+        install_to_sub_months,
+        count(distinct lt_subscription_id) as subs
+from subscriptions
+    group by 
+        install_month,
+        install_to_sub_months)
+        
+        
+select
+    c.install_month,
+    c.cohort_size,
+    s.install_to_sub_months,
+    s.subs,
+    (s.subs/c.cohort_size)*100 as cohort_sub_perc
+from cohorts c
+left join sub_cohorts s
+    on c.install_month = s.install_month
+where install_to_sub_months >0

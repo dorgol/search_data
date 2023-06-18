@@ -1,0 +1,76 @@
+/*
+    Name: FT iOS - Avatar Asset Users - Feature Usage Rates
+    Query ID: 42487
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-05T10:01:54.392Z
+    */
+    with
+user_genders as (
+    select
+        *
+    from (
+        select
+            platform_device_id as id_for_vendor,
+            case 
+                when contains_substr(asset_gender,'|') then 'couple'
+                else asset_gender
+            end as asset_gender,
+            sum(distinct num_processes)/max(total_processes)*100 pct_total_processes
+        from (
+            select
+                *,
+                sum(num_processes) over (partition by platform_device_id) total_processes
+            from (
+                select
+                    fs.platform_device_id,
+                    case 
+                        when split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(1)] = 'couple' and split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(2)] is not null
+                            then split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(2)] || ' | ' || split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(3)]
+                        else split(json_extract_scalar(process_details, '$.appContextId'), '_')[safe_offset(2)]
+                    end as asset_gender,
+                    count(distinct process_id) num_processes
+                from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+                join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_ended` pe
+                    on pe.app_name = 'facetune2'
+                    and pe.process_name like '%ai_a%'
+                    and pe.process_id = fs.source
+                where fs.app_name = 'facetune2'
+                and fs.feature_name like '%ai_a%'
+                group by 1,2
+                having asset_gender is not null
+            )
+        )
+        -- where total_processes >= 4
+        group by 1,2
+    )
+    where pct_total_processes > 50
+)
+
+select
+    asset_gender,
+    feature_name,
+    min(toolbar_item_index) toolbar_item_index,
+    count(distinct id_for_vendor) num_users_used,
+    count(distinct id_for_vendor)/ max(total_num_users_used)*100 as pct_total_users_used,
+    count(distinct event_id) num_uses,
+    count(distinct event_id)/ max(total_num_uses)*100 pct_total_uses,
+    max(total_num_uses)/max(total_num_users_used) avg_features_used_per_user,
+    count(distinct event_id)/count(distinct id_for_vendor) num_uses_per_user
+from (
+    select
+        feature_name,
+        asset_gender,
+        toolbar_item_index,
+        u.id_for_vendor,
+        fs.event_id,
+        count(distinct u.id_for_vendor) over (partition by asset_gender) total_num_users_used,
+        count(distinct fs.event_id) over (partition by asset_gender) total_num_uses
+    from user_genders u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2023-01-01'
+        and fs.platform_device_id = u.id_for_vendor
+)
+group by 1,2
+having num_users_used >= 100
+order by 1,3,4

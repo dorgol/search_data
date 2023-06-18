@@ -1,0 +1,77 @@
+/*
+    Name: Felix - ARPU (Onboarding) - 2
+    Query ID: 41231
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-20T16:31:14.865Z
+    */
+    --ARPU is average revenue of all users, not just those who subscribed. So for any given cohort month:
+--ARPU Day0: average revenue of all users in the cohort, after day0 (only revenues from day0)
+--ARPU Day30: average revenue of all users in the cohort, after day30 (only revenues from day0-30)
+
+--Method
+-- Pull all users and first launch month (cohort)
+
+-- Pull all transactions with transaction id, date, defacto id, actual proceeds
+
+-- 1)Join tables so transaction id,defacto id, date,first_launch_date,first launch month, actual proceeds
+-- 2) Calculate delta between date and first launch and bin for 0, 30, 120,366
+
+-- first_launch month, delta, sum_proceeds
+
+declare start_date date default '2023-01-01';
+
+with users_install as (
+
+    select distinct
+        lt_defacto_id,
+        date(date_trunc(first_launch, month)) as first_launch_month,
+        date(date_trunc(first_launch, day)) as first_launch_date
+    from `ltx-dwh-prod-processed`.`agg`.`app_device`    
+    where date(first_launch) > start_date
+
+),
+
+transactions as (
+
+    select 
+        lt_transaction_id,
+        device.lt_defacto_id,
+        date_trunc(purchase_date, day) as purchase_date,
+        payments.actual_proceeds
+        
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions`
+    where date(purchase_date) > start_date
+    and payments.actual_proceeds > 0
+
+),
+
+transaction_delta as (
+
+    select 
+        transactions.*,
+        first_launch_date,
+        first_launch_month,
+        case
+        when date_diff(date(purchase_date), first_launch_date, day) = 0 then '0'
+        when date_diff(date(purchase_date), first_launch_date, day) <= 30 then '30'
+        when date_diff(date(purchase_date), first_launch_date, day) <= 30 then '120'
+        when date_diff(date(purchase_date), first_launch_date, day) <= 30 then '366'
+        else 'Other' end as transaction_delta
+        
+    from 
+        transactions
+    inner join users_install
+        on users_install.lt_defacto_id = transactions.lt_defacto_id
+
+)
+
+select 
+    --first_launch_month,
+    --transaction_delta,
+    --count(distinct lt_defacto_id) as count_users,
+    --sum(actual_proceeds) as revenue
+    *
+    
+from transaction_delta
+--group by 1,2
+

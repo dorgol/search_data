@@ -1,0 +1,258 @@
+/*
+    Name: [FT-1067] Beauty Feed - pct bouncers by first feed entry point
+    Query ID: 40730
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-29T12:53:16.426Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(s.id_for_vendor is not null) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and case 
+            when '{{segments}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+and date(experiment_started_meta) <= current_date - 8
+and variant like 'Variant%'
+),
+
+first_entrance as (
+       select distinct
+            experiment,
+            variant,
+            segmentation,
+            id_for_vendor,
+            experiment_started_meta,
+            'beauty-hometab' as entry_point,
+            (case when n.device_timestamp is not null then n.device_timestamp else '2099-01-01' end) as use,
+        from users u
+        left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` n  ---Clicked on Presets in Navigation
+            on true
+            and n.app_name = 'facetune2'
+            and n.platform_device_id = u.id_for_vendor
+            and cast(n.app_version_code as int64) >= {{since_version}}
+            and date(n.meta_received_at) >= '2023-02-19'
+            and date(meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and n.screen_name = 'home_screen'
+            and n.button_identifier = 'beautyFeed'
+        union all
+        select distinct
+            experiment,
+            variant,
+            segmentation,
+            id_for_vendor,
+            experiment_started_meta,
+            'beauty-qs' as entry_point,
+            (case when device_timestamp is not null then device_timestamp else '2099-01-01' end) as use,
+        from users u
+        left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_dismissed` q ---Clicked on Presets in Beauty Quickstart
+            on true
+            and q.app_name = '{{app_name}}'
+            and q.platform_device_id = u.id_for_vendor
+            and cast(q.app_version_code as int64) >= {{since_version}}
+            and date(q.meta_received_at) >= '2023-02-19'
+            and date(meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and q.screen_name = 'beauty_quickstart'
+            and q.destination = 'beauty_feed'
+        union all
+        select distinct
+            experiment,
+            variant,
+            segmentation,
+            id_for_vendor,
+            experiment_started_meta,
+            'beauty-wn' as entry_point,
+            (case when d.device_timestamp is not null then d.device_timestamp else '2099-01-01' end) as use,
+        from users u
+        left join `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented` m
+            on true
+            and m.app_name = '{{app_name}}'
+            and m.platform_device_id = u.id_for_vendor
+            and cast(m.app_version_code as int64) >= {{since_version}}
+            and date(m.meta_received_at) >= '2023-02-19'
+            and date(m.meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and m.message_name = 'beautyFeedWhatsNew'
+        left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` d
+            on true
+            and d.app_name = '{{app_name}}'
+            and d.platform_device_id = m.platform_device_id
+            and cast(d.app_version_code as int64) >= {{since_version}}
+            and date(d.meta_received_at) >= '2023-02-19'
+            and date(d.meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and d.flow_id = m.flow_id
+            and d.reason = 'accepted'
+        union all
+        select distinct
+            experiment,
+            variant,
+            segmentation,
+            id_for_vendor,
+            experiment_started_meta,
+            'beauty-editor' as entry_point,
+            (case when w.device_timestamp is not null then w.device_timestamp else '2099-01-01' end) as use,
+        from users u
+        left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` w ---Started Beauty Presets Feature in Editor
+            on true
+            and w.app_name = 'facetune2'
+            and w.platform_device_id = u.id_for_vendor
+            and cast(w.app_version_code as int64) >= {{since_version}}
+            and date(w.meta_received_at) >= '2023-02-19'
+            and date(meta_received_at) between date(u.experiment_started_meta) and date(u.experiment_started_meta) + 7
+            and feature_name = 'BeautyPresets'
+            and source not like 'beauty%'
+),
+
+ranked as (
+    select 
+        experiment,
+        variant,
+        '{{segments}}' as segments,
+        '{{subscriber}}' as sub_type,
+        id_for_vendor,
+        experiment_started_meta,
+        entry_point,
+        use,
+        row_number() over (partition by id_for_vendor order by use asc) as rn,
+    from first_entrance
+    where true
+    qualify rn = 1
+    -- and use != '2099-01-01'  
+),
+
+
+
+last_items_info_per_feed_id as (
+   select date(meta_received_at) as dt,
+          *
+   from (
+         select
+              *,
+              row_number () over (partition by feed_id order by device_timestamp desc) as row
+          from  `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_usage_info`
+          where true
+          and items_info <> '[]'
+          and items_info is not null
+          and app_name = 'facetune2'
+          and date(meta_received_at) >= '2023-02-19'
+          and cast(app_version_code as int64) >= {{since_version}}
+          and date(meta_received_at) >= date_sub(current_date(), interval 1 month)
+
+)),
+
+
+usage as (    
+select distinct
+    f1.feed_type,
+    f1.platform_device_id,
+    f1.post_id,
+    f1.session_id,
+    f1.run_id,
+    f1.meta_received_at,
+    f1.feed_id,
+    f2.actions,
+    f2.action_id
+from 
+    (
+    select
+        app_name,
+        platform,
+        dt,
+        platform_device_id,
+        feed_id,
+        meta_received_at, 
+        app_version_code,
+        `is_subscriber`,
+        event_id,
+        run_id,
+        session_id,
+        feed_description,
+        feed_type,
+        json_extract_scalar(items_info,"$.identifier.section.identifier") as post_id,
+        cast (json_extract_scalar(items_info,"$.sectionPositionInFeed") as int) as position,
+        cast (json_extract_scalar(items_info,"$.totalVisibleTime") as float64) totalVisibleTime,
+    from last_items_info_per_feed_id as fui,
+    unnest(json_extract_array(items_info)) as items_info
+    ) f1
+left join 
+    (
+    select
+        platform_device_id,
+        feed_id,
+        meta_received_at,
+        json_extract_scalar(items_info,"$.identifier.section.identifier") as post_id,
+        json_extract_scalar(selections,"$.actionType") as actions,
+        json_extract_scalar(selections,"$.actionIdentifier") action_id,
+        cast(json_extract_scalar(selections,"$.actionTime") as float64) action_time,
+    from last_items_info_per_feed_id as fui,
+    unnest(json_extract_array(items_info)) as items_info,
+    unnest(json_extract_array(items_info, "$.actions")) as selections
+
+    ) f2
+on f1.feed_id = f2.feed_id
+and f1.platform_device_id = f2. platform_device_id
+and f1.post_id = f2.post_id
+where true
+and feed_type like '%beauty%'
+)
+
+select 
+    experiment,
+    variant,
+    segments,
+    sub_type,
+    entry_point,
+    count(distinct case when impressions = 2 and try_preset_clicks = 0 then platform_device_id end) as num_bouncers,
+    count(distinct platform_device_id) as num_users,
+    100* count(distinct case when impressions <= 2 then platform_device_id end) / count(distinct platform_device_id) as pct_bouncers
+from (
+    select
+        experiment,
+        variant,
+        '{{segments}}' as segments,
+        '{{subscriber}}' as sub_type,
+        case when use = '2099-01-01' then 'did nothing' else entry_point end as entry_point,
+        platform_device_id,
+        experiment_started_meta, 
+        count(distinct case when u.actions is null then concat(u.platform_device_id,'-',u.post_id,'-',u.session_id,'-',u.feed_id) end) as impressions,
+        count(distinct case when u.actions = 'use_template' then u.action_id end) as try_preset_clicks,
+    from ranked r
+    left join usage u
+        on u.platform_device_id = r.id_for_vendor
+        and date(u.meta_received_at) between date(experiment_started_meta) and date(experiment_started_meta) + 7
+    group by 1,2,3,4,5,6,7
+    )
+group by 1,2,3,4,5
+having num_users > 100
+order by 1,2

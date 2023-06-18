@@ -1,0 +1,47 @@
+/*
+    Name: Facetune: New User Repeat Image Import Export
+    Query ID: 40551
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-23T09:18:58.269Z
+    */
+    with users as (
+    select distinct
+        lt_defacto_id,
+        attribution_timestamp,
+    from `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` d
+    where true
+    and d.application = 'facetune2'
+    and attribution_timestamp >= timestamp_sub(current_timestamp(), interval 44 day)
+    and attribution_timestamp <= timestamp_sub(current_timestamp(), interval 14 day)
+)
+
+select distinct
+    times_imported,
+    images,
+    sum(images) over (order by times_imported desc)/sum(images) over() as pct_cum,
+from (
+    select
+        times_imported,
+        count(distinct image_id) as images,
+    from (
+        select  
+            image_id,
+            count(distinct i.editing_session_id) as times_imported
+        from users u
+        join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_loaded` i
+            on i.meta_received_at >= timestamp_sub(current_timestamp(), interval 44 day)
+            and i.meta_received_at <= timestamp_add(attribution_timestamp, interval 14 day)
+            and lt_defacto_id = farm_fingerprint('facetune2'||id_for_vendor)
+            and image_id like 'com.lightricks.Photons.PhotoKit%'
+        -- join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_started` f
+        --     on f.meta_received_at >= timestamp_sub(current_timestamp(), interval 44 day)
+        --     and f.meta_received_at <= timestamp_add(attribution_timestamp, interval 14 day)
+        --     and i.editing_session_id = f.editing_session_id
+        join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_exported` e
+            on e.meta_received_at >= timestamp_sub(current_timestamp(), interval 44 day)
+            and e.meta_received_at <= timestamp_add(attribution_timestamp, interval 14 day)
+            and i.editing_session_id = e.editing_session_id
+        group by 1
+    )
+    group by 1
+)

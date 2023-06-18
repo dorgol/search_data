@@ -1,0 +1,73 @@
+/*
+    Name: Churn vs Expirations
+    Query ID: 42200
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-25T08:08:41.255Z
+    */
+    with data as (
+    select distinct
+        original_purchase_date,
+        lt_subscription_id,
+        purchase_date,
+        subscription.subscription_duration,
+        date_trunc(date(subscription.subscription_renewal_date_calc), month) as sub_renewal
+    from `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation_cross_sell`
+    where original_purchase_date >= '2022-01-01'
+        and application = 'videoleap'
+        and platform = 'ios'
+        and subscription.subscription_renewal_date_calc is not null
+        and date(subscription.subscription_renewal_date_calc) <= date_add(current_date(), interval 30 day)
+    order by 1
+),
+
+agg as (
+    select 
+        sub_renewal,
+        count(distinct lt_subscription_id) as count_subs
+    from data
+    group by 1
+    order by 1
+),
+
+churn as (
+select 
+    dt,
+    sum(churn_subs) as churn_subs,
+    sum(churn_paid_subs) as churn_paid_subs,
+from 
+    `ltx-dwh-prod-processed`.`agg`.`subs_metrics_by_date`
+where  
+    app_name = 'videoleap' 
+    and dt >= '2023-01-01'
+    and platform = 'ios'
+    and time_granularity = 'month'
+group by 1  
+),
+
+calc as (select 
+    dt,
+    count_subs as total_expirations,
+    churn_subs as churned_subs,
+    churn_paid_subs as churned_paid_subs,
+    100*churn_subs/count_subs as churn_pct,
+    100 - 100*churn_subs/count_subs as renewed_pct,
+    100*churn_paid_subs/count_subs as paid_churn_pct,
+    100 - 100*churn_paid_subs/count_subs as paid_renewed_pct
+
+from churn
+inner join agg on sub_renewal = dt
+order by 1
+)
+
+select dt,
+total_expirations,
+churned_subs,
+churned_paid_subs,
+total_expirations - churned_subs as renewals,
+churn_pct
+
+from calc
+
+
+
+

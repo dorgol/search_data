@@ -1,0 +1,51 @@
+/*
+    Name: VL iOS - Remake exports by feed screen (union)
+    Query ID: 42379
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-06-08T08:00:40.629Z
+    */
+    with total as (select
+    date_trunc(date(st.meta_received_at), {{period}}) as dt,
+    case when lower(ac.screen_name) like '%category.recommended%' or ac.screen_name like '%for_you%' then 'Main Feed'
+                 when st.flow_name = "assets_first" then "Assets First"
+                 when lower(ac.screen_name) like '%discover%' then 'Discover - Other'
+                 when lower(ac.screen_name) like '%ai_effects%' then 'AI Effects Category'
+                 when lower(ac.screen_name) like '%category.ai%' then 'AI Effects Category'
+                 when ac.screen_name like '%category.%' then 'Main Categories'
+                 when ac.screen_name like '%assets_first%' then 'Assets First'
+                 when ac.screen_name like '%search%' then 'Search'
+                 else 'Other' 
+        end as screen_name,
+    count(distinct st.event_id) as num_clicks,
+    count(distinct st.id_for_vendor) as num_project_users,
+    count(distinct st.open_project_id) as num_projects,
+    count(distinct ex.open_project_id) as num_exported_projects,
+    count(distinct ex.export_id) as num_exports,
+    count(distinct ex.id_for_vendor) as num_export_users,
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as st
+left join (select distinct action_id, screen_name from  `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started`
+            union all 
+           select distinct action_id, screen_name from  `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started`) as ac
+    on st.action_identifier = ac.action_id
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+    on st.open_project_id = exs.open_project_id
+    and exs.parent_template_id is not null
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+    on exs.export_id = ex.export_id
+left join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+    on d.platform_device_id = st.id_for_vendor
+    and d.app_name = "videoleap"
+where date(st.meta_received_at) >= '2023-01-01'
+    and date_trunc(current_date(), {{period}}) > date_trunc(date(st.meta_received_at), {{period}}) -- not today
+    and case when '{{day0}}' = 'day0' then (d.first_active_dt is null or date(d.first_active_dt) = date(st.meta_received_at))
+             when '{{day0}}' = 'non day0' then date(d.first_active_dt) < date(st.meta_received_at)
+             else true end
+group by 1,2)
+
+select 
+    *,
+    safe_divide(num_exports, num_export_users) as exports_per_exporter,
+    safe_divide(num_export_users, num_project_users)*100 as user_export_rate,
+    safe_divide(num_exported_projects, num_projects)*100 as project_to_export_rate
+from total
+where num_clicks > 2000

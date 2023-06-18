@@ -1,0 +1,58 @@
+/*
+    Name: FT iOS - Screenshot Blocking Subscribers - Questionnaire Q1 & Q2 Answers
+    Query ID: 41793
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-11T12:34:13.917Z
+    */
+    with
+q1_answers as (
+    select distinct
+        id_for_vendor,
+        current_page_response as response,
+    from `ltx-dwh-prod-raw.analytics.ios_facetune2_intro_questionnaire_transition` pq
+    where true
+        and current_page_index = 1
+        and destination_page_index = 2
+    qualify row_number() over (partition by id_for_vendor order by meta_received_at desc) = 1
+),
+q2_answers as (
+    select distinct
+        id_for_vendor,
+        current_page_response as response,
+    from `ltx-dwh-prod-raw.analytics.ios_facetune2_intro_questionnaire_transition` pq
+    where true
+        and current_page_index = 2
+        and destination_page_index = 3
+    qualify row_number() over (partition by id_for_vendor order by meta_received_at desc) = 1
+),
+all_answers as (
+    select distinct 
+        id_for_vendor,
+        q1.response as q1_response,
+        q2.response as q2_response,
+    from q1_answers q1
+    join q2_answers q2
+        using(id_for_vendor)
+)
+
+select
+    case when q1_response is null then 'Skip' else q1_response end as q1_response,
+    case when q2_response is null then 'Skip' else q2_response end as q2_response,
+    count(distinct p.platform_device_id) num_users_presented,
+    count(distinct p.event_id) num_times_presented,
+    count(distinct case when d.reason = 'PurchaseSucceeded' then p.event_id end) num_purchased,
+    count(distinct case when d.reason = 'PurchaseSucceeded' then p.event_id end) /count(distinct p.event_id)*100 as purchase_rate
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_presented` p
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_dismissed` d
+    on d.app_name = 'facetune2'
+    and d.meta_received_at >= '{{since_date}}'
+    and d.flow_id = p.flow_id
+join all_answers q
+    on q.id_for_vendor = p.platform_device_id
+where true
+and p.app_name = 'facetune2'
+and p.meta_received_at >= '{{since_date}}'
+and p.reason = 'contentScreenshotAlert'
+group by 1,2
+having num_users_presented > 200
+order by purchase_rate desc

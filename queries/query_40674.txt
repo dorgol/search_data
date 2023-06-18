@@ -1,0 +1,33 @@
+/*
+    Name: Reinstall Count
+    Query ID: 40674
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-28T12:39:14.097Z
+    */
+    select
+    timestamp_trunc(install_time, month) as period,
+    count(distinct installation_id) as reinstalls,
+    count(distinct user_id) as users_who_reinstall
+from(
+    select
+        *,
+        row_number() over (partition by user_id order by install_time asc) as install_number
+    from(
+      SELECT  
+          user_id,
+          installation_id,
+          min(meta_received_at) as install_time
+      FROM `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` a
+      join `ltx-dwh-prod-raw.analytics_global.ltx_global_app_device_info_log` d
+        on a.lt_defacto_id = farm_fingerprint('facetune2'||platform_device_id)
+        and d.app_name = 'facetune2'
+      where true
+      and a.application = 'facetune2'
+      group by 1,2
+    )
+)
+where true 
+and install_number > 1
+and install_time >= timestamp_sub(current_timestamp(), interval 90 day)
+group by 1
+order by 1

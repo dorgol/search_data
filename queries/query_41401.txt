@@ -1,0 +1,19 @@
+/*
+    Name: VL iOS - assets first clicks by feed screen
+    Query ID: 41401
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-23T10:33:07.298Z
+    */
+    select
+    date_trunc(date(te.meta_received_at), week) as dt,
+    case when a.screen_name is null then "unknown"
+         when a.screen_name like "category%" then "category"
+         when a.screen_name like "discover%" then "discover"
+         when a.screen_name like "search%" then "search"
+         else a.screen_name end as screen_name,
+    count(distinct te.action_identifier) as num_clicks
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as te
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started` as a
+    on te.action_identifier = a.action_id
+where te.flow_name = "assets_first"
+group by 1,2

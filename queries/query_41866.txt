@@ -1,0 +1,71 @@
+/*
+    Name: Global Events - Features Flow - Integration
+    Query ID: 41866
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-21T12:14:26.569Z
+    */
+    select
+    fs.platform_device_id,
+    fs.flow_id,
+    fs.device_timestamp as start_time,
+    fs.source,
+    fs.asset_type,
+    fs.feature_name,
+    fs.preprocessing_percentage_completion,
+    fs.restrictions,
+    ii.item_name,
+    ii.interaction_id,
+    ii.device_timestamp as interaction_time,
+    ii.previously_selected_item,
+    ii.interaction_location,
+    ii.interaction_details,
+    ii.is_restricted_item,
+    ii.eligibility_waiver as item_eligibility_waiver,
+    ii.feature_state_on_interaction,
+    -- fps.process_name,
+    -- fps.endpoint,
+    -- fps.process_id,
+    -- fpe.result as process_result,
+    -- fpe.error as process_error,
+    -- fpe.process_details,
+    -- fpe.object_class_name,
+    -- fpe.returned_value,
+    ab.button_name,
+    ab.feature_state as approval_bar_feature_state,
+    ab.destination,
+    fe.did_project_change,
+    fe.is_restricted_item_applied,
+    fe.eligibility_waiver,
+    fe.feature_state,
+    fe.result,
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_feature_flow_started` fs
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_feature_item_interaction` ii
+    on ii.app_name = '{{app_name}}'
+    and fs.platform_device_id = ii.platform_device_id
+    and fs.flow_id = ii.flow_id
+    and ii.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+-- left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_feature_process_started` fps
+--     on fps.app_name = '{{app_name}}'
+--     and fs.platform_device_id = fps.platform_device_id
+--     and fs.flow_id = fps.source_flow_id
+--     and ii.interaction_id = fps.interaction_id
+--     and fps.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+-- left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_feature_process_ended` fpe
+--     on fpe.app_name = '{{app_name}}'
+--     and fs.platform_device_id = fpe.platform_device_id
+--     -- and fs.flow_id = fpe.source_flow_id
+--     and fps.process_id = fpe.process_id
+--     and fpe.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_feature_approval_bar_item_interaction` ab
+    on ab.app_name = '{{app_name}}'
+    and fs.platform_device_id = ab.platform_device_id
+    and fs.flow_id = ab.flow_id
+    and ab.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_feature_flow_ended` fe
+    on fe.app_name = '{{app_name}}'
+    and fs.platform_device_id = fe.platform_device_id
+    and fs.flow_id = fe.flow_id
+    and fe.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+where fs.app_name = '{{app_name}}'
+and fs.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+order by 1,3 asc,2,interaction_time asc

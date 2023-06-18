@@ -1,0 +1,33 @@
+/*
+    Name: PL QA Screenshot Conversions for the past month
+    Query ID: 40105
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-06T15:00:47.498Z
+    */
+    select
+
+--date(l.meta_received_at) as dt,
+--l.source,
+   count (distinct l.id_for_vendor) as users_presented,
+   count (distinct r.id_for_vendor) as users_converted,
+   round(count (distinct r.id_for_vendor) * 100 / count (distinct l.id_for_vendor),2) as cvr,
+   count(distinct l.presentation_id) as volume_of_screens_presented
+from ltx-dwh-prod-raw.analytics.ios_editor_subscription_presented l
+left join ltx-dwh-prod-raw.analytics.ios_editor_subscription_purchase_succeeded r
+    using(id_for_vendor,presentation_id)
+where 
+--(l.source like '%SubscriptionPageSourceProFeature.%'  or l.source in 
+
+--and l.source not like ('%soft')
+--and 
+
+--date(l.meta_received_at) > date_sub(current_date(),interval 1 month)
+date_trunc(l.meta_received_at, month)='2023-02-01'
+--l.source in
+--('SubscriptionPageSourceProFeature.Inpaint',
+--'SubscriptionPageSourceProFeature.Retouch')
+and l.source not in ('SubscriptionPageSourceOnboardingPromotion', 'SubscriptionPageSourceDaily','MainPageProButton' ,'SubscriptionPageSourceDailyPromotion')
+and l.source  like ('%screenshot%')
+--group by 1
+--having count (distinct l.id_for_vendor) > 1000
+order by 3 desc

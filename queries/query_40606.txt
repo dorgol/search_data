@@ -1,0 +1,55 @@
+/*
+    Name: Facetune Android: Base Version Events
+    Query ID: 40606
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-26T14:26:27.990Z
+    */
+    select
+    '1 foreground' as event,
+    count(distinct installation_id) as users,
+    count(distinct event_id) as events,
+from `ltx-dwh-prod-raw.analytics.android_facetune2_app_foregrounded`
+where version_code = {{version}}
+and date(meta_received_at) = current_date()
+
+union all
+
+select
+    '2 import' as event,
+    count(distinct installation_id) as users,
+    count(distinct event_id) as events,
+from `ltx-dwh-prod-raw.analytics.android_facetune2_image_imported`
+where version_code = {{version}}
+and date(meta_received_at) = current_date()
+
+union all
+
+select
+    '3 saw sub' as event,
+    count(distinct installation_id) as users,
+    count(distinct event_id) as events,
+from `ltx-dwh-prod-raw.analytics.android_facetune2_subscription_screen_displayed`
+where version_code = {{version}}
+and date(meta_received_at) = current_date()
+
+union all
+
+select
+    '4 subscribed' as event,
+    count(distinct installation_id) as users,
+    count(distinct event_id) as events,
+from `ltx-dwh-prod-raw.analytics.android_facetune2_subscription_purchase_succeeded`
+where version_code = {{version}}
+and date(meta_received_at) = current_date()
+
+union all
+
+select
+    '5 export' as event,
+    count(distinct installation_id) as users,
+    count(distinct event_id) as events,
+from `ltx-dwh-prod-raw.analytics.android_facetune2_image_exported`
+where version_code = {{version}}
+and date(meta_received_at) = current_date()
+
+order by 1

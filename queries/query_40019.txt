@@ -1,0 +1,37 @@
+/*
+    Name: PL Monetization Experiment Daily Sol Conversions
+    Query ID: 40019
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-03T18:30:13.079Z
+    */
+    create temp table devices_and_variant as (
+    select distinct
+        dav.* except (display_type)
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` as dav
+    where dav.experiment = '{{ experiment }}'
+            and   case 
+                when '{{segments}}' = 'All Users' then dav.segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then dav.segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then dav.segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'All Users Without Existing Segmentation' then dav.segmentation in ('01 All Users','02 New Users','03 Existing Users' ) end
+    and dav.display_type='activated_for_device'
+);
+select
+dav.variant,
+--l.screen_type,
+   count (distinct l.id_for_vendor) as users_presented,
+   count (distinct r.id_for_vendor) as users_converted,
+   safe_divide(count (distinct r.id_for_vendor),count (distinct l.id_for_vendor))*100 as cvr,
+   count(distinct l.presentation_id) as volume_of_screens_presented
+from devices_and_variant as dav
+left join
+ltx-dwh-prod-raw.analytics.ios_editor_subscription_presented l
+on dav.id_for_vendor=l.id_for_vendor
+and l.source in
+
+--'SubscriptionPageSourceOnboardingPromotion'
+('SubscriptionPageSourceDailyPromotion','SubscriptionPageSourceDaily')
+left join ltx-dwh-prod-raw.analytics.ios_editor_subscription_purchase_succeeded r
+    on l.id_for_vendor=r.id_for_vendor
+    and l.presentation_id=r.presentation_id
+group by 1

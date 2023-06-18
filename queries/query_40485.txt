@@ -1,0 +1,86 @@
+/*
+    Name: 20221221 -  [FT-1057] Makeup LAM (Combined) - Accept to Export Rate in First Makeup Session
+    Query ID: 40485
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-21T08:40:53.748Z
+    */
+    with 
+users as (
+    select
+        *
+    from (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.country,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.display_type,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = 'facetune2'
+        and (
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Var%') or
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Var%')
+        )
+    )
+    where true
+    and display_type = 'activated_for_device'
+),
+
+makeup_usage as (
+    select distinct 
+        segmentation,
+        variant,
+        fs.platform_device_id,
+        experiment_started_meta,
+        editing_session_id,
+        device_timestamp
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on true
+        and fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2022-12-21'
+        and fs.platform_device_id = u.id_for_vendor
+        and fs.meta_received_at >= experiment_started_meta
+        and feature_name = 'Makeup'
+    where true
+    qualify row_number() over (partition by segmentation, variant, fs.platform_device_id order by  device_timestamp asc) = 1
+)
+
+select
+    segmentation,
+    variant,
+    fe.feature_name,
+    min(toolbar_item_index) toolbar_item_index,
+    count(distinct e.editing_session_id) num_exports,
+    count(distinct e.editing_session_id)/count(distinct fe.editing_session_id)*100 export_rate_of_accepted
+from makeup_usage u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+    on fs.app_name = 'facetune2'
+    and fs.meta_received_at >= '2022-02-21'
+    and fs.meta_received_at >= experiment_started_meta
+    and fs.editing_session_id = u.editing_session_id
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+    on fe.app_name = 'facetune2'
+    and fe.meta_received_at >= '2022-02-21'
+    and fs.feature_usage_id = fe.feature_usage_id
+    and reason = 'accepted'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_ended` e
+    on e.app_name = 'facetune2'
+    and e.meta_received_at >= '2022-02-21'
+    and e.meta_received_at >= experiment_started_meta
+    and e.editing_session_id = fe.editing_session_id
+group by 1,2,3
+having num_exports > 100
+order by 1,2,4

@@ -1,0 +1,14 @@
+/*
+    Name: Current App Users
+    Query ID: 41475
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-30T12:55:33.614Z
+    */
+    select
+    d.current_device_country,
+    count(distinct attribution_user_id) as users,
+from `ltx-dwh-prod-processed.agg.app_attribution_user_date` d
+where app_name = '{{app}}'
+and dt >= date_sub(current_date(), interval 30 day)
+group by 1
+order by 2 desc

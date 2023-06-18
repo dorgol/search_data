@@ -1,0 +1,196 @@
+/*
+    Name: [FT-1058] Quickstart V2 - first flow funnel - PCVR by category and feature chosen
+    Query ID: 41098
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-17T16:33:28.795Z
+    */
+    with users as (
+    select  
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else d.country end as country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.experiment_started_meta_by_type,
+        d.experiment_started_device,
+        d.experiment_started_device_by_type,
+        d.display_type,
+        max(case when a.original_transaction_id is not null then s.id_for_vendor end) as subscriber_id,
+        min(case when a.original_transaction_id is not null then s.device_timestamp end) as subscription_time,
+        max(current_is_in_trial_period) as current_is_in_trial_period,
+        max(revenue_so_far) > 0 as paid,
+        max(revenue_so_far) as rev,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_user_subscribed` s
+        on d.id_for_vendor = s.id_for_vendor
+        and s.meta_received_at >= '2023-01-05'
+    left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` a
+        using(original_transaction_id)
+    where case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+                else true end
+    and  d.application = 'facetune2'
+    and d.experiment like '%[FT-1058]%'
+    and d.display_type = 'displayed'
+    and case 
+    when '{{countries}}' = 'Global' then true 
+    when '{{countries}}' = 'Rest of the World' then d.country not in ('US','CN')
+    when '{{countries}}' = 'All' then true
+    else d.country = '{{countries}}' end  
+    group by 1,2,3,4,5,6,7,8,9,10,11
+)
+,
+
+first_quickstart_flow as (
+    select
+        u.display_type,
+        u.segmentation,
+        u.experiment,
+        u.country,
+        u.first_day, 
+        u.variant,
+        u.id_for_vendor,
+        case 
+            when subscription_time < experiment_started_device_by_type then 'subscribed_before_qs' 
+            else 'did_not_subscribe_before_qs' 
+        end as category,
+        case 
+            when paid and subscription_time < experiment_started_device_by_type then 'subscribed_before_qs_paid'
+            when subscription_time < experiment_started_device_by_type and not current_is_in_trial_period then 'subscribed_before_qs_churned' 
+            when subscription_time < experiment_started_device_by_type and current_is_in_trial_period then 'subscribed_before_qs_trial_period' 
+            when paid and subscription_time > experiment_started_device_by_type then 'subscribed_after_qs_paid' 
+            when subscription_time > experiment_started_device_by_type and not current_is_in_trial_period then 'subscribed_after_qs_churned' 
+            when subscription_time > experiment_started_device_by_type and current_is_in_trial_period then 'subscribed_after_qs_trial_period' 
+            when subscription_time is null then 'did_not_subscribe' 
+            else 'other' 
+        end as sub_category,
+        u.experiment_started_meta, 
+        a.quickstart_screen_id as first_quickstart_screen_id,
+        a.meta_received_at as first_quickstart_appeared_ts,
+        a.features_presented
+    from users u 
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_appeared` a
+        on u.id_for_vendor = a.id_for_vendor
+    where true --variant = 'Variant 1'
+    qualify row_number() over (partition by experiment,variant,country,display_type,segmentation,id_for_vendor order by a.meta_received_at asc) = 1
+),
+
+first_quickstart_to_export as (
+select distinct
+    experiment,
+    country,
+    first_day, 
+    variant,
+    a.id_for_vendor,
+    category,
+    sub_category,
+    experiment_started_meta, 
+    first_quickstart_screen_id,
+    first_quickstart_appeared_ts,
+    features_presented,
+    d.feature,
+    d.sub_feature,
+    d.feature_position,
+    d.reason,
+from first_quickstart_flow a
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_quickstart_screen_dismissed` d
+    on d.id_for_vendor = a.id_for_vendor
+    and d.quickstart_screen_id = a.first_quickstart_screen_id
+),
+
+baseline_users as (
+select
+    u.experiment,
+    u.first_day, 
+    u.variant,
+    u.segmentation,
+    u.country,
+    u.id_for_vendor,
+    case 
+        when subscription_time < experiment_started_device_by_type then 'subscribed_before_qs' 
+        else 'did_not_subscribe_before_qs' 
+    end as category,
+    case 
+        when paid and subscription_time < experiment_started_device_by_type then 'subscribed_before_qs_paid'
+        when subscription_time < experiment_started_device_by_type and not current_is_in_trial_period then 'subscribed_before_qs_churned' 
+        when subscription_time < experiment_started_device_by_type and current_is_in_trial_period then 'subscribed_before_qs_trial_period' 
+        when paid and subscription_time > experiment_started_device_by_type then 'subscribed_after_qs_paid' 
+        when subscription_time > experiment_started_device_by_type and not current_is_in_trial_period then 'subscribed_after_qs_churned' 
+        when subscription_time > experiment_started_device_by_type and current_is_in_trial_period then 'subscribed_after_qs_trial_period' 
+        when subscription_time is null then 'did_not_subscribe' 
+        else 'other' 
+    end as sub_category,
+    u.experiment_started_meta,
+    u.experiment_started_meta_by_type,
+    u.display_type,
+from users u
+where variant = 'baseline'
+),
+
+baseline_pcvr as (
+select distinct
+    category,
+    sub_category,
+    count(distinct b.id_for_vendor) over (partition by category) as cnt_baseline_users_cat,
+    count(distinct b.id_for_vendor) over (partition by category, sub_category) as cnt_baseline_users_sub_cat,
+from baseline_users b
+where sub_category not like '%trial_period%'
+)
+
+select distinct
+    q.experiment,
+    q.country,
+    q.variant,
+    q.category,
+    q.sub_category,
+    case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end as feature,
+        
+        
+    count(distinct q.id_for_vendor) over (partition by q.variant, category, sub_category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) as cnt_devices,
+                                                                 
+                                                                 
+    count(distinct q.id_for_vendor) over (partition by q.variant, category,sub_category) as cnt_total_devices_sub_cat,
+    count(distinct q.id_for_vendor) over (partition by q.variant, category) as cnt_total_devices_cat,
+    
+    
+    count(distinct q.id_for_vendor) over (partition by q.variant, category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) as cnt_total_devices_feature,
+                                                                 
+                                                                 
+    100*count(distinct q.id_for_vendor) over (partition by q.variant, category, sub_category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) /
+    count(distinct q.id_for_vendor) over (partition by q.variant, category,sub_category) as pct_of_sub_category,    
+    
+    
+    100*count(distinct q.id_for_vendor) over (partition by q.variant, category, sub_category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) / 
+    count(distinct q.id_for_vendor) over (partition by q.variant, category, case when reason = 'feature_chosen' and sub_feature is null then feature
+        when reason = 'feature_chosen' then concat(feature, '.',sub_feature)
+        else 'skip' end) as pct_of_feature,             
+        
+    cnt_baseline_users_sub_cat,
+    cnt_baseline_users_cat,
+    100*cnt_baseline_users_sub_cat / cnt_baseline_users_cat as baseline_pcvr
+
+from first_quickstart_to_export q
+join baseline_pcvr
+    using(category,sub_category)
+where true
+-- and category = '{{category_name}}'
+and sub_category not like '%trial_period%'
+qualify sub_category like '%paid%'

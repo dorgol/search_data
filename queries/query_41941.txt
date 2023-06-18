@@ -1,0 +1,78 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 - Errors
+    Query ID: 41941
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-23T09:22:33.749Z
+    */
+    
+with users as
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and lower(d.experiment) not like lower('%AU_UK%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        and case when '{{variant}}' = 'all' then true
+            else '{{variant}}' = variant end
+        group by 1,2,3,4,5,6,7,8
+),
+
+
+reached_feed_per_day as (
+select 
+    date(meta_received_at) as day,
+    count(distinct id_for_vendor) as reached_feed_users
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+join users u
+    on u.id_for_vendor = f.platform_device_id
+where app_name = '{{app_name}}'
+and cast(f.app_version_code as int64) >= {{since_version}}
+and date(f.meta_received_at) >= '{{start_date}}'
+and f.meta_received_at > u.experiment_started_meta 
+--and screen_name like '%beauty%'
+group by 1
+)
+
+
+select 
+    m.day,
+    message_name,
+    num_error_users,
+    100* num_error_users / reached_feed_users as pct_error_users,
+    num_error_events
+from (
+    select
+        message_name,
+        date(meta_received_at) as day,
+        count(distinct m.platform_device_id) num_error_users,
+        count(distinct m.event_id) num_error_events,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` m
+        on true
+        and m.app_name = '{{app_name}}'
+        and m.platform_device_id = u.id_for_vendor
+        and cast(m.app_version_code as int64) >= {{since_version}}
+        and date(m.meta_received_at) >= '{{start_date}}'
+        and m.meta_received_at > u.experiment_started_meta
+        and m.message_name in ('fetch_error_localizing_failed','fetch_error_no_internet','fetch_error_unknown_reason','purchase_error_failed','purchase_error_failed_with_retry','beauty_editor_textures_failed_to_save','Beauty presets feature preprocessing failed message dismissed')
+    group by 1,2
+    )m
+join reached_feed_per_day t
+    on t.day = m.day

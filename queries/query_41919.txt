@@ -1,0 +1,42 @@
+/*
+    Name: Monthly Only - [FT2-1051] Monthly Only With Trial Communication vs new baseline - Products Validation
+    Query ID: 41919
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-16T06:55:13.093Z
+    */
+    with
+users as
+(
+        select
+            segmentation,
+            variant,
+            display_type,
+            id_for_vendor,
+            experiment_started_meta,
+            experiment_started_meta_by_type,
+            lt_defacto_id,
+            product_id,
+            original_purchase_date,
+            lt_subscription_id,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_users 
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = 'facetune2'
+        and lower(d.experiment) like lower('[FT2-1051] Monthly Only TC vs new baseline - new users')
+        and display_type in ('{{display_type}}')
+        and original_purchase_date >= '2023-03-01' 
+)
+select
+    timestamp_trunc(original_purchase_date, day) purchase_date,
+    product_id,
+    count(distinct lt_subscription_id) num_subscriptions
+from users u
+where variant = '{{variant}}'
+group by 1,2
+order by 1
+

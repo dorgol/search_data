@@ -1,0 +1,36 @@
+/*
+    Name: [FT-1096] Post Export Video “Ad” - Exports
+    Query ID: 41611
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-16T08:17:24.346Z
+    */
+    with users as (
+    select
+        segmentation,
+        variant,
+        id_for_vendor,
+        experiment_started_meta_by_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) as total_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = 'facetune2'
+    and display_type = '{{display}}'
+    and experiment = '[FT-1096] Post Export Video “Ad” 1.1'
+    and segmentation in ('02 New Users', '03 Existing Users')
+)
+
+select
+    segmentation || ' ' || variant as segment_variant,
+    asset_type,
+    count(distinct platform_device_id) as users,
+    count(distinct event_id) as times,
+    count(distinct event_id)/total_users as exports_per_device,
+from users u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` d
+    on u.id_for_vendor = d.platform_device_id
+    and app_name = 'facetune2'
+    and meta_received_at >= '2023-05-02'
+    and case when '{{is_sub}}' = 'All' then true
+    when '{{is_sub}}' = 'True' then d.is_subscriber
+    when '{{is_sub}}' = 'False' then not d.is_subscriber
+    end
+group by 1,2,total_users

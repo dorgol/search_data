@@ -1,0 +1,23 @@
+/*
+    Name: VL Product Data Glossary - Active Users Per Day
+    Query ID: 41084
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-03T10:19:58.596Z
+    */
+    -- Counts distinct users per day 
+
+declare start_date date default '2023-01-01';
+
+select 
+    -- first_active_dt,
+    date_trunc(dt, week) as dt,
+    count(distinct attribution_user_id) as count_daily_active_users
+from 
+    `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date`
+where  
+    app_name = 'videoleap' -- videoleap_android
+    and dt > start_date
+group by 1    
+order by 1 asc
+ 
+    

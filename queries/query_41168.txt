@@ -1,0 +1,169 @@
+/*
+    Name: VL iOS - User Types - Day0 Drop Off
+    Query ID: 41168
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-20T09:49:58.562Z
+    */
+    -- VL Feed Funnel
+
+
+with users_1 as (
+  select distinct
+    d.platform_device_id,
+    d.first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+    and lower(d.current_device_model) not like '%ipad%'
+    and current_store_country != 'CN'
+    -- exclude ipad and china -- and very short sessions
+)
+
+
+, users as (
+    select  
+         u.platform_device_id,
+         u.first_active_dt,
+         case when origin_page_response is null then 'No Answer' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as response,
+    from users_1 u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+    
+, projects as (
+    select distinct
+        p.id_for_vendor,
+        p.meta_received_at,
+        p.project_id as open_project_id,
+    from  `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_project_created` p
+    where (safe_cast(p.app_version as float64) < 2730 or safe_cast(p.app_version as float64) >2975)
+    
+    union all
+    
+    select distinct
+        p.id_for_vendor,
+        p.meta_received_at,
+        p.open_project_id
+    from  `ltx-dwh-playground.bi.ios_videoleap_project_created_backfill` p
+
+
+    )
+        
+, actions as (
+       
+         select
+            'App Launched' as action,
+            u.response,
+            count(distinct u.platform_device_id) as users
+        from users u 
+        inner join `ltx-dwh-prod-processed`.`agg`.`app_device_date` dd
+            on u.platform_device_id = dd.platform_device_id
+            and case when '{{day}}' = 'day0' then date(dd.dt) = date(u.first_active_dt)
+                 when '{{day}}' = 'non day0' then date(dd.dt) > date(u.first_active_dt)
+                 when '{{day}}' = 'all' then date(dd.dt) >= date(u.first_active_dt) end
+            and dd.app_name = 'videoleap'
+            and date_diff(date(current_date()), date(dd.dt), day) < {{last x days}}
+            and lower(dd.current_device_model) not like '%ipad%'
+            and current_store_country != 'CN'
+        group by 1,2
+        
+        union all
+       
+        select
+            'Feed Presented %' as action,
+            u.response,
+            count(distinct u.platform_device_id) as users
+        from users u 
+        inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented` as ui
+            on u.platform_device_id = ui.platform_device_id
+            and ui.meta_source = 'videoleap'
+            and case when '{{day}}' = 'day0' then date(ui.meta_received_at) = date(u.first_active_dt)
+                 when '{{day}}' = 'non day0' then date(ui.meta_received_at) > date(u.first_active_dt)
+                 when '{{day}}' = 'all' then date(ui.meta_received_at) >= date(u.first_active_dt) end
+            and date_diff(date(current_date()), date(ui.meta_received_at), day) < {{last x days}}
+        group by 1,2
+        
+        union all
+        
+        select
+            'Mini Editor Launched %' as action,
+            u.response,
+            count(distinct u.platform_device_id) as users
+        from users u
+        inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+            on u.platform_device_id = te.id_for_vendor
+            and case when '{{day}}' = 'day0' then date(te.meta_received_at) = date(u.first_active_dt)
+                 when '{{day}}' = 'non day0' then date(te.meta_received_at) > date(u.first_active_dt)
+                 when '{{day}}' = 'all' then date(te.meta_received_at) >= date(u.first_active_dt) end
+            and date_diff(date(current_date()), date(te.meta_received_at), day) < {{last x days}}
+        group by 1,2
+        
+        union all
+        
+        select
+            'Full Editor Launched %' as action,
+            u.response,
+            count(distinct u.platform_device_id) as users
+        from users u
+        inner join projects p
+            on u.platform_device_id = p.id_for_vendor
+            and case when '{{day}}' = 'day0' then date(p.meta_received_at) = date(u.first_active_dt)
+                 when '{{day}}' = 'non day0' then date(p.meta_received_at) > date(u.first_active_dt)
+                 when '{{day}}' = 'all' then date(p.meta_received_at) >= date(u.first_active_dt) end
+            and date_diff(date(current_date()), date(p.meta_received_at), day) < {{last x days}}
+        left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+            on te.open_project_id = p.open_project_id
+        where te.open_project_id is null
+        group by 1,2
+        
+        union all
+        
+        select
+            'Either Editor Launched %' as action,
+            u.response,
+            count(distinct u.platform_device_id) as users
+        from users u
+        inner join projects p
+            on u.platform_device_id = p.id_for_vendor
+            and case when '{{day}}' = 'day0' then date(p.meta_received_at) = date(u.first_active_dt)
+                 when '{{day}}' = 'non day0' then date(p.meta_received_at) > date(u.first_active_dt)
+                 when '{{day}}' = 'all' then date(p.meta_received_at) >= date(u.first_active_dt) end
+            and date_diff(date(current_date()), date(p.meta_received_at), day) < {{last x days}}
+        group by 1,2
+        
+        
+        
+        )
+    
+, total_users as (
+        select 
+        response,
+        max(users) as total_users
+        from actions a
+        where action = 'App Launched'
+        group by 1)
+    
+  --  select distinct action from actions
+        
+    select
+        *,
+        100*users/total_users as pct_of_users
+    from actions a
+    join total_users t
+        on t.response = a.response
+    where action != 'App Launched'
+
+    

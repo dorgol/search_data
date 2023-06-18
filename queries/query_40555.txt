@@ -1,0 +1,189 @@
+/*
+    Name: Beauty Feed Entry Point Matching
+    Query ID: 40555
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-24T01:34:42.183Z
+    */
+    with 
+users as
+(
+    select * from
+        (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = 'facetune2'
+        and lower(d.experiment) like lower('%[FT-1067] Beauty Feed%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and d.segmentation in ('01 All Users', '02 New Users', '03 Existing Users')
+        group by 1,2,3,4,5,6,7,8
+    )
+),
+
+entry_point as
+(    
+    select distinct
+        'BeautyPresets - Home Tab Nav' as feature_name,
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+        device_timestamp,
+        event_id as entry_id
+    from users u
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` n
+        on true
+        and n.app_name = 'facetune2'
+        and n.platform_device_id = u.id_for_vendor
+        and cast(n.app_version_code as int64) >= {{since_version}}
+        and date(n.meta_received_at) >= '2023-02-19'
+        and n.meta_received_at > u.experiment_started_meta
+        and n.screen_name = 'home_screen'
+        and n.button_identifier = 'beautyFeed'
+    
+    union all
+    
+    select distinct
+        'BeautyPresets - QS' as feature_name,
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+        device_timestamp,
+        event_id as entry_id
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_dismissed` q
+        on true
+        and q.app_name = 'facetune2'
+        and q.platform_device_id = u.id_for_vendor
+        and cast(q.app_version_code as int64) >= {{since_version}}
+        and date(q.meta_received_at) >= '2023-02-19'
+        and q.meta_received_at > u.experiment_started_meta
+        and q.screen_name = 'beauty_quickstart'
+        and q.destination = 'beauty_feed'
+
+    union all
+    
+    select distinct
+        'BeautyPresets - WN' as feature_name,
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+        d.device_timestamp,
+        d.event_id as entry_id
+    from users u
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented` m
+        on true
+        and m.app_name = 'facetune2'
+        and m.platform_device_id = u.id_for_vendor
+        and cast(m.app_version_code as int64) >= {{since_version}}
+        and date(m.meta_received_at) >= '2023-02-19'
+        and m.meta_received_at > u.experiment_started_meta
+        and m.message_name = 'beautyFeedWhatsNew'
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` d
+        on true
+        and d.app_name = 'facetune2'
+        and d.platform_device_id = m.platform_device_id
+        and cast(d.app_version_code as int64) >= {{since_version}}
+        and date(d.meta_received_at) >= '2023-02-19'
+        and d.meta_received_at > u.experiment_started_meta
+        and d.flow_id = m.flow_id
+        and d.reason = 'accepted'
+
+    union all
+    
+    select distinct
+        'BeautyPresets - Editor' as feature_name,
+        segmentation,
+        variant,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+        device_timestamp,
+        event_id as entry_id
+    from users u
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` w
+        on true
+        and w.app_name = 'facetune2'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > u.experiment_started_meta
+        and feature_name = 'BeautyPresets'
+        and source like '%main_toolbar%'
+),
+
+first_items_info_per_feed_id as (
+  select
+      platform_device_id,
+      flow_id,
+      device_timestamp,
+  from  `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented`
+  where true
+  and app_name = 'facetune2'
+  and meta_received_at >= '2023-02-19'
+  and cast(app_version_code as int64) >= {{since_version}}
+  qualify row_number() over (partition by flow_id order by device_timestamp asc) = 1
+),
+
+entry_points_ranked as (
+    select distinct
+        e.feature_name,
+        e.segmentation,
+        e.variant,
+        e.id_for_vendor,
+        e.experiment_started_meta,
+        e.device_timestamp as entry_device_ts,
+        next_event_ts,
+        entry_id,
+        feed.flow_id,
+    from (
+        select
+            e.feature_name,
+            e.segmentation,
+            e.variant,
+            e.id_for_vendor,
+            e.experiment_started_meta,
+            e.device_timestamp,
+            lead(device_timestamp) over (partition by id_for_vendor, segmentation, variant order by device_timestamp asc) next_event_ts,
+            entry_id
+        from entry_point e
+    ) e
+    left join first_items_info_per_feed_id feed
+        on feed.platform_device_id = e.id_for_vendor
+        and feed.device_timestamp >= e.device_timestamp
+        and case 
+            when next_event_ts is null then true
+            when next_event_ts is not null then feed.device_timestamp <= next_event_ts
+        end
+)
+
+select distinct
+    segmentation,
+    variant,
+    id_for_vendor,
+    feature_name as entry_point,
+    flow_id as feed_flow_id,
+    entry_device_ts
+from entry_points_ranked
+limit 1000

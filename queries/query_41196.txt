@@ -1,0 +1,84 @@
+/*
+    Name: Felix -  Months Until Subscription (Onboarding)
+    Query ID: 41196
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-25T09:12:20.047Z
+    */
+    -- Split by Original Purchase Month and first payment month, list all subscribers 
+-- Pull Original_purchase and count Distinct of subscribers to find cohort size
+-- Work out cohort original_purchase_date and first_payment_date (where revenue_so_far > 0), count distinct of subscribers
+-- Find % of conversion per month
+-- Cumulative view 
+
+with launches as (
+
+    select distinct
+        lt_defacto_id,
+        date_trunc(first_launch, month) as original_purchase_date,
+    from 
+       `ltx-dwh-prod-processed`.`agg`.`app_device`
+    where original_purchase_date >= '{{Start Date}}'
+        and app_name = 'videoleap'
+
+),
+
+subscriptions as (
+    select distinct
+        lt_subscription_id,
+        date(date_trunc(original_purchase_date, month)) as original_purchase_date,
+        date(date_trunc(payments.first_payment_date, month)) as first_payment_date
+    from 
+       `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` 
+    where original_purchase_date >= '{{Start Date}}'
+        and original_purchase_date <= '{{End Date}}'
+        and vertical = 'Videoleap'
+        and payments.revenue_so_far > 0
+),
+
+cohort_size as (
+
+    select 
+        original_purchase_date,
+        count(distinct lt_subscription_id) as monthly_subscriptions
+    from subscriptions
+    group by 1
+),
+
+cohort_split as (
+
+    select 
+        original_purchase_date,
+        date_diff(first_payment_date, original_purchase_date, month) as monthly_cohort,
+        count(distinct lt_subscription_id) as segmented_subscriptions
+    from subscriptions
+    group by 1,2
+),
+
+all_ as (
+
+    select 
+        cohort_split.original_purchase_date,
+        monthly_subscriptions,
+        monthly_cohort,
+        segmented_subscriptions,
+        (segmented_subscriptions/monthly_subscriptions)*100 as segmented_perc
+    from cohort_split
+    left join cohort_size 
+        on cohort_size.original_purchase_date = cohort_split.original_purchase_date
+    where monthly_cohort <= 4
+        
+)
+
+select 
+    all_.*,
+    sum(segmented_perc) over (
+    partition by original_purchase_date
+    order by monthly_cohort asc 
+    ) as cumulative_perc
+from all_
+order by 1 asc, 3 asc
+
+
+
+
+

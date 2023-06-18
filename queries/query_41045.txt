@@ -1,0 +1,327 @@
+/*
+    Name: [FT-1067] Beauty Feed - retention rate by general feed and editor usage on exp day0 - detailed
+    Query ID: 41045
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-04-18T07:45:48.503Z
+    */
+    with users as
+(
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.experiment_started_meta_by_type,
+        d.display_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where 
+    true
+    and d.application = '{{app_name}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+    and d.display_type = 'reached home screen'
+    and date(d.experiment_started_meta) >= '2023-02-19'
+    and case 
+        when '{{segments}}' = 'All Users' then d.segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then d.segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+        else true end
+),
+
+
+last_items_info_per_feed_id as (
+   select date(meta_received_at) as dt,
+          *
+   from (
+         select
+              *,
+              min(date(meta_received_at)) over (partition by platform_device_id) as first_feed_date,
+              row_number () over (partition by feed_id order by device_timestamp desc) as row
+          from  `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_usage_info`
+          where true
+          and items_info <> '[]'
+          and items_info is not null
+          and app_name = 'facetune2'
+          and date(meta_received_at) >= '2023-02-19'
+          and cast(app_version_code as int64) >= {{since_version}}
+          )
+where row = 1
+),
+
+
+usage as (    
+select distinct
+    f1.feed_type,
+    fe.entry_point,
+    f1.platform_device_id,
+    f1.post_id,
+    f1.dt,
+    f1.session_id,
+    f1.run_id,
+    f1.feed_id,
+    f2.actions,
+    f2.action_id
+from 
+    (
+    select
+        app_name,
+        platform,
+        dt,
+        platform_device_id,
+        feed_id,
+        meta_received_at, 
+        app_version_code,
+        `is_subscriber`,
+        event_id,
+        run_id,
+        session_id,
+        feed_description,
+        feed_type,
+        json_extract_scalar(items_info,"$.identifier.section.identifier") as post_id,
+        cast (json_extract_scalar(items_info,"$.sectionPositionInFeed") as int) as position,
+        cast (json_extract_scalar(items_info,"$.totalVisibleTime") as float64) totalVisibleTime,
+    from last_items_info_per_feed_id as fui,
+    unnest(json_extract_array(items_info)) as items_info
+    ) f1
+left join `ltx-dwh-playground.bi.20230410_facetune2_feed_entry_point_matching` fe
+    on f1.feed_id = fe.feed_screen_id
+    and f1.platform_device_id = fe.id_for_vendor
+left join 
+    (
+    select
+        platform_device_id,
+        feed_id,
+        meta_received_at,
+        json_extract_scalar(items_info,"$.identifier.section.identifier") as post_id,
+        json_extract_scalar(selections,"$.actionType") as actions,
+        json_extract_scalar(selections,"$.actionIdentifier") action_id,
+        cast(json_extract_scalar(selections,"$.actionTime") as float64) action_time,
+    from last_items_info_per_feed_id as fui,
+    unnest(json_extract_array(items_info)) as items_info,
+    unnest(json_extract_array(items_info, "$.actions")) as selections
+
+    ) f2
+    on f1.feed_id = f2.feed_id
+    and f1.platform_device_id = f2. platform_device_id
+    and f1.post_id = f2.post_id
+    and f1.dt = date(f2.meta_received_at)
+where true
+and feed_type like '%beauty%'
+),
+
+usage_with_exports as (   
+    select
+        u.feed_type,
+        u.entry_point,
+        u.platform_device_id,
+        u.post_id,
+        u.dt,
+        u.session_id,
+        u.run_id,
+        u.feed_id,
+        u.actions,
+        u.action_id,
+        count(distinct case when w.export_source like 'beauty%' then w.event_id end) as num_exports_from_feed,
+        count(distinct case when w.export_source like 'beauty_quickstart%' then w.event_id end) as num_exports_from_beauty_qs,
+        -- count(distinct case when w.export_source like 'beauty_quickstart%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.backdrop') = 'false' then w.event_id end) as num_exports_from_beauty_qs_backdropOFF,
+        -- count(distinct case when w.export_source like 'beauty_quickstart%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.filter') = 'false' then w.event_id end) as num_exports_from_beauty_qs_filterOFF,
+        -- count(distinct case when w.export_source like 'beauty_quickstart%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.makeup') = 'false' then w.event_id end) as num_exports_from_beauty_qs_makeupOFF,
+        -- count(distinct case when w.export_source like 'beauty_quickstart%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.overlay') = 'false' then w.event_id end) as num_exports_from_beauty_qs_overlayOFF,
+        count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab,
+        -- count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.backdrop') = 'false' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab_backdropOFF,
+        -- count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.filter') = 'false' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab_filterOFF,
+        -- count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.makeup') = 'false' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab_makeupOFF,
+        -- count(distinct case when w.export_source like 'beauty_feed_in_home_tab%' and json_extract_scalar(split(preset_name,'_')[safe_offset(1)],'$.overlay') = 'false' then w.event_id end) as num_exports_from_beauty_feed_in_home_tab_overlayOFF,
+        count(distinct case when f.reason = 'edit' then f.event_id end) as num_continue_to_edit,
+        -- count(distinct case when f.reason = 'edit' and contains_substr(sub_feature_state, '"backdrop":"false"') then f.event_id end) as num_continue_to_edit_backdropOFF,
+        -- count(distinct case when f.reason = 'edit' and contains_substr(sub_feature_state, '"filter":"false"') then f.event_id end) as num_continue_to_edit_filterOFF,
+        -- count(distinct case when f.reason = 'edit' and contains_substr(sub_feature_state, '"makeup":"false"') then f.event_id end) as num_continue_to_edit_makeupOFF,
+        -- count(distinct case when f.reason = 'edit' and contains_substr(sub_feature_state, '"overlay":"false"') then f.event_id end) as num_continue_to_edit_overlayOFF,
+        count(distinct case when f.reason = 'accepted' then f.event_id end) as num_accepted_in_editor,
+        -- count(distinct case when f.reason = 'accepted' and contains_substr(sub_feature_state, '"backdrop":"false"') then f.event_id end) as num_accepted_in_editor_backdropOFF,
+        -- count(distinct case when f.reason = 'accepted' and contains_substr(sub_feature_state, '"filter":"false"') then f.event_id end) as num_accepted_in_editor_filterOFF,
+        -- count(distinct case when f.reason = 'accepted' and contains_substr(sub_feature_state, '"makeup":"false"') then f.event_id end) as num_accepted_in_editor_makeupOFF,
+        -- count(distinct case when f.reason = 'accepted' and contains_substr(sub_feature_state, '"overlay":"false"') then f.event_id end) as num_accepted_in_editor_overlayOFF,
+    from usage u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` w
+        on w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.platform_device_id
+        and w.meta_received_at >= '2023-02-19'
+        and (w.export_source like 'beauty_feed_in_home_tab%' or w.export_source like 'beauty_quickstart%')
+        and ends_with(w.export_source, u.action_id)
+        and u.dt = date(w.meta_received_at)
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` f
+        on f.app_name = '{{app_name}}'
+        and f.platform_device_id = u.platform_device_id
+        and f.meta_received_at >= '2023-02-19'
+        and f.feature_name = 'BeautyPresets'
+        and f.reason in ('edit', 'accepted')
+        -- and case when f.reason = 'edit' then split(json_extract_scalar(f.sub_feature_state, '$.miscState'),'.')[safe_offset(1)] = u.action_id
+        --     when f.reason = 'accepted' then left(split(sub_feature_state, '"actionID":"')[safe_offset(1)],36) = u.action_id
+        --     end
+        and case when f.reason = 'edit' then ends_with(f.feature_usage_id, u.action_id)
+            when f.reason = 'accepted' then left(split(sub_feature_state, '"actionID":"')[safe_offset(1)],36) = u.action_id
+            end
+        and u.dt = date(f.meta_received_at)
+    group by 1,2,3,4,5,6,7,8,9,10
+),
+
+
+feed_usage_summary as (
+select 
+    experiment,
+    variant,
+    segments,
+    --entry_point,
+    id_for_vendor,
+    experiment_started_meta,
+    case when user_imps > 0 then true else false end as reached_feed,
+    case when user_imps = 2 then true else false end as is_bouncer,
+    case when user_imps > 2 then true else false end as is_scroller,
+    case when user_try_preset_clicks > 0 then true else false end tried_preset,
+    case when user_num_exports_from_feed > 0 then true else false end as exported_from_feed,
+    case when user_num_continue_to_edit > 0 then true else false end as continued_to_edit,
+    case when user_num_accepted_in_editor > 0 then true else false end as accepted_in_editor,
+from (
+    select distinct
+        experiment,
+        variant,
+        '{{segments}}' as segments,
+        entry_point,
+        id_for_vendor,
+        experiment_started_meta,
+        --case when title is not null then title else u.post_id end as title,
+        sum(num_exports_from_feed) over (partition by id_for_vendor, entry_point) as user_num_exports_from_feed,
+        sum(num_continue_to_edit) over (partition by id_for_vendor, entry_point) as user_num_continue_to_edit,
+        sum(num_accepted_in_editor) over (partition by id_for_vendor, entry_point) as user_num_accepted_in_editor,
+        count(distinct case when u.actions is null then concat(u.platform_device_id,'-',u.post_id,'-',u.session_id,'-',u.feed_id) end) over (partition by id_for_vendor, entry_point) as user_imps,
+        count(distinct case when u.actions = 'use_template' then u.action_id end) over (partition by id_for_vendor, entry_point) as user_try_preset_clicks,
+    from users us
+    left join usage_with_exports u
+        on u.platform_device_id = us.id_for_vendor
+        and date(u.dt) = date(us.experiment_started_meta)
+    )
+),
+
+editor_usage_summary as (
+select 
+    experiment,
+    variant,
+    segments,
+    id_for_vendor,
+    experiment_started_meta,
+    case when user_num_editor_entrances > 0 then true else false end as reached_editor,
+    case when user_num_editor_exports > 0 then true else false end as exported_from_editor,
+from (
+    select distinct
+        experiment,
+        variant,
+        '{{segments}}' as segments,
+        id_for_vendor,
+        experiment_started_meta,
+        count(distinct w.editing_session_id) over (partition by id_for_vendor) as user_num_editor_entrances,
+        count(distinct ex.process_id) over (partition by id_for_vendor) as user_num_editor_exports,
+    from users us
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` w --started any feature in the editor on 
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = us.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > us.experiment_started_meta
+        and source not like 'beauty%'
+        and date(w.meta_received_at) = date(us.experiment_started_meta)
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = us.id_for_vendor
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > us.experiment_started_meta
+        and ex.export_source not like 'beauty%'
+        and ex.export_source not like '%save_all%'
+        and date(ex.meta_received_at) = date(us.experiment_started_meta)
+    )
+),
+
+usage_summary as (
+select 
+    f.experiment,
+    f.variant,
+    f.segments,
+    f.id_for_vendor,
+    f.experiment_started_meta,
+    f.reached_feed,
+    f.is_bouncer,
+    f.is_scroller,
+    f.tried_preset,
+    f.exported_from_feed,
+    f.continued_to_edit,
+    f.accepted_in_editor,
+    e.reached_editor,
+    e.exported_from_editor
+from feed_usage_summary f
+join editor_usage_summary e
+    on f.experiment = e.experiment
+    and f.variant = e.variant
+    and f.segments = e.segments
+    and f.id_for_vendor = e.id_for_vendor
+),
+
+retention as (
+    select
+        u.experiment,
+        u.variant,
+        u.segments,
+        u.id_for_vendor,
+        case when (exported_from_feed or accepted_in_editor) and exported_from_editor then '9 feed and editor exporter'
+            when exported_from_editor and reached_feed then '8 exported from editor only and reached feed'
+            when exported_from_editor then '7 exported from editor only and did not reach feed'
+            when (exported_from_feed or accepted_in_editor) and reached_editor then '6 exported from feed only and reached editor'
+            when (exported_from_feed or accepted_in_editor) then '5 exported from feed only and did not reach editor'
+            when reached_editor and reached_feed then '4 did not export - reached both'
+            when reached_editor then '3 did not export - reached editor only'
+            when reached_feed then '2 did not export - reached feed only'
+            else '1 did not export - did not reach' end as exporter_type,
+        --u.title,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 7, false) as week_0_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 14, false) as week_1_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 21, false) as week_2_user,
+        coalesce(date_diff(current_date(), date(u.experiment_started_meta), day) > 28, false) as week_3_user,
+        max(date_diff(dt, date(experiment_started_meta), day) between 1 and 7) as retained_week_0,
+        max(date_diff(dt, date(experiment_started_meta), day) between 8 and 14) as retained_week_1,
+        max(date_diff(dt, date(experiment_started_meta), day) between 15 and 21) as retained_week_2,
+        max(date_diff(dt, date(experiment_started_meta), day) between 22 and 28) as retained_week_3,
+    from usage_summary u 
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device_date` d
+        on u.id_for_vendor = d.platform_device_id
+        and d.dt >= date(experiment_started_meta)
+        and d.dt >= '2023-02-19'
+        and d.app_name = 'facetune2'
+    where true
+    group by 1,2,3,4,5,6,7,8,9
+)
+
+select
+    experiment,
+    variant,
+    segments,
+    exporter_type,
+    count(distinct case when week_0_user then id_for_vendor end) as users_week_0,
+    count(distinct case when week_1_user then id_for_vendor end) as users_week_1,
+    count(distinct case when week_2_user then id_for_vendor end) as users_week_2,
+    count(distinct case when week_3_user then id_for_vendor end) as users_week_3,
+    count(distinct case when retained_week_0 and week_0_user then id_for_vendor end) as retained_week_0,
+    count(distinct case when retained_week_1 and week_1_user then id_for_vendor end) as retained_week_1,
+    count(distinct case when retained_week_2 and week_2_user then id_for_vendor end) as retained_week_2,
+    count(distinct case when retained_week_3 and week_3_user then id_for_vendor end) as retained_week_3,
+    100*count(distinct case when retained_week_0 and week_0_user then id_for_vendor end)/nullif(count(distinct case when week_0_user then id_for_vendor end),0) as pct_retained_week_0,
+    100*count(distinct case when retained_week_1 and week_1_user then id_for_vendor end)/nullif(count(distinct case when week_1_user then id_for_vendor end),0) as pct_retained_week_1,
+    100*count(distinct case when retained_week_2 and week_2_user then id_for_vendor end)/nullif(count(distinct case when week_2_user then id_for_vendor end),0) as pct_retained_week_2,
+    100*count(distinct case when retained_week_3 and week_3_user then id_for_vendor end)/nullif(count(distinct case when week_3_user then id_for_vendor end),0) as pct_retained_week_3,
+from retention
+where true
+group by 1,2,3,4
+having count(distinct case when week_0_user then id_for_vendor end) > 1000
+order by 1,2,3,4

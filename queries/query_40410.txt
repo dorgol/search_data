@@ -1,0 +1,41 @@
+/*
+    Name: VL iOS - Feature set experiment - exports by remake/originals
+    Query ID: 40410
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-23T07:09:55.690Z
+    */
+    with experiment_users as (
+    select distinct
+        case when variant like "%Baseline" then "Baseline" else "Variant1" end as variant,
+        id_for_vendor,
+        experiment_started_device       
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where application = "videoleap"
+        and experiment = "vl_feature_set_v3_01_2023"
+        and case when '{{segmentation}}' = 'New users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing users' then segmentation = "03 Existing Users"
+                 else segmentation = "01 All Users" end
+        and display_type like "activated_for_device"
+)
+
+
+select
+    variant,
+    count(distinct ex.id_for_vendor) as num_users,
+    count(distinct me.id_for_vendor) as num_exporters,
+    count(distinct case when ms.parent_template_id is not null then me.id_for_vendor end) as num_remake_exporters,
+    count(distinct me.id_for_vendor) / count(distinct ex.id_for_vendor) * 100 as pct_exporters,
+    count(distinct case when ms.parent_template_id is not null then me.id_for_vendor end) / count(distinct ex.id_for_vendor) * 100 as pct_remake_exporters,
+    count(distinct case when ms.parent_template_id is null then me.id_for_vendor end) / count(distinct ex.id_for_vendor) * 100 as pct_original_exporters,
+    count(distinct me.export_id) as num_exports,
+    count(distinct me.export_id) / count(distinct ex.id_for_vendor) as exports_per_device,
+    count(distinct case when ms.parent_template_id is null then me.export_id end) / count(distinct ex.id_for_vendor) as originals_per_device,
+    count(distinct case when ms.parent_template_id is not null then me.export_id end) / count(distinct ex.id_for_vendor) as remakes_per_device,
+from experiment_users as ex
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as me
+    on ex.id_for_vendor = me.id_for_vendor
+    and ex.experiment_started_device < me.device_timestamp
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ms
+    on me.export_id = ms.export_id
+group by 1
+order by 1

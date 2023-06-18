@@ -1,0 +1,55 @@
+/*
+    Name: VL iOS & Android - SMBs - Total Users (over time)
+    Query ID: 40541
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-28T13:33:45.388Z
+    */
+    with users as (
+  select
+    'vl ios' as app_name,
+    u.platform_device_id,
+    case when origin_page_response like '%business%' then true else false end as is_smb,
+    date(date_trunc(u.meta_received_at, {{Time granularity}} )) as dt
+    
+  from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and pq.app_name = 'videoleap'
+        and pq.origin_page_index = 0
+        and pq.origin_page_name = 'So, what brings you here?'
+    where true
+        and u.app_name = 'videoleap'
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+
+UNION ALL
+
+  select
+    'vl android' as app_name,
+    u.installation_id as platform_device_id,
+    case when origin_page_response like '%business%' then true else false end as is_smb,
+    date(date_trunc(u.meta_received_at, {{Time granularity}} )) as dt
+    
+  from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.installation_id = pq.installation_id
+        and pq.app_name = 'videoleap_android'
+        and pq.origin_page_index = 0
+        and pq.origin_page_name in ('So, what brings you here? v2', 'So, what brings you here?')
+    where true
+    and u.app_name = 'videoleap_android'
+    qualify row_number() over (partition by u.installation_id order by pq.meta_received_at desc) = 1
+
+)
+
+select 
+    app_name,
+    dt,
+    count(distinct platform_device_id) as all_users,
+    count(distinct case when is_smb is true then platform_device_id end) as smb_users,
+    safe_divide(count(distinct case when is_smb is true then platform_device_id end), count(distinct platform_device_id))*100 as smb_pct
+from users
+where dt >= '2023-01-01' and dt < date(date_trunc(current_date(), {{Time granularity}} ))
+group by 1,2
+order by 1,2

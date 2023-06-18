@@ -1,0 +1,83 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1076] Your photo showcase - Showcase Funnel - Simple
+    Query ID: 41289
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-24T02:49:57.695Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1076] Your photo showcase')
+    and display_type = '{{display_type}}'
+),
+
+q_responses as (
+    select distinct
+        pq.platform_device_id id_for_vendor,
+        pq.origin_page_response,
+        origin_page_index,
+        destination_page_index,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on true
+        and app_name = 'facetune2'
+        and u.id_for_vendor = pq.platform_device_id
+        and pq.meta_received_at >= u.experiment_started_meta
+    where true
+    and (destination_page_index is null or destination_page_index > origin_page_index)
+    and destination_page_index = 4
+    qualify row_number() over (partition by u.id_for_vendor, destination_page_index  order by pq.meta_received_at desc) = 1
+)
+
+select 
+    segmentation,
+    variant,
+    count(distinct u.id_for_vendor) num_users,
+    count(distinct q.id_for_vendor)/count(distinct u.id_for_vendor)*100 pct_reached_showcase_upload,
+    count(distinct sp.platform_device_id)/count(distinct u.id_for_vendor)*100 pct_saw_showcase,
+    count(distinct case when pq.origin_page_response is null then pq.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_skipped,
+    count(distinct case when se.id_for_vendor is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_saw_sol,
+
+    
+from users u
+left join q_responses q
+    on u.id_for_vendor = q.id_for_vendor 
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` sp
+    on true
+    and sp.app_name = 'facetune2'
+    and u.id_for_vendor = sp.platform_device_id
+    and sp.meta_received_at >= u.experiment_started_meta
+    and screen_name = 'photoShowcase_screen'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+    on true
+    and pq.app_name = 'facetune2'
+    and u.id_for_vendor = pq.platform_device_id
+    and pq.meta_received_at >= u.experiment_started_meta
+    and pq.origin_page_index = 4
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_store_entered` se
+    on se.id_for_vendor = u.id_for_vendor
+    and se.meta_received_at >= '2023-03-15'
+    and se.meta_received_at >= experiment_started_meta
+    and se.source in ('firstTimeIninitialFlow')
+where variant <> 'Baseline'
+group by 1,2
+order by 1,2

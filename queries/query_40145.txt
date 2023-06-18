@@ -1,0 +1,115 @@
+/*
+    Name: VL iOS - Feed - Post Performance - Exports (over time)
+    Query ID: 40145
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-09T09:44:49.712Z
+    */
+    with impressions as (
+    select distinct
+        ii.post_id,
+        ii.platform_device_id,
+        ii.action_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        date_trunc(date(ii.meta_received_at), {{time granularity}}) as dt
+    from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` ii
+     inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and actions = 'become_ready' -- impressions
+        and ii.application = 'videoleap'
+)
+
+, clicks as (
+    select distinct
+        ii.post_id,
+        ii.platform_device_id,
+        ii.action_id,
+        case when parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        date_trunc(date(ii.meta_received_at), {{time granularity}}) as dt
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ii
+        inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on ii.post_id = pc.post_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    where date(ii.meta_received_at) >= '{{from_date}}'
+        and action = 'use_template' -- clicks
+        and ii.meta_source = 'videoleap'
+        and ii.meta_platform = 'ios'
+)
+
+, exports as (
+    select distinct
+        pc.post_id,
+        ex.id_for_vendor,
+        ex.export_id,
+        case when pc.parent_template_id is null then 'Original' else 'Remake' end as post_type,
+        date_trunc(date(ex.meta_received_at), {{time granularity}}) as dt
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` ex
+        inner join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on lower(ex.parent_template_id) = pc.template_id
+            and array_to_string(pc.requirements, ",") not like "%feed_internal_testing%"
+            and pc.account_id is not null
+    where date(ex.meta_received_at) >= '{{from_date}}'
+)
+
+, agg_impressions as (
+    select
+        dt,
+        case when '{{post type}}' = 'Combined' then 'Combined' else post_type end as post_type,
+        count(distinct action_id) as impressions,
+        count(distinct platform_device_id) as impression_users
+    from impressions
+    where case when '{{post type}}' = 'Original' then post_type = 'Original'
+                when '{{post type}}' = 'Remake' then post_type = 'Remake'
+                else true end
+    group by 1,2 )
+    
+, agg_clicks as (
+    select
+        dt,
+        case when '{{post type}}' = 'Combined' then 'Combined' else post_type end as post_type,
+        count(distinct action_id) as clicks,
+        count(distinct platform_device_id) as click_users
+    from clicks
+    where case when '{{post type}}' = 'Original' then post_type = 'Original'
+                when '{{post type}}' = 'Remake' then post_type = 'Remake'
+                else true end
+    group by 1,2 )
+    
+, agg_exports as (
+    select
+        dt,
+        case when '{{post type}}' = 'Combined' then 'Combined' else post_type end as post_type,
+        count(distinct export_id) as exports,
+        count(distinct id_for_vendor) as export_users,
+        count(distinct post_id) as export_posts
+    from exports
+    where case when '{{post type}}' = 'Original' then post_type = 'Original'
+                when '{{post type}}' = 'Remake' then post_type = 'Remake'
+                else true end
+    group by 1,2 )
+    
+select
+    i.dt,
+    i.post_type,
+    i.impressions,
+    i.impression_users,
+    c.clicks,
+    c.click_users,
+    e.exports,
+    e.export_users,
+    safe_divide(exports, impressions)*100 as export_rate,
+    safe_divide(export_users, impression_users)*100 as user_export_rate,
+    safe_divide(exports, clicks)*100 as click_to_export_rate,
+    safe_divide(export_users, click_users)*100 as user_click_to_export_rate,
+    safe_divide(exports, export_posts) as exports_per_post,
+    safe_divide(exports, export_users) as exports_per_user
+from agg_impressions i
+    left join agg_clicks c
+        on i.dt = c.dt
+        and i.post_type = c.post_type
+    left join agg_exports e
+        on i.dt = e.dt
+        and i.post_type = e.post_type

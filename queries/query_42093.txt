@@ -1,0 +1,14 @@
+/*
+    Name: VL All - M0 Rev Split
+    Query ID: 42093
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-25T16:14:50.882Z
+    */
+    select distinct
+        date_trunc(date(t.purchase_date),{{period}}) as period,
+        payments.purchase_platform,
+        sum(case when payments.month0_late_or_renewal = 'month0' then projected.adjusted_actual_proceeds_alloc_cs end) as m0_rev
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions_revenue_allocation_cross_sell` t
+    where date_trunc(date(t.purchase_date), {{period}}) >= '2023-01-01' and date_trunc(date(t.purchase_date), {{period}}) < date_trunc(date(current_date()), {{period}})
+    and t.vertical in ('Videoleap')
+    group by 1,2

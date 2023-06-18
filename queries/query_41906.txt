@@ -1,0 +1,103 @@
+/*
+    Name: old - do not use
+    Query ID: 41906
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-15T15:23:34.261Z
+    */
+    with data as (
+        select distinct
+        case when lower(fp.screen_name) like '%category.recommended%' or fp.screen_name like '%for_you%' then 'Main Feed'
+                 when fp.screen_name like "%assets_first%" then "Assets First"
+                 when lower(fp.screen_name) like '%discover.recommended%' then 'Discover Main Feed'
+                 when lower(fp.screen_name) like '%discover.%' then 'Discover Categories'
+                 when fp.screen_name like '%category.%' then 'Main Categories'
+                 when fp.screen_name in ('templates', 'liked','purchased', 'my_profile', 'profile') then 'Profile'
+                 when fp.screen_name = 'post_details' or fp.screen_name = 'remakes' then 'Remake Screen'
+                 when fp.screen_name is null then "unknown"
+                 else fp.screen_name end as screen_name,
+        "opened_screen" as action,
+        fp.platform_device_id,
+        event_id as action_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented` as fp
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.platform_device_id = fp.platform_device_id
+        and d.app_name = "videoleap"
+    where fp.meta_source = "videoleap" and fp.platform = "ios"
+        and case when '{{Day}}' = "day0" then (d.first_active_dt is null or date(fp.meta_received_at) = date(d.first_active_dt))
+                 when '{{Day}}' = "non day0" then date(fp.meta_received_at) > date(d.first_active_dt)
+                 else true end
+        and date(fp.meta_received_at) >= date_sub(current_date(), interval {{last x days}} day)
+    
+    union all 
+    
+    select distinct
+        case when lower(ac.screen_name) like '%category.recommended%' or ac.screen_name like '%for_you%' then 'Main Feed'
+                 when ac.screen_name like "%assets_first%" then "Assets First"
+                 when lower(ac.screen_name) like '%discover.recommended%' then 'Discover Main Feed'
+                 when lower(ac.screen_name) like '%discover.%' then 'Discover Categories'
+                 when ac.screen_name like '%category.%' then 'Main Categories'
+                 when ac.screen_name in ('templates', 'liked','purchased', 'my_profile', 'profile') then 'Profile'
+                 when ac.screen_name = 'post_details' or ac.screen_name = 'remakes' then 'Remake Screen'
+                 when ac.screen_name is null then "unknown"
+                 else ac.screen_name end as screen_name,
+        "use_template" as action,
+        ac.platform_device_id,
+        action_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.platform_device_id = ac.platform_device_id
+        and d.app_name = "videoleap"
+    where ac.action = "use_template"
+        and ac.meta_source = "videoleap" 
+        and ac.platform = "ios"
+        and case when '{{Day}}' = "day0" then (d.first_active_dt is null or date(ac.meta_received_at) = date(d.first_active_dt))
+                 when '{{Day}}' = "non day0" then date(ac.meta_received_at) > date(d.first_active_dt)
+                 else true end
+        and date(ac.meta_received_at) >= date_sub(current_date(), interval {{last x days}} day)
+    
+    union all 
+    
+    select distinct
+        case when lower(ac.screen_name) like '%category.recommended%' or ac.screen_name like '%for_you%' then 'Main Feed'
+                 when ac.screen_name like "%assets_first%" then "Assets First"
+                 when lower(ac.screen_name) like '%discover.recommended%' then 'Discover Main Feed'
+                 when lower(ac.screen_name) like '%discover.%' then 'Discover Categories'
+                 when ac.screen_name like '%category.%' then 'Main Categories'
+                 when ac.screen_name in ('templates', 'liked','purchased', 'my_profile', 'profile') then 'Profile'
+                 when ac.screen_name = 'post_details' or ac.screen_name = 'remakes' then 'Remake Screen'
+                 when ac.screen_name is null then "unknown"
+                 else ac.screen_name end as screen_name,
+        "export" as action,
+        ex.id_for_vendor as platform_device_id,
+        ex.export_id as action_id,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as te
+        on te.open_project_id = ex.open_project_id
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac
+        on te.action_identifier = ac.action_id
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.platform_device_id = ex.id_for_vendor
+        and d.app_name = "videoleap"
+    where date(ex.meta_received_at) >= "2022-08-28"
+        and case when '{{Day}}' = "day0" then (d.first_active_dt is null or date(ex.meta_received_at) = date(d.first_active_dt))
+                 when '{{Day}}' = "non day0" then date(ex.meta_received_at) > date(d.first_active_dt)
+                 else true end
+        and date(ex.meta_received_at) >= date_sub(current_date(), interval {{last x days}} day)
+)
+
+select 
+    *,
+    safe_divide(num_users_clicked_use_template , num_users_opened) * 100 as pct_users_clicked_use_template,
+    safe_divide(num_users_exported_remake , num_users_opened) * 100 as pct_users_exported_remake
+from (
+    select
+        screen_name,
+        count(distinct case when action = "opened_screen" then platform_device_id end) as num_users_opened,
+        count(distinct case when action = "use_template" then platform_device_id end) as num_users_clicked_use_template,
+        count(distinct case when action = "export" then platform_device_id end) as num_users_exported_remake,
+        count(distinct case when action = "opened_screen" then action_id end) as num_opens,
+        count(distinct case when action = "use_template" then action_id end) as num_use_template_clicks,
+        count(distinct case when action = "export" then action_id end) as num_exports_from_remakes,
+    from data
+    group by 1
+    )

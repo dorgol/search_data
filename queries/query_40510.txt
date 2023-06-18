@@ -1,0 +1,199 @@
+/*
+    Name: PL Combinations- Distribution of features used by users in week0
+    Query ID: 40510
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-23T13:04:06.475Z
+    */
+    
+with base as
+(select distinct dt,
+platform_device_id,
+first_active_dt
+from
+`ltx-dwh-prod-processed`.`agg`.`app_device_date`
+where
+first_active_dt >= date_trunc("2022-01-01",week)
+    and dt < date_trunc(current_date, {{Time granularity}})
+    and app_name = "editor"
+    and platform = "ios"
+    --and d.current_store_country <> "China"
+    and date_diff(dt, first_active_dt, day) <= 7
+    order by 2,1
+       -- limit 100
+)
+
+,
+
+bp as
+(
+(select 
+'main editor' as usage,
+bp.id_for_vendor as user,
+min(bp.meta_received_at) as first_use,
+base.first_active_dt
+from
+base
+inner join
+`ltx-dwh-prod-raw`.`analytics`.`ios_editor_editor_flow_started` as bp
+on bp.id_for_vendor=base.platform_device_id
+and date(bp.meta_received_at)=base.dt
+and date(bp.meta_received_at) >= base.first_active_dt
+ group by 2,4
+ order by 2,3
+-- limit 100
+)
+
+union all
+
+(select 
+'motion' as usage,
+bp.platform_device_id as user,
+min(bp.meta_received_at) as first_use,
+base.first_active_dt
+from
+base
+inner join
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as bp
+on bp.platform_device_id=base.platform_device_id
+and date(bp.meta_received_at)=base.dt
+and date(bp.meta_received_at) >= base.first_active_dt
+and bp.app_name='editor'
+and bp.platform='ios'
+and bp.feature_name='motion'
+ group by 2,4
+ order by 2,3
+-- limit 100
+)
+
+union all
+
+(select 
+'instant edit' as usage,
+bp.id_for_vendor as user,
+min(bp.meta_received_at) as first_use,
+base.first_active_dt
+from
+base
+inner join
+`ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_flow_started` as bp
+on bp.id_for_vendor=base.platform_device_id
+and date(bp.meta_received_at)=base.dt
+and date(bp.meta_received_at) >= base.first_active_dt
+and bp.instant_edit_name!= 'AIEnhance'
+ group by 2,4
+ order by 2,3
+-- limit 100
+)
+
+union all
+
+(select 
+'AI' as usage,
+bp.platform_device_id as user,
+min(bp.meta_received_at) as first_use,
+base.first_active_dt
+from
+base
+inner join
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as bp
+on bp.platform_device_id=base.platform_device_id
+and date(bp.meta_received_at)=base.dt
+and date(bp.meta_received_at) >= base.first_active_dt
+and bp.app_name='editor'
+and bp.platform='ios'
+and bp.feature_name in ('text to image', 'sketch to image')
+ group by 2,4
+ order by 2,3
+-- limit 100
+)
+
+union all
+
+
+select 'AI IE' as usage,
+user,
+min(first_use) as first_use,
+first_active_dt
+from
+(
+(select 
+'AI' as usage,
+bp.platform_device_id as user,
+min(bp.meta_received_at) as first_use,
+base.first_active_dt
+from
+base
+inner join
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` as bp
+on bp.platform_device_id=base.platform_device_id
+and date(bp.meta_received_at)=base.dt
+and date(bp.meta_received_at) >= base.first_active_dt
+and bp.app_name='editor'
+and bp.platform='ios'
+and bp.feature_name in ('ai_cars','ai_scenes','ai_transform')
+ group by 2,4
+ order by 2,3
+-- limit 100
+)
+union all
+
+(select 
+'AI' as usage,
+bp.id_for_vendor as user,
+min(bp.meta_received_at) as first_use,
+base.first_active_dt
+from
+base
+inner join
+`ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_flow_started` as bp
+on bp.id_for_vendor=base.platform_device_id
+and date(bp.meta_received_at)=base.dt
+and date(bp.meta_received_at) >= base.first_active_dt
+and bp.instant_edit_name= 'AIEnhance'
+ group by 2,4
+ order by 2,3
+-- limit 100
+
+)
+)
+group by 2,4
+
+
+union all
+
+(select 
+'AI Avatars' as usage,
+bp.platform_device_id as user,
+min(bp.meta_received_at) as first_use,
+base.first_active_dt
+from
+base
+inner join
+`ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` as bp
+on bp.platform_device_id=base.platform_device_id
+and date(bp.meta_received_at)=base.dt
+and date(bp.meta_received_at) >= base.first_active_dt
+and bp.app_name='editor'
+and bp.platform='ios'
+and bp.screen_name in ('ai_avatar_photo_selection_start','couples_ai_avatar_photo_summary_1','pets_ai_avatar_photo_selection_start','ai_avatar_welcome','dnd_ai_avatar_photo_selection_start')
+ group by 2,4
+ order by 2,3
+-- limit 100
+))
+
+
+select
+week,
+features,
+count(distinct user) as users
+from
+(
+select
+date_trunc(first_active_dt ,week) as week,
+user,
+count(distinct usage) as features
+
+from bp
+group by 1,2
+)
+group by 1,2

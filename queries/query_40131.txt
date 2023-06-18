@@ -1,0 +1,70 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Patch Feature Accepts - Sub State - Over Time
+    Query ID: 40131
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-07T14:02:28.324Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1072]Lama Inpainting')
+    and display_type = '{{display_type}}'
+)
+
+select
+    segmentation,
+    variant,
+    feature_name,
+    day,
+    min(toolbar_item_index) toolbar_item_index,
+    count(distinct id_for_vendor) num_users_used,
+    count(distinct case when reason = 'accepted' then event_id end) num_accepts,
+    count(distinct case when reason = 'accepted' then event_id end)/ count(distinct event_id)*100 as accept_rate_events,
+    count(distinct case when reason = 'accepted' then id_for_vendor end)/ count(distinct id_for_vendor)*100 as accept_rate_users,
+from (
+    select distinct
+        segmentation,
+        variant,
+        fs.feature_name,
+        toolbar_item_index,
+        u.id_for_vendor,
+        fs.event_id,
+        reason,
+        timestamp_trunc(fs.device_timestamp, day) day,
+        coalesce(fe.is_subscriber, fs.is_subscriber) as is_subscriber,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2023-01-01'
+        -- and fs.meta_received_at >= experiment_started_meta
+        and fs.platform_device_id = u.id_for_vendor
+        and fs.feature_name = 'Patch'
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.meta_received_at >= '2023-01-01'
+        and fs.feature_usage_id = fe.feature_usage_id
+)
+where case 
+    when '{{user_type}}' = 'subscriber' then is_subscriber = true 
+    when '{{user_type}}' = 'free user' then (is_subscriber = false or is_subscriber is null)
+end
+and day >= '2023-01-01'
+group by 1,2,3,4
+-- having num_users_used >= 100
+order by 1,2,5

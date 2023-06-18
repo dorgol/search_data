@@ -1,0 +1,24 @@
+/*
+    Name: unnested duplicates issue for FT
+    Query ID: 42138
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-23T07:46:19.014Z
+    */
+    --in some cases, a whole feed_id either has or does not have a session_id and a run_id. In other cases, for the same feed_id and post_id there is one row with and one row without.
+select distinct
+    feed_type,
+    platform_device_id,
+    post_id,
+    session_id,
+    run_id,
+    feed_id,
+    position,
+    actions,
+    action_id
+from `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` as f
+where true
+and application = 'facetune2'
+and date(meta_received_at) >= date_sub(current_date(), interval 1 month)
+and feed_type like '%beauty%'
+order by platform_device_id, feed_id, post_id
+limit 1000

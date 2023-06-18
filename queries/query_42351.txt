@@ -1,0 +1,93 @@
+/*
+    Name: 20230528 - FT2 iOS - [FT-1101] AI Selfies - Loading Time Distribution inc. Left Early - Has Faces - By Country
+    Query ID: 42351
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-30T13:32:57.882Z
+    */
+    with 
+
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1101]AI Selfies Exp')
+    and display_type = 'entered_photo_editor'
+    and variant != 'Baseline'
+),
+
+selfies_processing as (
+    select
+        segmentation,
+        variant,
+        country,
+        safe_cast(round(safe_cast(json_extract_scalar(process_details, '$.duration') as float64),0) as int64) processing_duration,
+        ps.event_id as started_event_id,
+        pe.event_id as ended_event_id,
+        case when pe.event_id is null then fe.feature_usage_id else pe.event_id end as ended_defacto_id,
+        count(distinct case when pe.event_id is null then fe.feature_usage_id else pe.event_id end) over (partition by segmentation, variant, country) total_processing_events,
+        sfs.feature_usage_id sf_feature_usage_id,
+        json_extract_scalar(sub_feature_state, '$.miscState.numberOfFaces') num_faces,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.app_name = 'facetune2'
+        and fe.meta_received_at >= '2023-05-20'
+        and fe.meta_received_at >= experiment_started_meta
+        and fe.platform_device_id = u.id_for_vendor
+        and feature_name = 'aiSelfies' 
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_started` sfs
+        on sfs.app_name = 'facetune2'
+        and sfs.meta_received_at >= '2023-05-20'
+        and sfs.meta_received_at >= experiment_started_meta
+        and sfs.feature_usage_id = fe.feature_usage_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_started` ps
+        on ps.app_name = 'facetune2'
+        and ps.meta_received_at >= '2023-05-20'
+        and ps.meta_received_at >= experiment_started_meta
+        and ps.platform_device_id = u.id_for_vendor
+        and ps.source_flow_id = fe.feature_usage_id
+        and ps.process_name = 'ai_selfies_cloud_processing'
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_process_ended` pe
+        on pe.app_name = 'facetune2'
+        and pe.meta_received_at >= '2023-05-20'
+        and pe.meta_received_at >= experiment_started_meta
+        and pe.process_id = ps.process_id
+)
+
+select
+    segmentation,
+    country,
+    case 
+        when processing_duration is not null then cast(processing_duration as string)
+        when started_event_id is null and sf_feature_usage_id is not null then 'left_before_process_start' 
+        when started_event_id is null and sf_feature_usage_id is null then 'did_not_choose_preset' 
+        when started_event_id is not null and ended_event_id is null then 'did_not_complete_processing' 
+    end as processing_duration,
+    case 
+        when processing_duration is not null then format("%03d",processing_duration)
+        when started_event_id is null and sf_feature_usage_id is not null then 'left_before_process_start' 
+        when started_event_id is null and sf_feature_usage_id is null then 'did_not_choose_preset' 
+        when started_event_id is not null and ended_event_id is null then 'did_not_complete_processing' 
+    end as processing_duration_order,
+    count(distinct ended_defacto_id) times_ended,
+    max(total_processing_events) total_processing_events,
+    count(distinct ended_defacto_id)/max(total_processing_events)*100 pct_of_total_events
+from selfies_processing
+where num_faces != '0'
+group by 1,2,3,4
+having total_processing_events >= 500
+order by 1,2,processing_duration_order

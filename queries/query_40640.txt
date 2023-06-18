@@ -1,0 +1,21 @@
+/*
+    Name: VL iOS: New Subscription Lengths
+    Query ID: 40640
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-27T13:29:04.778Z
+    */
+    with revs as (
+    select
+        date_trunc(date(original_purchase_date), {{time granularity}}) as purchase_dt,
+        subscription_duration,
+        lt_subscription_id
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_state`
+    where application = 'videoleap'
+    and date(original_purchase_date) >= '2022-01-01')
+
+select
+    purchase_dt,
+    subscription_duration,
+    count(distinct lt_subscription_id) as subs
+from revs
+group by 1,2

@@ -1,0 +1,19 @@
+/*
+    Name: PL Android Ai Scenes Accepts
+    Query ID: 41779
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-11T10:58:56.199Z
+    */
+    
+select 
+date(meta_received_at) as dt,
+sub_feature_state,
+count(distinct feature_usage_id) as accepts,
+count(distinct installation_id) as users
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_ended`
+where app_name='editor_android'
+and meta_received_at>'2023-05-01'
+and feature_name='ai_scenes'
+and reason='success'
+and cast(app_version_code as int64)>=115000121
+group by 1,2

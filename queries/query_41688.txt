@@ -1,0 +1,14 @@
+/*
+    Name: VL iOS - Storyblocks imports
+    Query ID: 41688
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-09T07:27:05.914Z
+    */
+        select distinct
+        imported_item_type,
+        -- count(distinct source_original_url) as num_track_ids,
+        count(distinct source_localized_title) as num_distinct_titles,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_audio_added` as au
+    where date(meta_received_at) >= date_sub(current_date(), interval 6 month)
+        and provider = "storyblocks"
+    group by 1

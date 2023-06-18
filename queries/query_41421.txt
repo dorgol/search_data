@@ -1,0 +1,75 @@
+/*
+    Name: Felix -  Months Until Subscription (Onboarding - Correction 3)
+    Query ID: 41421
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-28T08:07:37.911Z
+    */
+    -- Not looking at Non subscribers
+
+declare start_date timestamp default '2022-06-01';
+declare month_limit default 5;
+
+with launches as (
+
+    select distinct
+        ad.lt_defacto_id,
+        date(date_trunc(first_launch, day)) as first_launch_date,
+        date(date_trunc(first_launch, month)) as first_launch_month,
+        lt_subscription_id,
+        date(date_trunc(original_purchase_date, day)) as original_purchase_date,
+        date(date_trunc(original_purchase_date, month)) as original_purchase_month
+    from 
+       `ltx-dwh-prod-processed`.`agg`.`app_device` ad
+    left join  `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` 
+        on ad.lt_defacto_id = device.lt_defacto_id
+    where first_launch >= '2022-01-01'--start_date
+        and app_name = 'videoleap'
+        and original_purchase_date is null    
+    
+    
+),
+
+month_cohorts as(
+
+    select distinct
+        first_launch_month,
+        date_diff(original_purchase_date, first_launch_date, month) as month_diff
+    from launches
+    order by 1,2
+
+),
+
+cumulative_cohorts as (
+
+    select 
+        first_launch_month,
+        month_diff,
+        count(distinct case when date_diff(original_purchase_date, first_launch_date, month) >= month_diff then lt_defacto_id end) as cumulative_cohort
+    from month_cohorts
+    inner join launches 
+        using (first_launch_month)
+    group by 1,2    
+),
+
+user_conversions as (
+    select 
+        first_launch_month,
+        date_diff(original_purchase_date, first_launch_date, month) as month_diff,
+        count(distinct lt_defacto_id) as count_subscriptions
+    from launches
+    group by 1,2
+)
+
+
+
+select 
+    cumulative_cohorts.*,
+    count_subscriptions
+
+from cumulative_cohorts
+left join user_conversions
+    using(month_diff, first_launch_month)
+where month_diff >= 0
+order by 1,2,3
+
+

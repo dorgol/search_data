@@ -1,0 +1,49 @@
+/*
+    Name: VL iOS feed - Recents creators for user research
+    Query ID: 40066
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-06T10:17:59.922Z
+    */
+    with published_users as (
+    select
+        p.lt_id,
+        min(date(p.meta_received_at)) as first_publish_dt,
+        max(date(p.meta_received_at)) as last_publish_dt,
+        count(distinct p.open_project_id) as num_published_projects,
+        count(distinct p.post_id) as num_published_posts,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` as p
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_post_deleted` as d
+        on p.post_id = d.post_id
+        and p.lt_id = d.lt_id
+        and date(d.meta_received_at) >= date_sub(current_date(), interval 2 month)
+    where p.meta_source = "videoleap"
+        and p.platform = "ios"
+        and p.parent_template_id is null
+        and p.export_error is null
+        and d.post_id is null   -- user didn't delete the post
+        and date(p.meta_received_at) >= date_sub(current_date(), interval 2 month)
+    group by 1
+),
+ 
+users as (
+    select distinct
+        lt_id,
+        account_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_registered` as r
+    where date(r.meta_received_at) >= date_sub(current_date(), interval 2 month)
+)
+
+select
+    p.lt_id,
+    "videoleap://feed?profile_id=" || r.account_id as link_to_profile,
+    case when num_published_posts = 1 then "Churned Template creators"
+         else "Active Template creators" end as creators_type,
+    p.num_published_posts,
+    p.first_publish_dt,
+    p.last_publish_dt,
+    p.num_published_projects
+from published_users as p
+left join users as r
+    on r.lt_id = p.lt_id
+where num_published_posts < 10
+order by num_published_posts desc

@@ -1,0 +1,55 @@
+/*
+    Name: Feed posts ratio daily - monitoring for alerts
+    Query ID: 42366
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-30T21:24:31.320Z
+    */
+    -- This query checks the trend from yesterday in some of the main feed metrics and reports in test_pass column if the change is bigger than a certain threshold.
+-- Runs every day and triggers an alert if there's a change.
+with agg as (
+    select
+        application,
+        dt,
+        count(1) as num_rows,
+        count(distinct post_id) as num_posts,
+        sum(distinct_total_impressions) as impressions,
+        sum(total_clicks) as total_clicks,
+        sum(distinct_export_pressed) as distinct_export_pressed,
+    from `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily`
+    where true
+        and application = "videoleap"       -- TODO: Add facetune when relevant
+        and dt >= date_sub(current_date(), interval 3 day)
+        and dt <> current_date()
+    group by 1,2
+)
+
+, measure_change as (
+    select distinct
+        dt,
+        application,
+        num_rows,
+        num_posts,
+        impressions,
+        -- Measure difference from yesterday
+        (num_posts / lag(num_posts) over (partition by application order by dt) - 1) * 100 as pct_change_num_posts,
+        (impressions / lag(impressions) over (partition by application order by dt) - 1) * 100 as pct_change_impressions,
+        (total_clicks / lag(total_clicks) over (partition by application order by dt) - 1) * 100 as pct_change_clicks,
+        (distinct_export_pressed / lag(distinct_export_pressed) over (partition by application order by dt) - 1) * 100 as pct_change_exports,
+    from agg
+    order by dt desc
+)
+
+select
+    *, 
+    -- If one of the columns has a pct chnage of ±10% in one of the apps, then tests_pass will be equal to 0
+    cast(
+           max(abs(pct_change_num_posts)) over(partition by dt) < 10 
+        and max(abs(pct_change_impressions)) over(partition by dt) < 10 
+        and max(abs(pct_change_clicks)) over(partition by dt) < 10 
+        and max(abs(pct_change_exports)) over(partition by dt) < 10 
+    as int64) as tests_pass
+from measure_change
+where dt = date_sub(current_date(), interval 1 day)
+
+-- To see full monitoring data go to: 
+-- https://redash.lightricks.com/dashboard/feed-queries-monitoring?p_period=day&p_application=%5B%22facetune%22,%22editor%22,%22videoleap%22%5D&p_start%20time=2023-01-01

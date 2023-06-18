@@ -1,0 +1,121 @@
+/*
+    Name: 20230315 - FT2 iOS - [FT-1076] Your photo showcase - Showcase Funnel Detailed
+    Query ID: 41288
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-24T07:00:25.161Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1076] Your photo showcase')
+    and display_type = '{{display_type}}'
+),
+
+q_responses as (
+    select distinct
+        pq.platform_device_id id_for_vendor,
+        pq.origin_page_response,
+        origin_page_index,
+        destination_page_index,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on true
+        and app_name = 'facetune2'
+        and u.id_for_vendor = pq.platform_device_id
+        and pq.meta_received_at >= u.experiment_started_meta
+    where true
+    and (destination_page_index is null or destination_page_index > origin_page_index)
+    and destination_page_index = 4
+    qualify row_number() over (partition by u.id_for_vendor, destination_page_index  order by pq.meta_received_at desc) = 1
+),
+imports as (
+    select
+        platform_device_id,
+        count(distinct process_id) as num_showcase_uploads
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_started` iss
+        on true
+        and iss.app_name = 'facetune2'
+        and u.id_for_vendor = iss.platform_device_id
+        and iss.meta_received_at >= u.experiment_started_meta
+        and iss.source = 'PhotoShowcase'
+    group by 1
+)
+
+select 
+    segmentation,
+    variant,
+    count(distinct u.id_for_vendor) num_users,
+    count(distinct q.id_for_vendor)/count(distinct u.id_for_vendor)*100 pct_reached_showcase_upload,
+    -- funnel level 1
+    count(distinct case when bp.platform_device_id is null and pq.platform_device_id is not null and pq.origin_page_response is null then pq.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_skipped_not_attempeted_upload,
+    count(distinct bp.platform_device_id)/count(distinct u.id_for_vendor)*100 pct_attemped_upload,
+    count(distinct case when bp.platform_device_id is null and pq.platform_device_id is null and q.id_for_vendor is not null then u.id_for_vendor end)/count(distinct u.id_for_vendor)*100 pct_not_completed_q4,
+    -- funnel level 2
+    count(distinct iss.platform_device_id)/count(distinct u.id_for_vendor)*100 pct_chose_photo,
+    count(distinct case when bp.platform_device_id is not null and iss.platform_device_id is null then bp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_not_chose_photo,
+    -- funnel level 3
+    count(distinct mp.platform_device_id)/count(distinct u.id_for_vendor)*100 pct_chose_photo_and_had_error,
+    count(distinct case when message_name = 'noFaceDetected' then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_chose_photo_and_had_error_no_face,
+    count(distinct case when message_name = 'multipleFacesDetected' then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_chose_photo_and_had_error_multiple_face,
+    count(distinct case when iss.platform_device_id is not null and mp.platform_device_id is null then iss.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_chose_photo_no_error,
+    -- funnel level 4
+    count(distinct case when mp.platform_device_id is not null and iss.num_showcase_uploads > 1 then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_had_error_and_retried,
+    count(distinct case when mp.platform_device_id is not null and iss.num_showcase_uploads = 1 then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_had_error_and_not_retried,
+    -- funnel level 5
+    count(distinct case when mp.platform_device_id is not null and iss.num_showcase_uploads > 1 and pq.platform_device_id is not null then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_had_error_and_retried_and_finsihed_q4,
+    count(distinct case when mp.platform_device_id is not null and iss.num_showcase_uploads > 1 and pq.platform_device_id is not null and pq.origin_page_response is null then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_had_error_and_retried_and_finsihed_q4_skip,
+    count(distinct case when mp.platform_device_id is not null and iss.num_showcase_uploads = 1 and pq.platform_device_id is not null and pq.origin_page_response is null then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_had_error_and_not_retried_and_finsihed_q4_skip,
+    count(distinct case when mp.platform_device_id is not null and iss.num_showcase_uploads > 1 and pq.platform_device_id is not null and pq.origin_page_response is not null then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_had_error_and_retried_and_finsihed_q4_upload,
+    count(distinct case when mp.platform_device_id is not null and iss.num_showcase_uploads = 1 and pq.platform_device_id is null then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_had_error_and_not_retried_and_left_app,
+    count(distinct case when mp.platform_device_id is not null and iss.num_showcase_uploads > 1 and pq.platform_device_id is null then mp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_had_error_and_retried_and_left_app,
+
+
+    count(distinct case when bp.platform_device_id is not null and iss.platform_device_id is null and pq.platform_device_id is not null then bp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_not_chose_photo_and_finished_q4,
+    count(distinct case when bp.platform_device_id is not null and iss.platform_device_id is null and pq.platform_device_id is null then bp.platform_device_id end)/count(distinct u.id_for_vendor)*100 pct_not_chose_photo_and_left_app,
+from users u
+left join q_responses q
+    on u.id_for_vendor = q.id_for_vendor 
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed` bp
+    on true
+    and bp.app_name = 'facetune2'
+    and u.id_for_vendor = bp.platform_device_id
+    and bp.meta_received_at >= u.experiment_started_meta
+    and button_identifier = 'photoShowcase_introQuestion_uploadPhoto'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+    on true
+    and pq.app_name = 'facetune2'
+    and u.id_for_vendor = pq.platform_device_id
+    and pq.meta_received_at >= u.experiment_started_meta
+    and pq.origin_page_index = 4
+left join imports iss
+    on true
+    and u.id_for_vendor = iss.platform_device_id
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+    on true
+    and mp.app_name = 'facetune2'
+    and u.id_for_vendor = mp.platform_device_id
+    and mp.meta_received_at >= u.experiment_started_meta
+    and mp.message_source = 'intro_pick_photo_question'
+where variant <> 'Baseline'
+group by 1,2
+order by 1,2

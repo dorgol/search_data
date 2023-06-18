@@ -1,0 +1,45 @@
+/*
+    Name: Felix Non-SOL Analysis - VL iOS - User Level Paid CVR
+    Query ID: 42036
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-19T12:42:37.490Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(f.attribution_timestamp), {{period}}) as cohort_period,
+        date(f.attribution_timestamp) cohort_time,
+        f.attribution_user_id as user_id,
+        f.attribution_user_group_number,
+        s.lt_subscription_id is not null as is_subscriber,
+        floor(timestamp_diff(s.original_purchase_date,f.attribution_timestamp,hour)/24) as time_to_sub,
+    from `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_subs` f
+    left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on f.lt_subscription_id = s.lt_subscription_id
+        and date(s.original_purchase_date) >= date(f.attribution_timestamp)
+        and s.app_name = 'videoleap'
+        and s.revenue_so_far > 0
+    where date(f.attribution_timestamp) >= '2022-10-01'
+    and date_trunc(current_date(), {{period}}) != date_trunc(date(f.attribution_timestamp), {{period}})
+    and f.application = 'videoleap'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.attribution_country not in ('US','CN')
+        else f.attribution_country = '{{countries}}' end
+)
+
+select
+    cohort_period,
+    count(distinct user_id) as cohort_users,
+    count(distinct case when time_to_sub = 0 then user_id end) as day0subs,
+    count(distinct case when time_to_sub <= 7 then user_id end) as day7subs,
+    count(distinct case when time_to_sub <= 30 then user_id end) as day30subs,
+    count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 7 then user_id end) day0users,
+    count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 17 then user_id end) day7users,
+    count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 37 then user_id end) day30users,
+    100*count(distinct case when time_to_sub = 0 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day)> 7 then user_id end),0) as day0pcvr,
+    100*count(distinct case when time_to_sub <= 7 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 14 then user_id end),0) as day7pcvr,
+    100*count(distinct case when time_to_sub <= 30 then user_id end)/nullif(count(distinct case when date_diff(current_date(),date_add(cohort_period, interval 1 {{period}}), day) > 37 then user_id end),0) as day30pcvr,
+from users
+group by 1
+having day0pcvr > 0
+order by 1 desc

@@ -1,0 +1,44 @@
+/*
+    Name: Facetune Android: QuickStart Usage
+    Query ID: 40898
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-16T13:34:00.644Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.installation_id,
+        d.experiment_started_meta_by_type,
+        d.display_type,
+        count(distinct installation_id) over (partition by segmentation, experiment, variant) as total_users,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'New and Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and application = 'facetune2_android'
+    and lower(d.experiment) like '%quickstart%'
+    and d.display_type = 'displayed'
+)
+
+select
+    segmentation,
+    variant,
+    reason,
+    count(distinct a.installation_id) as users,
+    count(distinct a.event_id) as times_selected
+from users u
+join `ltx-dwh-prod-raw.analytics.android_facetune2_alert_dialog_dismissed` a
+    on a.installation_id = u.installation_id
+    and a.meta_received_at >= u.experiment_started_meta_by_type
+    and a.meta_received_at >= '2023-04-03'
+    and a.alert_type = 'QUICK_START_EDIT'
+    and a.app_version >= '2.18.0.2-free'
+group by 1,2,3
+order by 1,4 desc

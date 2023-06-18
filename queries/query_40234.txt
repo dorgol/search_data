@@ -1,0 +1,55 @@
+/*
+    Name: PopPays AWA - Campaign Fulfilment Type
+    Query ID: 40234
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-10T15:18:24.837Z
+    */
+    with user_group as (
+
+select
+    date_trunc('{{time granularity}}', c.activated_at) as dt,
+    c.id,
+    case when deliverables_type is null then 'no_fullfillment'
+         when deliverables_type = 1 then 'shipments'
+         when deliverables_type = 2 then 'gift_codes' else 'error' end as fulfilment_type,
+    case when c.network is null then 'content' else 'influencer' end as campaign_type,
+    subscription_type
+from agencies a
+    left join merchants m
+      on m.agency_id = a.id
+    left join agency_memberships am
+      on am.agency_id = a.id
+    left join dashboard_users d
+      on d.id = am.dashboard_user_id
+    left join subscriptions su
+        on su.agency_id = a.id
+    left join campaigns c
+        on m.id = c.merchant_id
+where date(c.activated_at) >= '{{from_date}}'
+and primary_email not like '%lightricks%'
+and primary_email not like '%popular%'
+and primary_email not like '%poppays%'
+and primary_email not like '%test%'
+and primary_email not like '%codicate%'
+and a.name != 'TZLILBRAND'
+
+)
+
+
+select
+    dt,
+    fulfilment_type,
+    count(distinct id) as campaigns
+from user_group
+where case when '{{user plan}}' = 'Essentials' then subscription_type = 'essentials'
+           when '{{user plan}}' = 'Platform' then subscription_type = 'platform'
+           when '{{user plan}}' = 'Platform Free' then subscription_type = 'platform_free'
+           when '{{user plan}}' = 'Campaign' then subscription_type = 'campaign'
+           when '{{user plan}}' = 'Off-platform Search' then subscription_type = 'off_platform_search'
+      else true end
+      and case when '{{campaign type}}' = 'All' then true 
+           when '{{campaign type}}' = 'Influencer' then campaign_type = 'influencer'
+           when '{{campaign type}}' = 'Content' then campaign_type = 'content' end
+group by 1,2
+
+

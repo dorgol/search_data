@@ -1,0 +1,102 @@
+/*
+    Name: [FT-1067] Beauty Feed - export % over time - without accepts
+    Query ID: 41226
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-04-20T15:38:46.851Z
+    */
+    with 
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app_name}}'
+    and lower(d.experiment) like lower('%{{experiment}}%') 
+    and display_type = '{{display}}'
+    and case when '{{variant}}' = 'all' then true else variant = '{{variant}}' end
+),
+
+first_feed_presented as (
+select
+        segmentation,
+        variant,
+        f.platform_device_id,
+        experiment_started_meta,
+        meta_received_at as first_feed_ts,
+        device_timestamp
+    from users u
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+        on true
+        and f.app_name = 'facetune2'
+        and f.platform_device_id = u.id_for_vendor
+        and cast(f.app_version_code as int64) >= {{since_version}}
+        and date(f.meta_received_at) >= '{{start_date}}'
+        and f.meta_received_at > u.experiment_started_meta
+        and date(meta_received_at) < current_date - {{period}}
+    qualify row_number() over (partition by f.platform_device_id order by device_timestamp asc) = 1
+),    
+
+exports as (
+select
+    u.segmentation,
+    u.variant,
+    --feature_name,
+    u.platform_device_id,
+    u.first_feed_ts,
+    count(distinct ex.event_id) as num_times_exported_with_feature
+from first_feed_presented u
+left join (
+    select 
+        u.segmentation,
+        u.variant,
+        --'BeautyPresets' as feature_name,
+        u.experiment_started_meta,
+        u.first_feed_ts,
+        ex.editing_session_id,
+        ex.platform_device_id,
+        ex.event_id,
+        ex.device_timestamp,
+    from first_feed_presented u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on ex.app_name = '{{app_name}}'
+        and date(ex.meta_received_at) >= '{{start_date}}'
+        and cast(app_version_code as int64) >= {{since_version}}
+        and u.platform_device_id = ex.platform_device_id
+        and ex.meta_received_at >= u.experiment_started_meta
+        and ex.export_source like 'beauty%'
+        and date(ex.meta_received_at) between date(first_feed_ts) and date(first_feed_ts) + {{period}}
+    ) ex
+    on u.segmentation = ex.segmentation
+    and u.variant = ex.variant
+    and u.platform_device_id = ex.platform_device_id
+
+group by 1,2,3,4
+)
+
+
+select
+    segmentation,
+    variant,
+    date_trunc(first_feed_ts, week) as first_feed_presented,
+    --feature_name,
+    count(distinct platform_device_id) num_feed_presented,
+    count(distinct case when num_times_exported_with_feature >= {{minimum times exported}} then platform_device_id end) as num_exported,
+    count(distinct case when num_times_exported_with_feature >= {{minimum times exported}} then platform_device_id end)/count(distinct platform_device_id)*100  as pct_exported
+from exports
+where true
+group by 1,2,3
+--having num_export_users >= 1000
+order by 5 desc,1,2,3

@@ -1,0 +1,50 @@
+/*
+    Name: [FT-1086] Video Toolbar Reorder - Video Exports
+    Query ID: 40966
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-10T16:41:12.304Z
+    */
+    with users as (
+    select
+        segmentation,
+        application,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+            else country end as country,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_device,
+        count(distinct id_for_vendor) over (partition by segmentation, experiment, variant) as total_users,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and case
+        when '{{countries}}' = 'Global' then true
+        when '{{countries}}' = 'Rest of the world' then country not in ('United States', 'China')
+        else country = '{{countries}}' end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) = lower('[FT-1086] Video Toolbar Reorder')
+    and display_type = 'reached video editor'
+)
+
+select
+    segmentation,
+    variant,
+    total_users,
+    count(distinct e.id_for_vendor) as exporters,
+    count(distinct e.event_id) as exports,
+    100*count(distinct e.id_for_vendor)/total_users as pct_exporters,
+    count(distinct e.event_id)/total_users as exports_per_device,
+from users u
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported` e
+    on u.id_for_vendor = e.id_for_vendor
+    and e.device_timestamp >= experiment_started_device
+    and e.meta_received_at >= '2023-03-29'
+group by 1,2,3

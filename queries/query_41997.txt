@@ -1,0 +1,20 @@
+/*
+    Name: FTV cropped asset sizes
+    Query ID: 41997
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-18T11:55:18.814Z
+    */
+    SELECT
+--   CONCAT(CAST(`ftv_cropped_height` AS string), 'x', CAST(`ftv_cropped_width` AS string)) AS cropped_asset_size,
+  round(ftv_cropped_height / ftv_cropped_width,1) AS cropped_ratio,
+  COUNT(distinct event_id) AS frequency
+FROM
+  `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_loaded`
+  where ftv_original_asset_width IS NOT NULL
+  and meta_received_at >= '2023-03-28'
+GROUP BY cropped_ratio
+ORDER BY
+   frequency DESC
+LIMIT 20
+
+

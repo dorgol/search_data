@@ -1,0 +1,19 @@
+/*
+    Name: Mini to Full transition over time
+    Query ID: 41535
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-02T12:18:21.462Z
+    */
+    select 
+    date_trunc(date(d.meta_received_at), {{period}}) as dt,
+    -- d.is_subscriber,
+    count(distinct d.event_id) as num_entries,
+    count(distinct d.id_for_vendor) as num_users,
+    count(distinct d.event_id) / count(distinct d.id_for_vendor)  as actions_per_user
+from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editor_dismissed` as d
+where true
+    and d.reason = "main editor requested"
+    and date(d.meta_received_at) >= "2022-10-01"
+    and date(d.meta_received_at) < date_trunc(current_date(), {{period}})
+    and is_subscriber is not null
+group by 1

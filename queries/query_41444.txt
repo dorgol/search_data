@@ -1,0 +1,72 @@
+/*
+    Name: VL iOS - Interest Based Funnel V3 -  Q2 Answer Freq
+    Query ID: 41444
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-10T15:40:47.790Z
+    */
+    with users as (
+    select distinct
+        dav.id_for_vendor as platform_device_id,
+        case when variant like '%Baseline' then 'Baseline'
+                     when variant like '%Variant1' then 'Variant1'
+                     when variant like '%Variant2' then 'Variant2' end as variant,
+        dav.segmentation,
+        dav.display_type,
+        dav.experiment_started_meta
+        
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+    where dav.experiment = 'vl_smb_feed_categories_3_2023'
+        and case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'No Segmentation' then segmentation = '01 All Users'
+                else true end
+        --and variant in ('Baseline' , 'Variant 1')
+        and case 
+                when '{{display}}' = 'Activated' then display_type = 'activated_for_device'
+                when '{{display}}' = 'Displayed' then display_type = 'displayed_vl_smb_feed_categories_3_2023' -- change this when we know the name
+                else true end
+)
+
+, questionnaire as (
+    select
+        variant,
+        count(distinct u.platform_device_id) as total_users,
+        count(distinct case when origin_page_response is null then u.platform_device_id end) as No_Answer,
+        count(distinct case when lower(origin_page_response) like '%fitness%' then u.platform_device_id end) as Fitness,
+        count(distinct case when lower(origin_page_response) like '%travel%' then u.platform_device_id end) as Travel,
+        count(distinct case when lower(origin_page_response) like '%food%' then u.platform_device_id end) as Food,
+        count(distinct case when lower(origin_page_response) like '%cooking%' then u.platform_device_id end) as Cooking,
+        count(distinct case when lower(origin_page_response) like '%restaurant%' then u.platform_device_id end) as Restaurants,
+        count(distinct case when lower(origin_page_response) like '%fashion%' then u.platform_device_id end) as Fashion,
+        count(distinct case when lower(origin_page_response) like '%nightlife%' then u.platform_device_id end) as Nightlife,
+    --    count(distinct case when lower(origin_page_response) like '%art%' then u.platform_device_id end) as Art,
+        count(distinct case when lower(origin_page_response) like '%vehicles%' then u.platform_device_id end) as Vehicles,
+        count(distinct case when lower(origin_page_response) like '%estate%' then u.platform_device_id end) as Real_Estate,
+        count(distinct case when lower(origin_page_response) like '%beauty%' then u.platform_device_id end) as Beauty,
+        count(distinct case when lower(origin_page_response) like '%parenting%' then u.platform_device_id end) as Parenting,
+       -- count(distinct case when lower(origin_page_response) like '%gaming%' then u.platform_device_id end) as Gaming,
+        count(distinct case when lower(origin_page_response) like '%everything%' then u.platform_device_id end) as Everything,
+     --   count(distinct case when lower(origin_page_response) like '%lifestyle%' then u.platform_device_id end) as Lifestyle,
+     --   count(distinct case when lower(origin_page_response) like '%family%' then u.platform_device_id end) as Family,
+      --  count(distinct case when lower(origin_page_response) like '%diy%' then u.platform_device_id end) as DIY,
+      --  count(distinct case when lower(origin_page_response) like '%mentoring%' then u.platform_device_id end) as mentoring,
+        count(distinct case when lower(origin_page_response) like '%other%' then u.platform_device_id end) as other
+    from users u 
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_presented` qp
+        on u.platform_device_id = qp.platform_device_id
+        and qp.app_name = 'videoleap'
+        and qp.platform = 'ios'
+        and qp.meta_received_at >= u.experiment_started_meta
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pt2
+        on qp.platform_device_id = pt2.platform_device_id
+        and pt2.app_name = 'videoleap'
+        and pt2.origin_page_name = 'What interests you?'
+        and pt2.meta_received_at >= u.experiment_started_meta
+    --    and pt2.origin_page_response is not null
+    group by 1
+    )
+   
+   
+  select * from questionnaire where variant != 'Baseline'

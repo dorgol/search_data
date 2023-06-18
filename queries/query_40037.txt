@@ -1,0 +1,107 @@
+/*
+    Name: [FT-1067] Beauty Feed - Editor behavior after BF - sub feature accepted - not good
+    Query ID: 40037
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-12T08:33:22.159Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'activated_for_device'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+),
+
+continued_to_editor as (
+ select
+        case when w.feature_usage_id like 'beauty_quickstart%' then 'beauty_quickstart'
+            when w.feature_usage_id like 'beauty_feed_in_home_tab%' then 'beauty_feed_in_home_tab' end as flow_name,
+        u.variant,
+        u.segmentation,
+        w.platform_device_id,
+        w.feature_usage_id,
+        w.meta_received_at,
+        w.device_timestamp
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and (w.feature_usage_id like 'beauty_quickstart%' or w.feature_usage_id like 'beauty_feed_in_home_tab%')
+        and w.reason in ('edit')
+    )
+
+
+select 
+    segmentation,
+    sub_feature_name,
+    num_users_accepted_sub_feature,
+    total_users_accepted_sub_feature,
+    100* safe_divide(num_users_accepted_sub_feature , total_users_accepted_sub_feature) as pct_accepted_feature
+from (
+select distinct
+    segmentation,
+    --flow_name,
+    s.sub_feature_name,
+    count(distinct s.platform_device_id) over (partition by segmentation, sub_feature_name) as num_users_accepted_sub_feature,
+    count(distinct s.platform_device_id) over (partition by segmentation) as total_users_accepted_sub_feature
+from continued_to_editor e
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` f
+    on true
+    and f.app_name = '{{app_name}}'
+    and f.platform_device_id = e.platform_device_id
+    and cast(f.app_version_code as int64) >= {{since_version}}
+    and date(f.meta_received_at) >= '2023-02-19'
+    and f.device_timestamp > e.device_timestamp
+    and ends_with(e.feature_usage_id, f.editing_session_id)
+    and reason = 'accepted'
+    and feature_name = 'Retouch'
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_ended_with_change` s
+    on true
+    and s.app_name = '{{app_name}}'
+    and s.platform_device_id = e.platform_device_id
+    and cast(s.app_version_code as int64) >= {{since_version}}
+    and date(s.meta_received_at) >= '2023-02-19'
+    and s.device_timestamp > e.device_timestamp
+    --and s.feature_usage_id = f.feature_usage_id
+    and ends_with(e.feature_usage_id, s.editing_session_id)
+)
+order by 1,5 desc

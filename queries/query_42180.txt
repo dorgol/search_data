@@ -1,0 +1,35 @@
+/*
+    Name: Videoleap iOS - Subscription Offer (Previous)
+    Query ID: 42180
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-25T09:03:13.808Z
+    */
+    with subs as (select
+    expiration_date,
+    --case when churn_status like '%Auto-renew OFF%' then -1 else 1 end * num_subscriptions as num_subscriptions_weight,
+    num_subscriptions,
+    num_paid_subscriptions
+from (
+    select
+        
+        date_trunc(date(s.payments.last_expiration_date), month) as expiration_date,
+        count(distinct coalesce(subscription.original_transaction_id, subscription.payment_source_id)) as num_subscriptions,
+        count(distinct case when payments.revenue_so_far_alloc_cs > 0 then coalesce(subscription.original_transaction_id, subscription.payment_source_id) end) as num_paid_subscriptions
+    from `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_revenue_allocation_cross_sell` s
+    where application = 'videoleap'
+    and date(s.payments.last_expiration_date) between date_sub(current_date(), interval 180 day) and current_date() 
+    --and subscription.current_is_active = false
+    group by 1
+)
+),
+
+renew_status
+select 
+--date_trunc(date(last_expiration_date), month) as expiration_month,
+auto_renew_status,
+count(lt_subscription_id)
+from 
+`ltx-dwh-prod-processed`.`agg`.`auto_renew_status_by_date`
+where date(dt) = date(last_expiration_date ) - 1
+group by 1
+

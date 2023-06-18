@@ -1,0 +1,16 @@
+/*
+    Name: PL v2.3 distinct users
+    Query ID: 41248
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-21T18:57:56.619Z
+    */
+    select  app_version_code,
+date_trunc(meta_received_at, {{ date }}) as dt,
+count(distinct platform_device_id) as users
+
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_app_foreground`
+where app_name='editor'
+and meta_received_at>='2023-04-21'
+and cast(app_version_code as int64)>=4606
+group by 1,2
+order by 2,1

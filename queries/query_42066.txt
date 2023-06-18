@@ -1,0 +1,24 @@
+/*
+    Name: Facetune - Video Share Destinations
+    Query ID: 42066
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-21T11:59:02.739Z
+    */
+    select
+    ftv_destination_identifier,
+    max(meta_received_at) last_share_time,
+    count(distinct event_id) as shares,
+    count(distinct event_id)/ max(total_exports)*100 pct_of_total_shares,
+    count(distinct id_for_vendor)/ max(total_exporters)*100 pct_of_total_sharers
+from 
+(
+    select
+        *,
+        count(distinct event_id) over () total_exports,
+        count(distinct id_for_vendor) over () total_exporters
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_exported`
+    where meta_received_At >= timestamp_sub(current_timestamp(), interval 30 day)
+    and ftv_destination_identifier != 'camera-roll'
+)
+group by 1
+order by 3 desc

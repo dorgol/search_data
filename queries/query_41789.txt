@@ -1,0 +1,50 @@
+/*
+    Name: FT iOS - Screenshot Blocking Subscribers - Age of User
+    Query ID: 41789
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-11T12:09:41.113Z
+    */
+    with 
+ss_buyers as (
+    select
+        p.platform_device_id,
+        min(p.meta_received_at) first_ss_purchase_time
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_presented` p
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_subscription_screen_dismissed` d
+        on d.app_name = 'facetune2'
+        and d.meta_received_at >= '{{since_date}}'
+        and d.flow_id = p.flow_id
+        and d.reason = 'PurchaseSucceeded'
+    where true
+    and p.app_name = 'facetune2'
+    and p.meta_received_at >= '{{since_date}}'
+    and p.reason = 'contentScreenshotAlert'
+    group by 1
+),
+
+attribution_users as (
+    select
+        s.platform_device_id,
+        first_ss_purchase_time,
+        min(first_session_id_ts) first_session_id_ts
+    from ss_buyers s
+    join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` a
+        on a.application = 'facetune2'
+        and farm_fingerprint('facetune2' || s.platform_device_id) = a.lt_defacto_id
+    join `ltx-dwh-prod-processed`.`agg`.`app_attribution_user` u
+        on u.app_name = 'facetune2'
+        and a.attribution_user_id = u.attribution_user_id
+    group by 1,2
+)
+
+select
+    time_from_first_launch_until_purchase
+    count(distinct platform_device_id) num_users
+from (
+    select distinct 
+        platform_device_id,
+        date_diff(current_date(), date(first_session_id_ts), {{time_part}} ) time_from_first_launch_until_purchase
+    from attribution_users
+)
+group by 1
+order by 1

@@ -1,0 +1,42 @@
+/*
+    Name: AI Scenes Distribution Of Generations iOS
+    Query ID: 41211
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-28T15:22:10.377Z
+    */
+    
+
+ select
+ --*,
+ distinct
+ dt,
+ PERCENTILE_disc (presets_applied, 0.1 ) OVER(partition by dt) as p10,
+ PERCENTILE_disc (presets_applied, 0.2 ) OVER(partition by dt) as p20,
+ PERCENTILE_disc (presets_applied, 0.3 ) OVER(partition by dt) as p30,
+ PERCENTILE_disc (presets_applied, 0.4 ) OVER(partition by dt) as p40,
+ PERCENTILE_disc (presets_applied, 0.5 ) OVER(partition by dt) as p50,
+ PERCENTILE_disc (presets_applied, 0.6 ) OVER(partition by dt) as p60,
+ PERCENTILE_disc (presets_applied, 0.7 ) OVER(partition by dt) as p70,
+ PERCENTILE_disc (presets_applied, 0.8 ) OVER(partition by dt) as p80,
+ PERCENTILE_disc (presets_applied, 0.9 ) OVER(partition by dt) as p90,
+ PERCENTILE_disc (presets_applied, 0.98 ) OVER(partition by dt) as p98,
+ 
+ from
+ (
+ select 
+ date_trunc(meta_received_at,{{ time }}) as dt,
+ app_name,
+ case when app_name='editor_android' then installation_id
+        when app_name='editor' then platform_device_id end as user,
+count(distinct event_id) as presets_applied
+ from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_sub_feature_started`
+ where app_name in ('editor'
+ --,'editor_android'
+ )
+ and is_subscriber=false
+ and meta_received_at>='2023-04-17'
+ and root_feature_name='ai_scenes'
+ group by 1,2,3
+ 
+ --limit 100
+ )

@@ -1,0 +1,74 @@
+/*
+    Name: FT iOS - Single Face Accept Rates - Over Time
+    Query ID: 42407
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-01T08:31:49.236Z
+    */
+    with 
+users as (
+    select distinct
+        timestamp_trunc(fs.meta_received_at, {{date_part}}) date_part,
+        fs.feature_name,
+        fs.feature_usage_id,
+        fe.feature_usage_id as accept_id,
+        fs.editing_session_id,
+        fs.platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on true
+        and fe.app_name = 'facetune2'
+        and case 
+            when '{{date_part}}' = 'day' then date(fe.meta_received_at) >= date_sub(current_date(), interval 60 {{date_part}}) 
+            when '{{date_part}}' = 'week' then date(fe.meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+            when '{{date_part}}' = 'month' then date(fe.meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+        end
+        and fe.feature_usage_id = fs.feature_usage_id
+        and reason = 'accepted'
+    where true
+        and fs.app_name = 'facetune2'
+        and case 
+                when '{{date_part}}' = 'day' then date(fs.meta_received_at) >= date_sub(current_date(), interval 60 {{date_part}}) 
+                when '{{date_part}}' = 'week' then date(fs.meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+                when '{{date_part}}' = 'month' then date(fs.meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+            end
+),
+one_face as (
+    select
+            *
+        from (
+            select 
+                u.editing_session_id,
+                faces_rects,
+                image_height*image_width as image_area,
+                image_height,
+                image_width,
+                case 
+                    when max(faces_count) >= 3 then 'multiple faces'
+                    when max(faces_count) = 2 then 'two faces'
+                    when max(faces_count)  = 1 then 'single face'
+                    when max(faces_count)  = 0 then 'no face'
+                end as num_faces,
+            from users u
+            join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_face_detection_session_data` fd
+                on true
+                and case 
+                    when '{{date_part}}' = 'day' then date(fd.meta_received_at) >= date_sub(current_date(), interval 60 {{date_part}}) 
+                    when '{{date_part}}' = 'week' then date(fd.meta_received_at) >= date_sub(current_date(), interval 15 {{date_part}}) 
+                    when '{{date_part}}' = 'month' then date(fd.meta_received_at) >= date_sub(current_date(), interval 9 {{date_part}}) 
+                end
+                and fd.editing_session_id = u.editing_session_id
+            group by 1,2,3,4,5
+        )
+        where true
+        and num_faces = 'single face'
+)
+
+select
+    date_part,
+    feature_name,
+    count(distinct feature_usage_id) num_uses,
+    count(distinct accept_id)/count(distinct feature_usage_id)*100 accept_rate
+from users u
+join one_face one
+    using(editing_session_id)
+group by 1,2

@@ -1,0 +1,270 @@
+/*
+    Name: [FT-1067] Beauty Feed: Makeup User Exports
+    Query ID: 41775
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-11T11:15:11.472Z
+    */
+    with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'activated_for_device'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        and case 
+            when '{{variant}}' = 'Variant1' then d.variant in ('Variant1' , 'Baseline')
+            when '{{variant}}' = 'Variant2' then d.variant in ('Variant1' , 'Baseline') 
+            when '{{variant}}' = 'Variant3' then d.variant in ('Variant1' , 'Baseline')
+            when '{{variant}}' = 'All' then true
+        end  
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+),
+
+q3_ans as (
+    select distinct
+        platform_device_id,
+        meta_received_at,
+        case when origin_page_response is null then 'Skip' else origin_page_response end as response,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+    where true
+        and app_name = 'facetune2'
+        and origin_page_index = 3
+        and (destination_page_index = 4 or destination_page_index is null)
+    qualify row_number() over (partition by platform_device_id, destination_page_index order by device_timestamp desc) = 1
+),
+
+funnel as (
+    -- select
+    --     '01 - Assigned' as stage,
+    --     case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+    --     count(distinct u.id_for_vendor) num_users
+    -- from users u
+    -- group by 1,2
+    
+    -- union all
+    
+    select
+        variant,
+        case when q.response = 'Skip' then 'Skip'
+            when q.response like '%makeup%' then 'Chose makeup'
+            else 'Did not choose makeup' end as chose_makeup,
+        '01 - Reached Whats new OR Home Screen' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct case when w.platform_device_id is not null or m.platform_device_id is not null then u.id_for_vendor end) num_users
+    from users u
+    join q3_ans q
+        on u.id_for_vendor = q.platform_device_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_content_screen_presented` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.screen_name = 'home_screen'
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented` m
+        on true
+        and m.app_name = '{{app_name}}'
+        and m.platform_device_id = u.id_for_vendor
+        and cast(m.app_version_code as int64) >= {{since_version}}
+        and date(m.meta_received_at) >= '2023-02-19'
+        and m.meta_received_at > u.experiment_started_meta
+        and m.message_name = 'beautyFeedWhatsNew'
+    group by 1,2,3,4
+    
+    union all
+    
+    -- select
+    --     case when q.response = 'Skip' then 'Skip'
+            -- when q.response like '%makeup%' then 'Chose makeup'
+            -- else 'Did not choose makeup' end as chose_makeup,
+    --     '02 - Reached Feed' as stage,
+    --     case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+    --     count(distinct f.platform_device_id) num_users
+    -- from users u
+    -- join q3_ans q
+    --     on u.id_for_vendor = q.platform_device_id
+    -- left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+    --     on true
+    --     and f.app_name = 'facetune2'
+    --     and f.platform_device_id = u.id_for_vendor
+    --     and cast(f.app_version_code as int64) >= {{since_version}}
+    --     and date(f.meta_received_at) >= '2023-02-19'
+    --     and f.meta_received_at > u.experiment_started_meta
+    -- group by 1,2,3   
+    
+    -- union all
+    
+    -- ---we will need to add filter for external flow id once it exists. Otherwise, when there is another kind of feed present, we will see all.
+    -- select
+    --     case when q.response = 'Skip' then 'Skip'
+            -- when q.response like '%makeup%' then 'Chose makeup'
+            -- else 'Did not choose makeup' end as chose_makeup,
+    --     '03 - Tried Preset' as stage,
+    --     case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+    --     count(distinct w.platform_device_id) num_users
+    -- from users u
+    -- join q3_ans q
+    --     on u.id_for_vendor = q.platform_device_id
+    -- left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented` f
+    --     on true
+    --     and f.app_name = '{{app_name}}'
+    --     and f.platform_device_id = u.id_for_vendor
+    --     and cast(f.app_version_code as int64) >= {{since_version}}
+    --     and date(f.meta_received_at) >= '2023-02-19'
+    --     and f.meta_received_at > u.experiment_started_meta
+    -- left join `ltx-dwh-prod-raw.analytics_global.ltx_global_app_feed_user_action_started` w
+    --     on true
+    --     --and w.app_name = '{{app_name}}'
+    --     and w.meta_source = '{{app_name}}'
+    --     and w.platform_device_id = f.platform_device_id
+    --     and w.flow_id = f.flow_id
+    --     --and cast(w.app_version_code as int64) >= {{since_version}}
+    --     and date(w.meta_received_at) >= '2023-02-19'
+    --     and w.meta_received_at > f.meta_received_at
+    --     and w.action = 'use_template'
+    -- group by 1,2,3   
+    
+    --     union all
+        
+        
+    select
+        variant,
+        case when q.response = 'Skip' then 'Skip'
+            when q.response like '%makeup%' then 'Chose makeup'
+            else 'Did not choose makeup' end as chose_makeup,
+        '04 - Exported/Accepted/Continued to Edit From Feed' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct case when ex.platform_device_id is not null or w.platform_device_id is not null then u.id_for_vendor end) num_users
+    from users u
+    join q3_ans q
+        on u.id_for_vendor = q.platform_device_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = u.id_for_vendor
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > u.experiment_started_meta
+        and (ex.export_source like 'beauty_feed_in_home_tab%' or ex.export_source like 'beauty_quickstart%')
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.reason in ('edit', 'accepted')
+    group by 1,2,3  ,4 
+    
+    
+    union all
+        
+        
+    select
+        variant,
+        case when q.response = 'Skip' then 'Skip'
+            when q.response like '%makeup%' then 'Chose makeup'
+            else 'Did not choose makeup' end as chose_makeup,
+        '05 - Exported from Editor' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct case when ex.platform_device_id is not null then u.id_for_vendor end) num_users
+    from users u
+    join q3_ans q
+        on u.id_for_vendor = q.platform_device_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = u.id_for_vendor
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > u.experiment_started_meta
+        and not (ex.export_source like 'beauty_feed_in_home_tab%' or ex.export_source like 'beauty_quickstart%')
+    group by 1,2,3  ,4
+
+
+    
+    union all
+        
+        
+    select
+        variant,
+        case when q.response = 'Skip' then 'Skip'
+            when q.response like '%makeup%' then 'Chose makeup'
+            else 'Did not choose makeup' end as chose_makeup,
+        '05a - Exported from Editor with Makeup' as stage,
+        case when '{{segmentation}}' = 'All Users' then 'All Users' else segmentation end as segmentation,
+        count(distinct case when ex.platform_device_id is not null and w.platform_device_id is not null then u.id_for_vendor end) num_users
+    from users u
+    join q3_ans q
+        on u.id_for_vendor = q.platform_device_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = u.id_for_vendor
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '2023-02-19'
+        and ex.meta_received_at > u.experiment_started_meta
+        and not (ex.export_source like 'beauty_feed_in_home_tab%' or ex.export_source like 'beauty_quickstart%')
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '2023-02-19'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.feature_name = 'Makeup'
+        and w.reason in ('accepted')
+        and ex.editing_session_id = w.editing_session_id
+    group by 1,2,3   ,4
+    
+    
+        )
+
+
+
+select
+    *,
+    variant  || ' ' || stage as class,
+    max(num_users) over (partition by variant, segmentation, chose_makeup) as users_in_segment,
+    100*nullif(num_users,0)/max(num_users) over (partition by variant, segmentation, chose_makeup) as pct_exported,
+from funnel
+where true
+qualify stage in ({{stages}})
+-- and variant = '{{variant}}'
+--and chose_makeup = 'Chose_makeup'
+--and chose_makeup = 'Skip'
+-- and chose_makeup = 'did not'

@@ -1,0 +1,42 @@
+/*
+    Name: VL iOS - User Level Late pCVR (post-month0)
+    Query ID: 41150
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-19T12:05:21.412Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(f.attribution_timestamp), {{period}}) as cohort_period,
+        date_trunc(date(s.original_purchase_date), {{period}}) as sub_period,
+        date(f.attribution_timestamp) cohort_time,
+        f.attribution_user_id as user_id,
+        f.attribution_user_group_number,
+        s.lt_subscription_id is not null as is_subscriber,
+        floor(timestamp_diff(s.original_purchase_date,f.attribution_timestamp,hour)/24) as time_to_sub,
+    from `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_subs` f
+    left join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+        on f.lt_subscription_id = s.lt_subscription_id
+        and date(s.original_purchase_date) >= date(f.attribution_timestamp)
+        and s.app_name = 'videoleap'
+        and s.revenue_so_far > 0
+    where date_trunc(current_date(), {{period}}) != date_trunc(date(f.attribution_timestamp), {{period}})
+    and f.application = 'videoleap'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.attribution_country not in ('US','CN')
+        else f.attribution_country = '{{countries}}' end
+)
+
+select
+    eligible_dt.dt,
+    count(distinct u.user_id) as eligible_users,
+    count(distinct u2.user_id) as subs,
+    100*count(distinct u2.user_id)/nullif(count(distinct u.user_id),0) as late_pcvr,
+from (select distinct cohort_period as dt from users where cohort_period >= date_sub(current_date(), interval 30 {{period}})) as eligible_dt
+    left join users u
+        on u.cohort_period <= eligible_dt.dt
+    left join users u2
+        on u2.sub_period = eligible_dt.dt
+group by 1
+having late_pcvr > 0
+order by 1 desc

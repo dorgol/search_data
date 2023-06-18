@@ -1,0 +1,178 @@
+/*
+    Name: Facetune: [FT-1085] Live Photo as Video - Manual Display - Imported Live Photo
+    Query ID: 40861
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-02T11:50:39.658Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        'Imported Live Photo' as display_type,
+        min(a.meta_received_at) as experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_import_asset_selected` a
+        on d.id_for_vendor = a.id_for_vendor
+        and a.device_timestamp >= d.experiment_started_device
+        and a.meta_received_at >= '2023-04-02'
+        and a.meta_received_at <= '2023-04-25'
+        and a.asset_identifier like '%LivePhoto-%'
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+    and d.display_type = 'activated_for_device'
+    and d.variant = 'Baseline'
+    group by 1,2,3,4,5,6,7
+    
+    union all
+    
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        'Imported Live Photo' as display_type,
+        min(a.meta_received_at) as experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    join `ltx-dwh-prod-raw.analytics_global.ltx_global_screen_dismissed` a
+        on d.id_for_vendor = a.platform_device_id
+        and a.device_timestamp >= d.experiment_started_device
+        and a.meta_received_at >= '2023-04-02'
+        and a.meta_received_at <= '2023-04-25'
+        and a.screen_name = 'live_photo_import'
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+    and d.display_type = 'activated_for_device'
+    and d.variant != 'Baseline'
+    group by 1,2,3,4,5,6,7
+),
+
+subs as (
+    select
+        u.experiment,
+        u.country,
+        u.first_day, 
+        u.variant,
+        u.id_for_vendor,
+        u.experiment_started_meta, 
+        s.id_for_vendor is not null as subscribed,
+        s.revenue_so_far,
+        s.first_payment_amount
+    from users u 
+    left join `ltx-dwh-prod-processed.ab_test.raw_final_subs_and_variant` s
+        on u.experiment = s.experiment
+        and u.variant = s.variant
+        and u.segmentation = s.segmentation
+        and u.id_for_vendor = s.id_for_vendor
+        and s.original_purchase_date >= u.experiment_started_meta
+        and s.subscription_duration != 'l'
+        and s.original_purchase_date <= '2023-04-25'
+)
+
+,
+
+imports as (
+    select
+        u.experiment,
+        u.first_day, 
+        u.country,
+        u.variant,
+        u.id_for_vendor,
+        u.experiment_started_meta, 
+        count(distinct i.event_id) as num_photo_imports,
+        count(distinct v.event_id) as num_video_imports,
+    from users u 
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_image_loaded` i
+        on u.id_for_vendor = i.id_for_vendor
+        and i.meta_received_at >= experiment_started_meta
+        and i.meta_received_at >= '2023-04-02'
+        and i.meta_received_at <= '2023-04-25'
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_hydra_video_loaded` v
+        on u.id_for_vendor = v.id_for_vendor
+        and v.meta_received_at >= experiment_started_meta
+        and v.meta_received_at >= '2023-04-02'
+        and v.meta_received_at <= '2023-04-25'
+    group by 1,2,3,4,5,6
+)
+
+,
+
+exports as (
+    select
+        u.experiment,
+        u.first_day, 
+        u.country,
+        u.variant,
+        u.id_for_vendor,
+        u.experiment_started_meta, 
+        e.id_for_vendor is not null as exporter,
+        count(distinct e.event_id) as num_exports,
+    from users u 
+    left join `ltx-dwh-prod-processed`.`devices`.`unified_app_export` e
+        on u.id_for_vendor = e.id_for_vendor
+        and e.meta_received_at >= experiment_started_meta
+        and e.meta_received_at >= '2023-04-02'
+        and e.meta_received_at <= '2023-04-25'
+        and e.application = '{{app}}'
+    group by 1,2,3,4,5,6,7
+)
+
+select 
+    experiment,
+    segmentation,
+    case 
+        when '{{countries}}' = 'Global' then 'Global' 
+        when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+        else country end as country,
+    variant,
+    display_type,
+    count(distinct id_for_vendor) as num_devices,
+    count(distinct case when subscribed then id_for_vendor end) as num_subscribers,
+    count(distinct case when subscribed and revenue_so_far > 0 then id_for_vendor end) as num_paid_subscribers,
+    count(distinct case when exporter then id_for_vendor end) as num_exporters,
+    sum(num_exports) as num_exports,
+    sum(num_exports)/count(distinct id_for_vendor) as num_exports_per_device,
+    sum(num_photo_imports) as num_photo_imports,
+    sum(num_photo_imports)/count(distinct id_for_vendor) as num_photo_imports_per_device,
+    sum(num_video_imports) as num_video_imports,
+    sum(num_video_imports)/count(distinct id_for_vendor) as num_video_imports_per_device,
+    coalesce(sum(num_video_imports),0) + coalesce(sum(num_photo_imports),0) as num__imports,
+    (coalesce(sum(num_video_imports),0) + coalesce(sum(num_photo_imports),0))/count(distinct id_for_vendor) as num_imports_per_device,
+    100*count(distinct case when subscribed then id_for_vendor end)/count(distinct id_for_vendor) as cvr,
+    100*count(distinct case when subscribed and revenue_so_far > 0 then id_for_vendor end)/count(distinct id_for_vendor) as paid_cvr,
+    100*count(distinct case when exporter then id_for_vendor end)/count(distinct id_for_vendor) as pct_exporters,
+    sum(num_exports)/count(distinct id_for_vendor) as exports_per_device,
+from users
+left join subs 
+    using(experiment, first_day, variant, id_for_vendor,experiment_started_meta,country)
+left join exports
+    using(experiment, first_day, variant, id_for_vendor,experiment_started_meta,country)
+left join imports
+    using(experiment, first_day, variant, id_for_vendor,experiment_started_meta,country)
+where true
+and case 
+    when '{{countries}}' = 'Global' then true 
+    when '{{countries}}' = 'Rest of the World' then country not in ('United States','China')
+    when '{{countries}}' = 'All' then true
+    else country = '{{countries}}' end
+group by 1,2,3,4,5
+order by 1,2,3,4

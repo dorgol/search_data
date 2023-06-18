@@ -1,0 +1,49 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 - Exports (accepts and saves) - raw - from assignments
+    Query ID: 41958
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-16T18:28:00.179Z
+    */
+    
+with users as
+    (
+    select distinct
+        id_for_vendor,
+        experiment,
+        variant,
+        reason,
+        meta_received_at as experiment_started_meta
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_assignment_state_changed`
+    where lower(experiment) like lower('%[FT-1073] beautyFeedPPU_03_2023%')
+    and meta_received_at >= '{{start_date}}'
+    and reason = 'activated_for_device'
+)
+
+
+
+    select
+        variant,
+        count(distinct case when ex.platform_device_id is not null or w.platform_device_id is not null then u.id_for_vendor end) num_exporters,
+        count(distinct case when ex.event_id is not null then ex.event_id end) num_saves,
+        count(distinct case when w.event_id is not null then w.event_id end) num_accepts,
+        count(distinct case when ex.event_id is not null then ex.event_id when w.event_id is not null then w.event_id end) num_exports,
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and ex.platform_device_id = u.id_for_vendor
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and date(ex.meta_received_at) >= '{{start_date}}'
+        and ex.meta_received_at > u.experiment_started_meta
+        and (ex.export_source like 'beauty_feed_in_home_tab%')
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` w
+        on true
+        and w.app_name = '{{app_name}}'
+        and w.platform_device_id = u.id_for_vendor
+        and cast(w.app_version_code as int64) >= {{since_version}}
+        and date(w.meta_received_at) >= '{{start_date}}'
+        and w.meta_received_at > u.experiment_started_meta
+        and w.feature_name = 'BeautyPresets'
+        and w.reason in ('accepted')
+    group by 1
+    

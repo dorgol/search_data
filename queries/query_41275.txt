@@ -1,0 +1,49 @@
+/*
+    Name: VL Android - Q2 Targets - New Rev
+    Query ID: 41275
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-23T17:30:14.240Z
+    */
+    with users as (
+    select distinct
+        date_trunc(date(f.attribution_timestamp), {{period}}) as cohort_period,
+        date_trunc(date(t.original_purchase_date), {{period}}) as sub_period,
+        cast(f.winning_lt_defacto_id as string) as user_id,
+        t.lt_subscription_id is not null as is_subscriber,
+        date(t.original_purchase_date) as sub_date,
+        t.lt_transaction_id,
+        date(t.purchase_date) as payment_date,
+        sum(projected.adjusted_actual_proceeds_alloc) as rev
+    from `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_subs` f
+    --left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions` s
+    --    on f.platform_device_id = s.device.platform_device_id
+    --    and date_trunc(date(s.original_purchase_date), {{period}}) = date_trunc(date(f.install_time), {{period}}) -- month0
+    --    and s.license_applications = 'videoleap'
+    --    --and s.revenue_so_far > 0
+    left join `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` t
+        on f.lt_subscription_id = t.lt_subscription_id
+        and date_trunc(date(t.original_purchase_date), {{period}}) = date_trunc(date(f.attribution_timestamp), {{period}}) -- month0
+        and t.application = 'videoleap_android'
+        --and date(t.original_purchase_date) = date(t.purchase_date) -- first payment
+    where date_trunc(current_date(), {{period}}) != date_trunc(date(f.attribution_timestamp), {{period}})
+    and date_trunc(date(f.attribution_timestamp), {{period}}) >= '2022-10-01'
+    and f.application = 'videoleap_android'
+    group by 1,2,3,4,5,6,7
+)
+
+, total as (select
+    cohort_period,
+    count(distinct u.user_id) as installs,
+    count(distinct case when date_trunc(date(payment_date), {{period}}) = cohort_period
+                           and rev > 0 then u.user_id end) as subs,
+    sum(case when date_trunc(date(payment_date), {{period}}) = cohort_period
+                           and rev > 0 then rev end) as month0_rev
+from users u
+group by 1
+)
+
+select
+    *,
+    safe_divide(subs, installs)*100 as pcvr,
+    safe_divide(month0_rev, subs) as month0_arps
+from total

@@ -1,0 +1,62 @@
+/*
+    Name: 20230123 - FT2 iOS - Global Login - 2nd Session App Retention
+    Query ID: 40346
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-15T11:52:22.889Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        case 
+            when '{{countries}}' = 'Global' then 'Global' 
+            when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+        else d.country end as country,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('globalLogin_10_2022')
+    and display_type = 'activated_for_device'
+    and case 
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then d.country not in ('US','CN')
+        when '{{countries}}' = 'All' then true
+        else d.country = '{{countries}}' 
+    end  
+)
+
+select
+    segmentation,
+    case when variant = 'baseline' then 'Baseline' else variant end as variant,
+    display_type,
+    count(distinct id_for_vendor) num_users,
+    count(distinct case when num_sessions > 1 then id_for_vendor end) num_multi_sessions,
+    count(distinct case when num_sessions > 1 then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_retained_session_2
+from (
+    select
+        segmentation,
+        variant,
+        display_type,
+        id_for_vendor,
+        count(distinct session_id) num_sessions
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_foreground` fg
+        on app_name = 'facetune2'
+        and platform_device_id = id_for_vendor
+    group by 1,2,3,4
+)
+group by 1,2,3
+order by 1,2,3

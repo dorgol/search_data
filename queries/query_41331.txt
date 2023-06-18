@@ -1,0 +1,93 @@
+/*
+    Name: Experiment Template - T-Tests Revenue & Exports
+    Query ID: 41331
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-02T17:04:53.067Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.lt_defacto_id,
+        d.experiment_started_meta,
+        d.display_type,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        when '{{segments}}' = 'New & Existing' then segmentation in ('02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+),
+
+subs as (
+    select
+        u.experiment,
+        u.country,
+        u.first_day, 
+        u.variant,
+        u.lt_defacto_id,
+        u.experiment_started_meta, 
+        s.lt_defacto_id is not null as subscribed,
+        s.revenue_so_far,
+        s.first_payment_amount
+    from users u 
+    left join `ltx-dwh-prod-processed.ab_test.raw_final_subs_and_variant` s
+        on u.experiment = s.experiment
+        and u.variant = s.variant
+        and u.segmentation = s.segmentation
+        and u.lt_defacto_id = s.lt_defacto_id
+        and s.original_purchase_date >= u.experiment_started_meta
+        and s.subscription_duration != 'l'
+        and s.product_category = 'subscription'
+)
+
+,
+
+exports as (
+    select
+        u.experiment,
+        u.first_day, 
+        u.country,
+        u.variant,
+        u.lt_defacto_id,
+        u.experiment_started_meta, 
+        e.lt_defacto_id is not null as exporter,
+        count(distinct e.event_id) as num_exports,
+    from users u 
+    left join `ltx-dwh-prod-processed`.`devices`.`unified_app_export` e
+        on u.lt_defacto_id = e.lt_defacto_id
+        and e.meta_received_at >= experiment_started_meta
+        and e.meta_received_at >= '{{experiment_start}}'
+        and e.application = '{{app}}'
+    group by 1,2,3,4,5,6,7
+)
+
+select  distinct
+    experiment,
+    case 
+        when '{{countries}}' = 'Global' then 'Global' 
+        when '{{countries}}' = 'Rest of the World' then 'Rest of the World'
+        else country end as country,
+    variant,
+    display_type,
+    lt_defacto_id,
+    coalesce(revenue_so_far,0) as revenue_so_far,
+    coalesce(num_exports,0) as num_exports,
+from users
+left join subs 
+    using(experiment, first_day, variant, lt_defacto_id,experiment_started_meta,country)
+left join exports
+    using(experiment, first_day, variant, lt_defacto_id,experiment_started_meta,country)
+where case when '{{display}}' = 'All' then true else  display_type = '{{display}}' end
+and case 
+    when '{{countries}}' = 'Global' then true 
+    when '{{countries}}' = 'Rest of the World' then country not in ('United States','China')
+    when '{{countries}}' = 'All' then true
+    else country = '{{countries}}' end

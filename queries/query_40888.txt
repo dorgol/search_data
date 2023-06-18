@@ -1,0 +1,105 @@
+/*
+    Name: (Joe) VL iOS - Bundles Experiment - purchases
+    Query ID: 40888
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-04T18:19:44.876Z
+    */
+    with experiment_users as (
+    select distinct
+        id_for_vendor,
+        segmentation, 
+        variant,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and experiment = "Bundles (Production)"
+        -- and display_type like "mini_editor_displayed_%" 
+        and display_type = "activated_for_device"
+        and variant = 'Variant 1'
+) 
+
+, funnel as (
+    
+    select distinct
+        0 as step,
+        'activated' as step_name,
+        eu.id_for_vendor as platform_device_id
+    from experiment_users eu
+    
+    union all
+    
+    select distinct
+        1 as step,
+        'bundle popup' as step_name,
+        mp.platform_device_id
+    from experiment_users eu 
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` as mp
+        on eu.id_for_vendor = mp.platform_device_id
+    where true
+        and mp.app_name = "videoleap"
+        and mp.message_name = "template_purchase_bundles"
+        and date(mp.meta_received_at) >= "2023-04-02"
+        and mp.app_version_code <> "4001"
+        
+
+  --  union all
+  --  
+  --  select distinct
+  --      2 as step,
+  --      'bundle presented' as step_name,
+  --      sf.platform_device_id
+  --  from experiment_users eu
+  --  inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` as mp
+  --      on eu.id_for_vendor = mp.platform_device_id
+  --  inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_content_screen_refreshed` sf
+  --      on mp.flow_id = sf.flow_id
+  --  where true
+  --       and mp.app_name = "videoleap"
+  --       and sf.screen_name = "template_editor"
+  --       and mp.app_version_code <> "4001"
+  --       and date(mp.meta_received_at) >= "2023-04-02"
+
+ union all
+    
+    select distinct
+        3 as step,
+        'bundle purchase started' as step_name,
+        pos.platform_device_id
+    from experiment_users eu
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_assets_purchase_initiated` as pos
+        on eu.id_for_vendor = pos.platform_device_id
+    where true
+        and pos.app_name = "videoleap"
+        and pos.app_version_code <> "4001"
+        and date(pos.meta_received_at) >= "2023-04-02"
+
+
+ union all
+    
+    select distinct
+        4 as step,
+        'bundle purchased' as step_name,
+        pos.platform_device_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_assets_purchase_order_summary` as pos, 
+    unnest(assets) as bundle_data
+    inner join experiment_users eu
+        on eu.id_for_vendor = pos.platform_device_id
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_assets_purchase_ended` as en
+        on pos.flow_id = en.flow_id
+        and en.reason = "success"
+    where true
+        and pos.app_name = "videoleap"
+        and pos.app_version_code <> "4001"
+        and date(pos.meta_received_at) >= "2023-04-02"
+        and asset_type = 'bundle'
+    
+
+)
+
+select distinct
+    step,
+    step_name,
+    count(distinct platform_device_id) as users
+from funnel
+group by 1,2

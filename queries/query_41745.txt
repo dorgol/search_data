@@ -1,0 +1,73 @@
+/*
+    Name: FT iOS - Questionnaire Skip Rates - Detailed
+    Query ID: 41745
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-10T17:07:39.050Z
+    */
+    with
+users as (
+    select distinct
+        platform_device_id as id_for_vendor,
+        meta_received_at,
+        origin_page_response,
+        origin_page_index,
+        origin_page_name,
+        destination_page_index,
+        count(distinct platform_device_id) over () total_num_users
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+    where true
+        and app_name = 'facetune2'
+        and date(meta_received_at) >= date_sub(current_date(), interval {{days_back}} day)
+        and origin_page_name is not null
+        and origin_page_index != 0
+        and origin_page_index < ifnull(destination_page_index, 100)
+    qualify row_number() over (partition by id_for_vendor, destination_page_index order by meta_received_at desc) = 1
+),
+
+q_and_a as (
+    select
+        id_for_vendor,
+        array_agg(response ignore nulls) all_answers
+    from (
+        select distinct
+            id_for_vendor, 
+            origin_page_index,
+            ifnull(origin_page_response, 'Skip') as response
+        from users u
+        where true
+        and (
+            origin_page_index = 1 and destination_page_index = 2 or
+            origin_page_index = 2 and destination_page_index = 3 or
+            origin_page_index = 3 and (destination_page_index is null or destination_page_index = 4)
+        )
+        order by 2
+    )
+    group by 1
+)
+
+select
+    count(distinct id_for_vendor) num_users,
+    -- level 1
+    count(distinct case when all_answers[safe_offset(0)] = 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_skip_q1,
+    count(distinct case when all_answers[safe_offset(0)] != 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_NOT_skip_q1,
+    -- level 2 (Skipped 1)
+    count(distinct case when all_answers[safe_offset(0)] = 'Skip' and all_answers[safe_offset(1)] = 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_skip_q1_and_q2,
+    count(distinct case when all_answers[safe_offset(0)] = 'Skip' and all_answers[safe_offset(1)] != 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_skip_q1_and_NOT_q2,
+    -- level 2 (NOT Skipped 1)
+    count(distinct case when all_answers[safe_offset(0)] != 'Skip' and all_answers[safe_offset(1)] = 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_NOT_skip_q1_and_skip_q2,
+    count(distinct case when all_answers[safe_offset(0)] != 'Skip' and all_answers[safe_offset(1)] != 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_NOT_skip_q1_and_NOT_q2,
+    -- level 3 (Skipped 1 and 2)
+    count(distinct case when all_answers[safe_offset(0)] = 'Skip' and all_answers[safe_offset(1)] = 'Skip' and all_answers[safe_offset(2)] = 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_skip_q1_and_q2_and_q3,
+    count(distinct case when all_answers[safe_offset(0)] = 'Skip' and all_answers[safe_offset(1)] = 'Skip' and all_answers[safe_offset(2)] != 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_skip_q1_and_q2_and_NOT_q3,
+    -- level 3 (Skipped 1 and NOT skipped 2)
+    count(distinct case when all_answers[safe_offset(0)] = 'Skip' and all_answers[safe_offset(1)] != 'Skip' and all_answers[safe_offset(2)] = 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_skip_q1_and_NOT_q2_and_q3,
+    count(distinct case when all_answers[safe_offset(0)] = 'Skip' and all_answers[safe_offset(1)] != 'Skip' and all_answers[safe_offset(2)] != 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_skip_q1_and_NOT_q2_and_NOT_q3,
+    -- FIX
+    -- level 3 (NOT Skipped 1 and skipped 2)
+    count(distinct case when all_answers[safe_offset(0)] != 'Skip' and all_answers[safe_offset(1)] = 'Skip' and all_answers[safe_offset(2)] = 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_NOT_skip_q1_and_q2_and_q3,
+    count(distinct case when all_answers[safe_offset(0)] != 'Skip' and all_answers[safe_offset(1)] = 'Skip' and all_answers[safe_offset(2)] != 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_NOT_skip_q1_and_q2_and_NOT_q3,
+    -- level 3 (NOT Skipped 1 and NOT skipped 2)
+    count(distinct case when all_answers[safe_offset(0)] != 'Skip' and all_answers[safe_offset(1)] != 'Skip' and all_answers[safe_offset(2)] = 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_NOTskip_q1_and_NOT_q2_and_skip_q3,
+    count(distinct case when all_answers[safe_offset(0)] != 'Skip' and all_answers[safe_offset(1)] != 'Skip' and all_answers[safe_offset(2)] != 'Skip' then id_for_vendor end)/count(distinct id_for_vendor)*100 pct_notskip_q1_and_NOT_q2_and_NOT_q3,
+from q_and_a as q
+-- where array_length(all_answers) = 3

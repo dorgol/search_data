@@ -1,0 +1,21 @@
+/*
+    Name: VL iOS - sub_prediction_experiment_2_2023 by day
+    Query ID: 41625
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-04T09:01:36.052Z
+    */
+    with users as (select distinct
+variant,
+id_for_vendor,
+experiment_started_meta
+from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d 
+            where segmentation = '02 New Users'
+            and  d.application = 'videoleap'
+            and d.experiment = 'vl_prediction_promotion_experiment_1_2023')
+            
+select
+date(experiment_started_meta) as dt,
+variant, 
+count(distinct id_for_vendor) as new_users
+from users
+group by 1,2

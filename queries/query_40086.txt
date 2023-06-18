@@ -1,0 +1,53 @@
+/*
+    Name: Product Analyst Interview - Query checker
+    Query ID: 40086
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-07T11:22:59.011Z
+    */
+    with post_effects as
+    (
+    select distinct
+        post_id,
+        account_id, 
+        creation_date, 
+        template_id, 
+        effect_unnest
+    from `ltx-dwh-playground.bi.post_create`, unnest (effects) as effect_unnest
+    )
+    
+, effect_performance as 
+    (
+    select distinct
+        effect_unnest,
+        sum(impressions) as impressions,
+        sum(clicks) as clicks,
+        sum(exports) as exports,
+    from post_effects pe
+    left join `ltx-dwh-playground.bi.imp_post_per_day` as i
+        on i.post_id = pe.post_id
+    left join `ltx-dwh-playground.bi.click_use_per_day` as c
+        on c.post_id = pe.post_id
+        and c.dt = i.dt
+    left join `ltx-dwh-playground.bi.exports_per_day` as e
+        on e.post_id = pe.post_id
+        and e.dt = i.dt
+    group by 1)
+        
+--select 
+--    *
+--from effect_performance
+--order by 2 desc--
+
+select 
+    *
+    --effect_unnest,
+    --count(distinct pe.post_id) as posts,
+    --sum(impressions) as impressions
+from effect_performance pe
+    --left join `ltx-dwh-playground.bi.imp_post_per_day` as i
+    --    on i.post_id = pe.post_id
+    --left join `ltx-dwh-playground.bi.click_use_per_day` as c
+    --    on c.post_id = pe.post_id
+    --left join `ltx-dwh-playground.bi.exports_per_day` as e
+    --    on e.post_id = pe.post_id
+--group by 1

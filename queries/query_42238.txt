@@ -1,0 +1,74 @@
+/*
+    Name: PL AI Discover vs Plus Button
+    Query ID: 42238
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-26T09:57:55.133Z
+    */
+    
+with base as
+(select distinct dt,
+platform_device_id
+from
+`ltx-dwh-prod-processed`.`agg`.`app_device_date`
+where
+dt >= "2023-03-05"
+    and dt < date_trunc(current_date, {{Time granularity}})
+    and app_name = "editor"
+    and platform = "ios"
+    --and d.current_store_country <> "China"
+    and case when '{{Day}}' = "day0" then dt = first_active_dt
+    when '{{Day}}' = "week0" then date_diff(dt, first_active_dt, day) <= 7
+        when '{{Day}}' = "non day0" then dt > first_active_dt
+        else true end
+)
+,
+
+feed as 
+(
+select distinct 
+date(meta_received_at) as dt,
+platform_device_id,
+event_id
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_screen_presented`
+where app_name='editor'
+and meta_received_at>'2023-03-05'
+and screen_name='category.ai'
+)
+
+,
+plus
+as
+(
+select
+distinct 
+date(meta_received_at) as dt,
+id_for_vendor,
+flow_id
+from `ltx-dwh-prod-raw.analytics.ios_editor_editor_flow_started`
+where meta_received_at >'2023-03-05'
+and source='ENEditorSourceBottomBarPlusButton'
+)
+
+
+select *,
+safe_divide(discover_tapped,users)*100 as discover_pct,
+safe_divide(plus_tapped,users)*100 as plus_pct,
+from
+(
+select 
+date_trunc(base.dt,{{Time granularity}}) as dt,
+count(distinct base.platform_device_id) as users,
+count(distinct feed.platform_device_id) as discover_tapped,
+count(distinct plus.id_for_vendor) as plus_tapped,
+count(distinct feed.event_id) as discover_freq,
+count(distinct plus.flow_id) as plus_freq,
+from 
+base
+left join feed
+on base.platform_device_id=feed.platform_device_id
+and base.dt=feed.dt
+left join plus
+on base.platform_device_id=plus.id_for_vendor
+and base.dt=plus.dt
+group by 1
+)

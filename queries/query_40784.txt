@@ -1,0 +1,112 @@
+/*
+    Name: VL Android - Interest Based Experiment V2 - CVR by User Type
+    Query ID: 40784
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-31T12:45:07.451Z
+    */
+    with devices as (
+    select
+        timestamp_diff(experiment_started_meta, first_day, day) as days_from_assignment_time,
+        lt_defacto_id,
+        installation_id as platform_device_id,
+        experiment,
+        experiment_started_device,
+        experiment_started_meta,
+        first_day,
+        variant,
+        segmentation,
+        display_type
+        --count(distinct lt_defacto_id) as num_devices,
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` dav
+    where dav.experiment = 'interest_based_funnel_v2'
+        and case 
+                when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+                when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+                when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+                when '{{segments}}' = 'No Segmentation' then segmentation = '01 All Users'
+                else true end
+        and case 
+                when '{{display}}' = 'Activated' then display_type = 'activated_for_device'
+                when '{{display}}' = 'Displayed' then display_type = 'displayed' -- change this when we know the name
+                else true end
+)
+  
+, users as (
+    select
+        u.platform_device_id,
+        u.variant,
+        u.lt_defacto_id,
+        u.segmentation,
+        u.display_type,
+        u.experiment_started_meta,
+        u.days_from_assignment_time,
+        case when    pt.origin_page_response is null then                'No answer'
+                when pt.origin_page_response like '%business%' then 'Promoting a business' 
+                when pt.origin_page_response like '%myself%' then 'Editing for myself' 
+                when pt.origin_page_response like '%friends%' then 'Sharing with friends/family'
+                when pt.origin_page_response like '%influencer%' then 'I’m an influencer'
+                when pt.origin_page_response like '%creator%' then 'I’m a creator'
+                when pt.origin_page_response like '%Other%' then 'Other'
+                else pt.origin_page_response end as response
+                
+    from devices u 
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_questionnaire_presented` qp
+        on u.platform_device_id = qp.installation_id
+        and qp.app_name = 'videoleap_android'
+        and qp.meta_received_at >= u.experiment_started_meta
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pt
+        on qp.installation_id = pt.installation_id
+        and pt.app_name = 'videoleap_android'
+        and pt.origin_page_index = 0
+        and pt.origin_page_name in ('So, what brings you here? v2', 'So, what brings you here?')
+        and pt.meta_received_at >= u.experiment_started_meta
+    )
+
+   
+, device_sub as (
+select distinct
+    std.lt_defacto_id,
+    `lt_subscription_id`
+from users d
+join ltx-dwh-prod-processed.subscriptions.subscription_to_defacto std
+    on d.lt_defacto_id = std.lt_defacto_id
+    and original_purchase_date >= experiment_started_meta
+),
+
+subsday0 as (
+    select distinct
+        d.days_from_assignment_time,
+        s.lt_subscription_id,
+        d.lt_defacto_id,
+        d.variant,
+        d.response,
+        s.revenue_so_far,
+        s.had_trial,
+        s.is_in_trial_period,
+        s.subscription_duration,
+        s.original_purchase_date,
+        ss.is_sol
+    from users d 
+    left join device_sub ds
+        on ds.lt_defacto_id = d.lt_defacto_id
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_state` s
+        on ds.lt_subscription_id = s.lt_subscription_id
+        and s.application = 'videoleap_android'
+    left join `ltx-dwh-prod-processed`.`agg`.`unified_subscriptions_source` ss
+        on ss.lt_subscription_id = s.lt_subscription_id
+    where  days_from_assignment_time >= {{start_day}} 
+    and (select max(days_from_assignment_time) from devices)-days_from_assignment_time >= {{days to remove}}
+)
+
+select
+    variant,
+    count(distinct lt_defacto_id) as num_devices,
+    count(distinct lt_subscription_id) as num_sub,
+    count(distinct case when revenue_so_far > 0 then lt_subscription_id end) as num_eventually_paid_sub,
+    count(distinct lt_subscription_id) / count(distinct lt_defacto_id) *100 as cum_cvr,
+    count(distinct case when revenue_so_far > 0 then lt_subscription_id end) / count(distinct lt_defacto_id) *100 as cum_paid_cvr,
+    count(distinct case when had_trial is true and revenue_so_far > 0 then lt_subscription_id end) / 
+                      count(distinct case when had_trial is true and is_in_trial_period is false then lt_subscription_id end) *100 as cum_trial_to_paid_ratio
+from subsday0
+group by 1
+order by 1

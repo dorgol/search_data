@@ -1,0 +1,12 @@
+/*
+    Name: facetune users device models
+    Query ID: 40923
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-04-09T08:18:10.785Z
+    */
+    SELECT current_device_model, count(*) 
+FROM `ltx-dwh-prod-processed.agg.app_device` WHERE DATE(install_time) >= "2020-04-09" 
+and last_active_dt >= '2023-03-01' 
+and app_name = 'facetune2'
+group by 1
+order by 2 desc

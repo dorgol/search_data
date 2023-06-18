@@ -1,0 +1,76 @@
+/*
+    Name: VL iOS - SMBs - Remake Exports per Remaker
+    Query ID: 41389
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-26T15:40:07.854Z
+    */
+    with users_1 as (
+  select distinct
+    d.platform_device_id,
+    d.first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+)
+
+
+, users as (
+    select  
+         u.platform_device_id,
+         u.first_active_dt,
+         case when origin_page_response like '%business%' then 'I promote a business'
+             else 'other users' end as response,
+    from users_1 u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+, remake_projects as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        ts.open_project_id,
+        ex.export_id,
+        ts.meta_received_at,
+        case when ex.open_project_id is not null then 'exported' else 'not exported' end as exported
+    from users u 
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as ts
+        on u.platform_device_id = ts.id_for_vendor
+        
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+        on ex.open_project_id = ts.open_project_id
+    where date(ts.meta_received_at) >= '2022-06-01'
+    group by 1,2,3,4,5,6
+)
+
+, final as (
+    select
+        response,
+        date_trunc(meta_received_at, {{Time granularity}}) as dt,
+        platform_device_id,
+        count(distinct export_id) as remake_exports
+    from remake_projects
+    group by 1,2,3
+    )
+    
+select
+    dt,
+    count(distinct platform_device_id) as total_remakers,
+    count(distinct case when remake_exports >5 then platform_device_id end) as five_plus_remakers,
+    count(distinct case when remake_exports =4 then platform_device_id end) as four_remakers,
+    count(distinct case when remake_exports =3 then platform_device_id end) as three_remakers,
+    count(distinct case when remake_exports =2 then platform_device_id end) as two_remakers,
+    count(distinct case when remake_exports =1 then platform_device_id end) as one_remakers,
+    count(distinct case when remake_exports =0 then platform_device_id end) as zero_remakers
+from final
+where response = 'I promote a business'
+group by 1

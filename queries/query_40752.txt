@@ -1,0 +1,10 @@
+/*
+    Name: PL Android Experiment Assignment Check Staging
+    Query ID: 40752
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-29T15:02:57.750Z
+    */
+    select *
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_app_ab_test_assignment_changed_state`
+where app_name='editor_android'
+and meta_received_at>='2023-03-27'

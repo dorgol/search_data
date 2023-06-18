@@ -1,0 +1,119 @@
+/*
+    Name: SMBs Story - Subscription Tiers - Extreme Users - Test
+    Query ID: 40232
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-10T14:59:16.702Z
+    */
+    with users_1 as (
+  select distinct
+    d.platform_device_id,
+    d.first_active_dt
+  from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        on d.platform_device_id = u.platform_device_id
+        and u.app_name = 'videoleap'
+        and u.platform = 'ios'
+  where d.app_name = "videoleap"
+    and d.platform = "ios"
+    and date(d.dt) >= '{{start date}}'
+)
+
+
+, users as (
+    select  
+         u.platform_device_id,
+         u.first_active_dt,
+         case when origin_page_response like '%business%' then 'I promote a business'
+             else 'other users' end as response,
+    from users_1 u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and app_name = 'videoleap'
+        and origin_page_index = 0
+        and origin_page_name = 'So, what brings you here?'
+    where true
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+
+, first_remake_export as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        min(date(pu.meta_received_at)) as first_template_purchase_dt
+        
+    from users u 
+    
+        inner join ( select distinct
+                    platform_device_id,
+                    action_id,
+                    meta_received_at
+                from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` as en
+                where action in ("purchase_template") 
+                    and en.reason = "succeeded") pu
+        on pu.platform_device_id = u.platform_device_id
+
+    where date(pu.meta_received_at) >= date('{{start date}}')
+    and response = 'I promote a business'
+    group by 1,2
+    
+    )
+
+, remake_exports as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        first_template_purchase_dt,
+        pu.action_id,
+        --date_diff(date_trunc(current_date(), week), date_trunc(first_remake_export_dt, week), week) as weeks_from_first_remake_export
+        
+    from first_remake_export u 
+    
+    inner join ( select distinct
+                    platform_device_id,
+                    action_id,
+                    meta_received_at
+                from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` as en
+                where action in ("purchase_template") 
+                    and en.reason = "succeeded") pu
+        on pu.platform_device_id = u.platform_device_id
+
+    where date(pu.meta_received_at) >= date('{{start date}}')
+    )
+
+, remake_exports_final as (
+    select distinct
+        u.platform_device_id,
+        u.response,
+        count(distinct u.action_id) as template_purchases
+        
+    from remake_exports u
+    group by 1,2
+    )
+
+
+
+, final as (
+    select
+        response,
+        platform_device_id,
+        template_purchases
+    from remake_exports_final
+    )
+
+-------------------------------------
+-------------------------------------
+    
+
+, ranking as (
+    select
+        *,
+        row_number () over (order by template_purchases desc) as rank
+    from final
+    where template_purchases > 1
+    order by rank asc
+    )
+
+    select
+        rank,
+        template_purchases
+    from ranking

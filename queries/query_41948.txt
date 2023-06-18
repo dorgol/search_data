@@ -1,0 +1,75 @@
+/*
+    Name: VL - VL vs Sellers vs Originals vs Remakes Over Time
+    Query ID: 41948
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-16T15:05:33.434Z
+    */
+    with posts as (
+    select distinct
+        account_id,
+        post_id,
+        template_id,
+        parent_template_id,
+        root_template_id,
+        app_name,
+        case when account_id in ("d08297f9-1cb6-4966-b3d7-b33b50141f42", 
+                                 "a2585fb6-acff-4c26-841e-a3e7ebf3ec54", 
+                                 "79af60d3-1331-4f0c-af08-7b1044c1803f", 
+                                 "af99a590-aaf3-4841-9f19-18faeb505425", 
+                                 "7c8efe52-c652-450a-84bf-8997414c41f9") then "VL Internal"
+            when account_id in ("bec04c27-f000-4975-86e0-bf3527aed041",
+                                    "66e995df-9c23-4533-a783-9bdd0f64a2a5",
+                                    "911b44a0-a88e-4c9c-8604-a0ea15b318c2",
+                                    "574591ce-96a2-4b95-88a1-23c39d6d54e9",
+                                    "0e6a85dc-1ba2-43c7-9c1d-dd39c93738d4",
+                                    "2696cefb-59c0-4759-8e7e-032b2e59daa0",
+                                    "196a7772-fb29-4326-8271-02f3cf9f0431",
+                                    "8f5478b6-539e-4bf7-8d0d-96da6174d599",
+                                    "6c265a4c-f8f8-446d-91d1-cefab69f7469",
+                                    "9c873679-95db-4f96-94db-3df80c52fb02",
+                                    "c69e5be4-015a-42ed-be41-f2504dc7e620",
+                                    "5555e72e-d6db-4ab1-9404-e8f815fee762",
+                                    "4a4efac6-5fbf-4475-b876-a0c9f609bd0a",
+                                    "2747bc6a-5a76-4864-bd52-b7a63afaeb92",
+                                    "dff125a0-5347-40e1-b3ac-043a3fa7ab0c",
+                                    "525d373d-44d6-4502-93e4-4c88ca335836",
+                                    "2c98c781-8cf6-4c14-8579-d8e35a8440ad",
+                                    "cb5d4368-5b26-45c0-b762-182d930e4e74",
+                                    "190ad8bd-a02b-43a7-bb2e-cf2f8fd51beb",
+                                    "5a311bd3-df82-40ba-8747-744a64798951",
+                                    "9b1a0db0-dd5e-403d-9a23-9aeea01efefb",
+                                    "35d4bd26-e371-4fee-a489-557f3825f708") then "paid UGC"
+            when parent_template_id is null then 'Original'
+            else 'Remakers' end as account_split
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+    where app_name = "videoleap"
+        --and requirements_flat like '%aiTransform%'
+)
+
+, stats as (
+    select
+        p.post_id,
+        dt,
+        parent_template_id,
+        account_split,
+        distinct_total_impressions,
+        total_clicks,
+        distinct_export_started_feed,
+        distinct_export_rate_feed
+    from posts p
+    inner join `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily` rd
+        on rd.post_id = p.post_id
+        and dt >= '2023-03-01' and dt != current_date()
+        )
+
+
+select
+    dt,
+    account_split,
+    sum(distinct_total_impressions) as impressions,
+    sum(total_clicks) as clicks,
+    sum(distinct_export_started_feed) as exports,
+    safe_divide(sum(distinct_export_started_feed),sum(distinct_total_impressions))*100 as export_rate,
+from stats
+group by 1,2
+order by 1,2

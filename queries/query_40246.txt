@@ -1,0 +1,99 @@
+/*
+    Name: Facetune2: Exported Feature By Export Ratio - editor only
+    Query ID: 40246
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-13T09:24:48.207Z
+    */
+    -- this query checks the ratio between all of the exported features per export
+with users as
+(
+select * from
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+            max(case when s.id_for_vendor is not null then true else false end) as is_subscriber
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        left join `ltx-dwh-prod-processed`.`ab_test`.`raw_final_subs_and_variant` s
+            on d.experiment = s.experiment
+            and d.first_day = s.first_day
+            and d.variant = s.variant
+            and d.segmentation = s.segmentation
+            and d.display_type = s.display_type
+            and d.id_for_vendor = s.id_for_vendor
+            and s.original_purchase_date < d.experiment_started_meta_by_type
+            and s.last_subscription_renewal_date > d.experiment_started_meta_by_type
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and d.display_type = 'activated_for_device'
+        and date(d.experiment_started_meta) >= '2023-02-19'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        and case 
+            when '{{variant}}' = 'Variant1' then d.variant = 'Variant1' 
+            when '{{variant}}' = 'Variant2' then d.variant = 'Variant2' 
+            when '{{variant}}' = 'Variant3' then d.variant = 'Variant3'
+            when '{{variant}}' = 'All' then true
+        end  
+        group by 1,2,3,4,5,6,7,8
+    )
+where case when '{{subscriber}}' = 'Subs' then is_subscriber
+        when '{{subscriber}}' = 'Non-Subs' then not is_subscriber
+        else true end  
+),
+
+exports as(
+    select distinct
+        timestamp_trunc(meta_received_at,week) as week,
+        editing_session_id,
+        platform_device_id,
+        process_id,
+        count(distinct process_id) over () as total_exports
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` ex
+        on true
+        and ex.app_name = '{{app_name}}'
+        and cast(ex.app_version_code as int64) >= {{since_version}}
+        and ex.platform_device_id = u.id_for_vendor
+        and ex.meta_received_at >= '2023-02-19'
+),
+
+feature_exported as(
+select
+    feature_name,
+    total_exports as total,
+    count(distinct r.event_id) as events_with_feature,
+from exports l
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` r
+    on r.app_name = '{{app_name}}'
+    and r.meta_received_at >= '2023-02-19'
+    and cast(r.app_version_code as int64) >= {{since_version}}
+    and l.platform_device_id = r.platform_device_id
+    and l.editing_session_id = r.editing_session_id
+    and r.reason = 'accepted'
+group by 1,2
+)
+
+
+
+select
+    feature_name,
+    total,
+    events_with_feature,
+    events_with_feature / total * 100 as export_feature_usage_ratio
+from feature_exported r
+where true
+and feature_name not in ('MakeupPaint','Boxycharm','Try:Face','Try:Reshape','Darkroom')
+and lower(feature_name) not like '%variant%'
+order by 4 desc

@@ -1,0 +1,60 @@
+/*
+    Name: VL android post upload - data validation (parent_template_id)
+    Query ID: 40096
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-07T12:44:13.510Z
+    */
+    select distinct 
+    date(p.meta_received_at) as dt,
+    -- case when p.parent_template_id = "" then "originals" else "remakes" end as is_original,
+    -- count(distinct p.post_id) as num_posts
+    post_id,
+    p.parent_template_id as parent_template_id_from_upload,
+    ex.parent_template_id as parent_template_id_from_export
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_post_upload_ended` as p
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started` as ex
+    on ex.project_id = p.open_project_id
+-- left join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_remove` as r
+--     using (post_id)
+where p.platform = "android"
+    and date(p.meta_received_at) >= date_sub(current_date(), interval 1 month)
+    and p.export_error is null
+    -- and r.post_id is not null
+-- group by 1,2
+
+
+-- with posts as (
+--     select distinct
+--         post_id,
+--         template_id,
+--         parent_template_id,
+--         root_template_id
+--     from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`
+--     qualify (row_number() over (partition by post_id order by server_timestamp) = 1)
+-- )
+
+-- , data as (
+--     select distinct 
+--         date(p.meta_received_at) as dt,
+--         lower(ex.parent_template_id) <> p.parent_template_id as is_different,
+--         count(distinct p.post_id) as num_posts,
+--         -- p.parent_template_id as p_parent_template_id,
+--         -- ex.parent_template_id as ex_parent_template_id,
+--         -- pp.parent_template_id as pp_parent_template_id,
+--         -- pp.root_template_id,
+--         -- pp.template_id,
+--     from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` as p
+--     left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+--         on ex.open_project_id = p.open_project_id
+--     -- left join posts as pp
+--     --     on p.post_id = pp.post_id
+--     where p.platform = "ios"
+--         and date(p.meta_received_at) >= date_sub(current_date(), interval 30 day)
+--         and p.export_error is null
+--         -- and r.post_id is not null
+--     group by 1,2
+-- )
+
+-- select
+--     *
+-- from data

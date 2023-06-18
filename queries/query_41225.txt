@@ -1,0 +1,41 @@
+/*
+    Name: VL iOS - Photo vs Video Exports
+    Query ID: 41225
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-20T15:44:19.842Z
+    */
+    with exports as (
+select distinct
+    dd.platform_device_id as id_for_vendor,
+    date(dd.first_active_dt) as first_active_dt,
+    date(dt) as dt,
+    sa.open_project_id,
+    va.source_type
+from `ltx-dwh-prod-processed`.`agg`.`app_device_date` dd
+join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` sa
+    on dd.platform_device_id = sa.id_for_vendor
+    and case when '{{day}}' = 'day0' then date(sa.meta_received_at) = date(dd.first_active_dt)
+                 when '{{day}}' = 'non day0' then date(sa.meta_received_at) > date(dd.first_active_dt)
+                 when '{{day}}' = 'all' then date(sa.meta_received_at) >= date(dd.first_active_dt) end
+join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` e
+    on e.export_id = sa.export_id
+    --and e.parent_template_id is null
+join `ltx-dwh-prod-raw.analytics.ios_videoleap_video_added` va
+    on va.open_project_id = sa.open_project_id
+where date_diff(date(current_date()), date(dd.dt), day) < {{last x days}}
+)
+
+, projects as (
+    select
+        open_project_id,
+        count(distinct source_type) as asset_types
+    from exports
+    group by 1
+)
+
+select
+    asset_types,
+    count(distinct open_project_id) project
+from projects
+group by 1
+

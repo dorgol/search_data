@@ -1,0 +1,59 @@
+/*
+    Name: AI Scenes Distribution Of Generations Android 50 PCT of generations
+    Query ID: 41220
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-04-20T15:04:29.132Z
+    */
+    select
+dt,
+min(presets_applied_for_30_pct) as presets_for_30,
+min(presets_applied_for_40_pct) as presets_for_40,
+min(presets_applied_for_50_pct) as presets_for_50,
+min(presets_applied_for_60_pct) as presets_for_60
+from
+(
+select
+*,
+sum(presets_applied_total) over(partition by dt) as sum,
+sum(presets_applied_total) over(partition by dt order by presets_applied) as cumilative_sum,
+sum(presets_applied_total) over(partition by dt)*0.5 as percent_,
+case when sum(presets_applied_total) over(partition by dt order by presets_applied)>= sum(presets_applied_total) over(partition by dt)*0.5 then presets_applied end as presets_applied_for_50_pct,
+case when sum(presets_applied_total) over(partition by dt order by presets_applied)>= sum(presets_applied_total) over(partition by dt)*0.4 then presets_applied end as presets_applied_for_40_pct,
+case when sum(presets_applied_total) over(partition by dt order by presets_applied)>= sum(presets_applied_total) over(partition by dt)*0.6 then presets_applied end as presets_applied_for_60_pct,
+case when sum(presets_applied_total) over(partition by dt order by presets_applied)>= sum(presets_applied_total) over(partition by dt)*0.3 then presets_applied end as presets_applied_for_30_pct
+from
+(
+ select
+ --*,
+ 
+ dt,
+ presets_applied,
+count(distinct user) as users,
+presets_applied*count(distinct user) as presets_applied_total,
+
+ 
+ from
+ (
+ select 
+ date_trunc(meta_received_at,{{ time }}) as dt,
+ app_name,
+ case when app_name='editor_android' then installation_id
+        when app_name='editor' then platform_device_id end as user,
+count(distinct event_id) as presets_applied
+ from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_sub_feature_started`
+ where app_name in (
+ --'editor'
+ 'editor_android'
+ )
+ and meta_received_at>='2023-04-17'
+ --'2023-04-17'
+ and root_feature_name='ai_scenes'
+ and is_subscriber is false
+ group by 1,2,3
+ 
+
+ )
+ group by 1,2
+ order by 1,2
+ ))
+ group by 1 

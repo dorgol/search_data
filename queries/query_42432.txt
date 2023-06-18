@@ -1,0 +1,69 @@
+/*
+    Name: 20230530 - FT2 iOS - [FT-1102] Features Gestures - Saw SF for the First Time - Accept Rates
+    Query ID: 42432
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-04T07:29:57.896Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        min(experiment_started_meta_by_type) over (partition by id_for_vendor) min_experiment_started_meta_by_type
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('%[FT-1102] Features Gestures%')
+    and display_type not in ('displayed', 'activated_for_device')
+),
+
+first_subfeature_usage as (
+    select distinct
+        segmentation,
+        variant,
+        sub_feature_path,
+        u.id_for_vendor,
+        experiment_started_meta,
+        sf.meta_received_at,
+        reason,
+        sf.feature_usage_id
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_sub_feature_started` sf
+        on true
+        and sf.meta_received_at >= '2023-05-30'
+        and sf.meta_received_at >= min_experiment_started_meta_by_type
+        and feature in ('Retouch', 'Reshape')
+        and sub_feature_path in ('Reshape', 'Refine', 'Smooth', 'Smoother')
+        and sf.id_for_vendor = u.id_for_vendor
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on true
+        and fe.meta_received_at >= '2023-05-30'
+        and fe.meta_received_at >= experiment_started_meta
+        and fe.feature_usage_id = sf.feature_usage_id
+    where true
+    qualify min(sf.meta_received_at) over (partition by segmentation, variant, sub_feature_path, id_for_vendor) >= experiment_started_meta
+    and row_number() over (partition by segmentation, variant, sub_feature_path, id_for_vendor order by sf.meta_received_at asc) = 1
+)
+
+select
+    segmentation,
+    variant,
+    sub_feature_path,
+    count(distinct case when reason = 'accepted' then feature_usage_id end) num_saw_sf_first_time_and_accepted,
+    count(distinct case when reason = 'accepted' then feature_usage_id end)/count(distinct feature_usage_id)*100 accept_rate_first_time_used
+from first_subfeature_usage
+group by 1,2,3
+having sub_feature_path is not null
+order by 1,2,3

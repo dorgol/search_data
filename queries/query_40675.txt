@@ -1,0 +1,174 @@
+/*
+    Name: VL iOS - Feed Performance by Audio Provider
+    Query ID: 40675
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-31T17:21:30.378Z
+    */
+    with projects as (
+select distinct
+    *
+from (
+    select distinct
+        exs.meta_received_at,
+        exs.open_project_id,
+        ifnull(exs.is_subscriber, false) as  is_subscriber,
+        case when exs.parent_template_id is null then 'original' else 'remake' end as post_type,
+        p.post_id,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as exs
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+        on exs.export_id = ex.export_id
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` as p -- only published
+        on ex.export_id = p.export_id
+        and export_error is null
+    where date(exs.meta_received_at) >= date_sub(current_date(), interval 3 month)
+        and exs.parent_template_id is null -- only originals
+    )
+    qualify (row_number() over (partition by open_project_id order by meta_received_at desc) = 1)   -- take last export for each project
+)
+
+, audio_objects_per_project as (
+    select distinct
+        p.open_project_id,
+        p.post_id,
+        p.is_subscriber,
+        p.post_type,
+        JSON_EXTRACT_SCALAR(outline, "$.source_type") as source_type,
+        JSON_EXTRACT_SCALAR(outline, "$.object_type") as object_type,
+        JSON_EXTRACT_SCALAR(outline, "$.object_identifier") as object_id,
+        ifnull(au.provider, "other") as provider,
+    from projects p
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_session_analytics_reported` as sar
+        on p.open_project_id = sar.open_project_id
+        and date(sar.meta_received_at) = date(p.meta_received_at)
+        and sar.reason like '%export button pressed'
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_session_outline_json` as soj
+        on soj.session_analytics_ID = sar.session_analytics_ID
+    , unnest(json_extract_array(soj.outline_json)) as outline
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_audio_added` as au
+        on JSON_EXTRACT_SCALAR(outline, "$.object_identifier") = au.imported_identifier
+        and au.open_project_id = p.open_project_id
+    where true
+    and JSON_EXTRACT_SCALAR(outline, "$.source_type") = 'EVDSourceTypeAudio'
+    and soj.open_project_id not in ('5BC69A92-5AD8-4B03-B695-5833F44369B4','1A293A77-5278-4A60-879B-A74D47F6980C','A31E10E3-8EEF-4159-ACCA-CAC3EFB8A4D7') --demo projects
+    and JSON_EXTRACT_SCALAR(outline, "$.object_type") = 'Audio'
+)
+
+, projects_agg as (
+    select distinct
+        --p.open_project_id,
+        p.post_id,
+        --p.is_subscriber,
+        --p.post_type,
+        p.provider
+    from audio_objects_per_project as p
+)
+
+--select
+--    --is_subscriber,
+--    post_type,
+--    provider,
+--    count(distinct open_project_id) as num_projects
+--from projects_agg
+--where post_id is not null
+--group by 1,2
+
+, post_impressions as (
+    select distinct
+        pa.post_id,
+        count(distinct ii.platform_device_id) as impression_users,
+        count(distinct ii.action_id) as impressions,
+        count(distinct case when price_tier is not null then ii.platform_device_id end) as paid_impression_users,
+        count(distinct case when price_tier is not null then ii.action_id end) as paid_impressions
+    from projects_agg pa
+    join `ltx-dwh-prod-processed`.`app`.`feed_unnested_items_info` ii
+        on pa.post_id = ii.post_id
+        and actions = 'become_ready' -- impressions
+        and ii.application = 'videoleap'
+    group by 1
+)
+
+, post_clicks as (
+    select distinct
+        pa.post_id,
+        count(distinct ii.platform_device_id) as click_users,
+        count(distinct ii.action_id) as clicks,
+    from projects_agg pa
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ii
+        on pa.post_id = ii.post_id
+        and action = 'use_template' -- clicks
+        and ii.meta_source = 'videoleap'
+        and ii.meta_platform = 'ios'
+    group by 1
+)
+
+, post_exports as (
+    select distinct
+        pa.post_id,
+        count(distinct ex.id_for_vendor) as export_users,
+        count(distinct ex.export_id) as exports,
+    from projects_agg pa
+        join `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` pc
+            on pc.post_id = pa.post_id
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` ex
+        on lower(ex.parent_template_id) = pc.template_id
+        
+    group by 1
+)
+
+, post_purchases as (
+    select distinct
+        pa.post_id,
+        count(distinct ace.platform_device_id) as purchase_users,
+        count(distinct ace.action_id) as purchases,
+    from projects_agg pa
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` as ace
+            on pa.post_id = ace.post_id
+            and ace.action = "purchase_template"
+            and ace.reason = "succeeded"
+        
+    group by 1
+)
+
+
+
+
+select
+   --post_type,
+   provider,
+   count(distinct pa.post_id) as num_posts,
+   
+   sum(impressions) as total_impressions,
+   sum(impression_users) as total_impressions_users,
+   sum(paid_impressions) as total_paid_impressions,
+   sum(paid_impression_users) as total_paid_impressions_users,
+   sum(clicks) as total_clicks,
+   sum(click_users) as total_clicks_users,
+   sum(exports) as total_exports,
+   sum(export_users) as total_export_users,
+   sum(purchases) as total_purchases,
+   sum(purchase_users) as total_purchase_users,
+   
+   safe_divide(sum(impressions), count(distinct pa.post_id)) as impressions_per_post,
+   safe_divide(sum(clicks), count(distinct pa.post_id)) as clicks_per_post,
+   safe_divide(sum(exports), count(distinct pa.post_id)) as exports_per_post,
+   safe_divide(sum(purchases), count(distinct pa.post_id)) as purchases_per_post,
+   
+   safe_divide(sum(clicks), sum(impressions))*100 as click_rate,
+   safe_divide(sum(click_users), sum(impression_users))*100 as user_click_rate,
+   safe_divide(sum(exports), sum(impressions))*100 as export_rate,
+   safe_divide(sum(export_users), sum(impression_users))*100 as user_export_rate,
+   safe_divide(sum(purchases), sum(paid_impressions))*100 as purchase_rate,
+   safe_divide(sum(purchase_users), sum(paid_impression_users))*100 as user_purchase_rate,
+   safe_divide(sum(exports), sum(clicks))*100 as click_to_export_rate,
+   safe_divide(sum(export_users), sum(click_users))*100 as user_click_to_export_rate
+   
+from projects_agg pa
+    left join post_impressions im
+        on im.post_id = pa.post_id
+    left join post_clicks pc
+        on pc.post_id = pa.post_id
+    left join post_exports pe
+        on pe.post_id = pa.post_id
+    left join post_purchases pp
+        on pp.post_id = pa.post_id
+group by 1

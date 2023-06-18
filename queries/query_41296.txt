@@ -1,0 +1,89 @@
+/*
+    Name: FT iOS - Makeup Sub Feature Slider Values
+    Query ID: 41296
+    Created By: Josh Seidman
+    Last Updated At: 2023-04-24T09:12:36.479Z
+    */
+    with 
+face_data as (
+  select distinct
+    editing_session_id,
+    faces_count,
+  from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_face_detection_session_data` fd
+  where fd.meta_received_at >= timestamp_sub(current_timestamp(), interval 90 day)
+),
+
+
+sub_feature_state_parsed as (
+  select
+        fe.usage_id,
+        fe.id_for_vendor,
+        fe.feature_name,
+        case 
+          when fd.faces_count = 1 then 'single_face'
+          when fd.faces_count > 1 then 'multiple_faces'
+          when fd.faces_count = 0 then 'no_faces'
+        end as faces_state,
+        parsed.face_num,
+        parsed.used_subfeatures,
+        fe.is_subscriber,
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_ended` fe
+    left join unnest(`ltx-dwh-playground.bi.parseUsedSubfeatures`(json_extract(fe.sub_feature_state,'$.usedSubfeatures'))) parsed
+    left join face_data fd
+      on fd.editing_session_id = fe.editing_session_id
+    where fe.feature_name = 'Makeup'
+    and fe.accepted
+    and fe.feature_name is not null
+    and fe.sub_feature_state is not null
+    and fe.meta_received_at >= timestamp_sub(current_timestamp(), interval 90 day)
+),
+
+changes as (
+    select
+      usage_id,
+      feature_name,
+      faces_state,
+      face_num,
+      sf.sub_feature as feature_cat,
+      `ltx-dwh-playground.bi.internalToExternalSubfeatures`('Makeup', sf.sub_feature, sf.value ) as sub_feature,
+      sf.value,
+      id_for_vendor,
+      is_subscriber,
+    from sub_feature_state_parsed
+    left join unnest(used_subfeatures) sf
+  where feature_name = 'Makeup'
+  and value is not null
+)
+-- doesnt seem accurate
+-- initial_values as (
+--     select 
+--         replace(sub_feature_path, 'Makeup.', '') sub_feature,
+--         initial_slider_value,
+--         count(distinct event_id) num_times
+--     from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_sub_feature_started`
+--     where true
+--     and app_name = 'facetune2'
+--     and meta_received_at >= timestamp_sub(current_timestamp(), interval 90 day)
+--     and root_feature_name = 'Makeup'
+--     group by 1,2
+--     qualify row_number() over (partition by sub_feature order by num_times desc) = 1
+-- )
+
+
+select
+--   case 
+--     when is_subscriber then 'Subscriber'
+--     else 'Free'
+--   end as is_subscriber,
+  c.sub_feature,
+  feature_cat,
+--   initial_slider_value,
+  round(cast(json_extract_scalar(value, '$.opacity') as float64),1) as value,
+  count(distinct usage_id) as uses,
+from changes c
+-- left join initial_values i
+--     on i.sub_feature = c.sub_feature
+group by 1,2,3
+-- ,4 ,5
+having sub_feature is not null
+order by 2 asc, 1 asc, 3 asc

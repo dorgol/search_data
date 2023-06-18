@@ -1,0 +1,66 @@
+/*
+    Name: Bundles experiment - % Purchasers per variant
+    Query ID: 41539
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-02T12:56:27.800Z
+    */
+    -- -- only splits out consumable transactions atm - need to split out paid templates using product_id
+-- -- actual product_id should be 'com.lightricks.EnlightVideo_C_V1.TA_Videoleap.FeedTemplate.1'
+
+with experiment_users as (
+    select distinct
+        id_for_vendor,
+        variant,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and experiment = "Bundles (Production)"
+        and case when '{{segmentation}}' = 'All Users' then segmentation = "01 All Users"
+                 when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+) 
+
+, transactions as (
+    select
+        variant,
+        product_id,
+        count(distinct original_transaction_id) as templates_purchases,
+    from (
+        select distinct
+            ex.variant,
+            t.product_id,
+            t.original_transaction_id,
+        from `ltx-dwh-prod-processed`.`subscriptions`.`user_info_consumable_transactions` t
+        join experiment_users as ex
+            on ex.id_for_vendor = t.id_for_vendor
+            and t.purchase_date > ex.experiment_started_device
+        where true
+            and date_trunc(date(t.purchase_date), day) >= "2023-02-03"
+            and is_sandbox is false
+            and lower(t.product_id) like '%template%'
+            and t.application = "videoleap"
+    )
+    group by 1,2
+)
+
+select
+    variant,
+    product_id,
+    templates_purchases as purchases,
+    case when product_id like "1%" then templates_purchases
+         when product_id like "3%" then templates_purchases * 3
+         when product_id like "8%" then templates_purchases * 8 end as total_purchased_templates
+from (
+    select distinct
+        t.variant,
+        case when t.product_id like "%TA%.1" then "1 template 1$"
+             when t.product_id like "%TC%.1" then "1 template 10$"
+             when t.product_id like "%.3" then "3 templates bundle"
+             when t.product_id like "%.8" then "8 templates bundle" end as product_id,
+        t.templates_purchases,
+        -- round(t.templates_purchases / b.templates_purchases, 2) as diff_from_baseline,
+    from transactions as t
+)
+where product_id is not null
+order by 1

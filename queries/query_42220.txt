@@ -1,0 +1,61 @@
+/*
+    Name: Felix - VL iOS -  Use Template Action Categories
+    Query ID: 42220
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-26T13:16:20.318Z
+    */
+    with feed_info as (
+    select distinct
+        ii.application,
+        ii.platform,
+        ii.dt,
+        ii.lt_id,
+        ii.platform_device_id,
+        ii.meta_received_at,
+        ii.feed_id,
+        ii.session_id,
+        ii.feed_type,
+        ii.app_version_code,
+        ii.firstPresentedTime,
+        ii.actions,
+        ii.action_id,
+        ii.action_time,
+        ii.event_id
+    from `ltx-dwh-prod-processed.app.feed_unnested_items_info` ii
+    where actions = 'use_template'
+    and date_trunc(ii.dt, day) >= date_sub(current_date(), interval 60 day) 
+    --and date_trunc(current_date(), day) != date_trunc(ii.dt, day) -- not today
+    and date_trunc(ii.dt, day) < '2023-05-14'
+    and case when cast(ii.app_version_code as int64) < 3612 and feed_type like '%discover%' then false else true end
+    )
+
+, total as (
+    select distinct
+        fi.feed_id,
+        fi.dt,
+        --case when grouping = 'see all screens' then fi.feed_type
+        --else
+            case when lower(fi.feed_type) like '%category.recommended%' or fi.feed_type like '%for_you%' then 'Main Feed'
+                 when lower(fi.feed_type) like '%discover.recommended%' then 'Discover Main Feed'
+                 when lower(fi.feed_type) like '%discover.%' then 'Discover Categories'
+                 when lower(fi.feed_type) like '%search.%' then 'Search Categories'
+                 when fi.feed_type like '%categor%' then 'Main Categories'
+                 when fi.feed_type like '%templates%' or fi.feed_type like '%liked%' or fi.feed_type like '%purchased%' then 'Profile'
+                 when fi.feed_type = 'post_details' or fi.feed_type = 'remakes' then 'Remake screen'
+                 else fi.feed_type end  as feed_type,
+        --end as feed_type,
+        fi.actions,
+        fi.action_id
+    from feed_info fi
+    where fi.application = 'videoleap' and fi.platform = 'ios' and fi.feed_type not like "assets_first%"
+     )
+   
+select
+    date_trunc(dt,day) as dt_period,
+    feed_type,
+    count(distinct action_id) as use_template_actions
+from total
+where feed_type in ('Discover Categories', 'Main Categories','Search Categories')
+group by 1,2
+order by dt_period, use_template_actions desc
+   

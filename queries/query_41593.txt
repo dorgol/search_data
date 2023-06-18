@@ -1,0 +1,33 @@
+/*
+    Name: VL iOS Bundles experiment - purchase and redeem actions per variant
+    Query ID: 41593
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-03T14:03:30.233Z
+    */
+    with experiment_users as (
+    select distinct
+        id_for_vendor,
+        variant,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and experiment = "Bundles (Production)"
+        and case when '{{segmentation}}' = 'All Users' then segmentation = "01 All Users"
+                 when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+) 
+
+select
+    ex.variant, 
+    ac.action,
+    count(distinct ac.action_id) as num
+from experiment_users as ex
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` as ac
+    on ex.id_for_vendor = ac.platform_device_id
+    and ac.device_timestamp > ex.experiment_started_device
+    and action in ("purchase_template", "redeem_template")
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_ended` as ae
+        on ac.action_id = ae.action_id
+        and ae.reason = "succeeded"
+group by 1,2

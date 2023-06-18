@@ -1,0 +1,31 @@
+/*
+    Name: Felix - Installation vs Usage (Onboarding)
+    Query ID: 41085
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-17T16:20:53.270Z
+    */
+    with install_counts as (
+    select 
+        platform,
+        timestamp_diff(first_launch,install_time, minute) as launch_delay,
+        count(distinct lt_defacto_id) as count_installs
+    from
+        `ltx-dwh-prod-processed`.`agg`.`app_device`
+    where install_time > '2023-01-01'    
+    group by 1,2
+)
+
+select 
+    platform,
+    case when launch_delay = 0 then '0'
+    when launch_delay < 100 then '<100'
+    when launch_delay < 1000 then '<1000'
+    when launch_delay < 10000 then '<10000'
+    else '>10000' end as launch_delay,
+    sum(count_installs) as count_installs
+from install_counts
+group by 
+    1,2
+order by 1,2 asc    
+    
+    

@@ -1,0 +1,20 @@
+/*
+    Name: Facetune: Video Trim Completion
+    Query ID: 40469
+    Created By: Nicky Kamins
+    Last Updated At: 2023-03-20T18:45:02.282Z
+    */
+    select
+    coalesce(e.is_subscriber, s.is_subscriber) as is_subscriber,
+    count(distinct s.ftv_import_preview_session_id) as trims_started,
+    count(distinct e.ftv_import_preview_session_id) as trims_applied,
+    100*count(distinct e.ftv_import_preview_session_id)/count(distinct s.ftv_import_preview_session_id) as trim_completion_pct,
+from `ltx-dwh-prod-raw.analytics.ios_facetune2_hydra_import_preview_session_started` s
+left join `ltx-dwh-prod-raw.analytics.ios_facetune2_hydra_import_preview_session_ended` e
+    on s.ftv_import_preview_session_id = e.ftv_import_preview_session_id
+    and e.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+    and ftv_reason = 'apply'
+where true
+and s.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+group by 1
+order by 1

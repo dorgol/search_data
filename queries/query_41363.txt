@@ -1,0 +1,22 @@
+/*
+    Name: VL Export Participation Over Time
+    Query ID: 41363
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-26T09:12:53.844Z
+    */
+    -- Find percentage of users who exported a project on month0 over time
+
+-- lt_defacto_id, by date of launch. Whether they exported a project in month 0
+
+declare start_date date default '2022-08-01';
+
+    select 
+        date_trunc(first_launch, month) as first_launch_month,
+        count(distinct lt_defacto_id) as cohort_users,
+        count(distinct case when cntd_exports > 0 then lt_defacto_id end) as export_users,
+        safe_divide(count(distinct case when cntd_exports > 0 then lt_defacto_id end), count(distinct lt_defacto_id))*100 as export_pct
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where date(first_launch) >= '2022-08-01'
+        and lower(app_name) in ('videoleap', 'videoleap_android')
+        and date_trunc(date(first_launch), month) = date_trunc(date(dt), month) -- month0
+    group by 1

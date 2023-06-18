@@ -1,0 +1,55 @@
+/*
+    Name: VL - Feature Performance Over Time
+    Query ID: 41911
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-15T16:08:12.423Z
+    */
+    with posts as (
+    select distinct
+        post_id,
+        template_id,
+        parent_template_id,
+        root_template_id,
+        split(requirements_flat, ".")[offset(0)] as effect_name,
+        requirements_flat as effect_full,
+        app_name,
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create`,
+        unnest(requirements) as requirements_flat
+    where app_name = "videoleap"
+        --and requirements_flat like '%aiTransform%'
+)
+
+, stats as (
+    select
+        p.post_id,
+        dt,
+        case when effect_full like "%transition%" then "transition"
+         when effect_full like "%soundEffect%" then "sound_effect"
+         when effect_full like "%voiceOver%" then "voice_over"
+         when effect_name in ("crt", "pixelate", "pulsar","fishEye", "shake", "offset", "rays", "defocus", "crystal", "prism", "lensFlare", "colorfy", "vignette", "kaleidoscope","kaleidoscopeGrid", "filmGrain", "strobe" ) then "effects"
+         --when effect_name in ("crt", "pixelate", "pulsar") then "glitch"
+         when effect_full like '%aiTransform%' then "AI_Transform"
+         when effect_name in ("adjust", "text", "clip", "sticker", "audio", "filters", "mixer", "toneLab", "canvas", "cutout") then effect_name
+        else "other" end as effect_name,
+        distinct_total_impressions,
+        total_clicks,
+        distinct_export_started_feed,
+        distinct_export_rate_feed
+    from posts p
+    inner join `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily` rd
+        on rd.post_id = p.post_id
+        and dt >= '2023-03-01' and dt != current_date()
+        )
+
+
+select
+    effect_name,
+    dt,
+    sum(distinct_total_impressions) as impressions,
+    sum(total_clicks) as clicks,
+    sum(distinct_export_started_feed) as exports,
+    safe_divide(sum(distinct_export_started_feed),sum(distinct_total_impressions))*100 as export_rate,
+from stats
+where effect_name not in ('clip', 'audio')
+group by 1,2
+having impressions > 1000

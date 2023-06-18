@@ -1,0 +1,160 @@
+/*
+    Name: Creators & Sellers - purchase & export info per creator (last month)
+    Query ID: 41797
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-11T15:11:43.023Z
+    */
+    with purchases as (
+    select distinct 
+        date(r.created_at) as dt,
+        r.transaction_id,
+        split(r.consumable_id, '.')[offset(4)] original_post_id,
+        split(r.consumable_id, '.')[offset(5)] purchased_post_id,
+        u.payments.actual_proceeds,
+        u.payments.gross_proceeds,
+    from `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions` as u
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`redeemed_coins` as r
+        on cast(r.transaction_id as string) = u.transaction.transaction_id
+    where u.vertical = 'Videoleap'
+        and u.subscription.product_sub_category = "template"
+        and date(u.original_purchase_date) >= date_sub(date_trunc(current_date(), month), interval 1 month)
+        and date(u.original_purchase_date) < date_trunc(current_date(), month)
+)
+
+, creators_accounts as (
+    select
+        post_id,
+        account_id
+    from `ltx-dwh-prod-raw`.`analytics`.`backend_feed_post_create` as be
+    qualify (row_number() over (partition by post_id order by server_timestamp desc) = 1)
+)
+
+, purchases_per_template as (
+    select distinct
+        original_post_id,
+        account_id,
+        purchased_post_id,
+        count(distinct transaction_id) as num_transactions,
+        sum(actual_proceeds) as net_revenues
+    from purchases as p
+    left join creators_accounts as a
+        on a.post_id = p.original_post_id
+    group by 1,2,3
+)
+
+, accounts as (
+    select distinct
+        r.lt_id,
+        r.account_id,
+        ad.current_store_country
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_registered` as r
+    join purchases_per_template as p
+        on p.account_id = r.account_id
+     left join `ltx-dwh-prod-processed`.`agg`.`app_device` ad
+        on ad.platform_device_id = r.platform_device_id
+    where true
+    --and cdate(meta_received_at) >= date_sub(current_date, interval 3 month) -- why this?
+    qualify (row_number() over (partition by account_id order by meta_received_at desc) = 1)
+)
+
+, names as (
+    select distinct 
+        n.lt_id,
+        n.value as name,
+        a.account_id,
+        a.current_store_country as country
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_profile_features` as n
+    join accounts as a
+        on n.lt_id = a.lt_id
+    where lower(action) in ("add", "replace")
+        and feature = "username"
+    qualify (row_number() over (partition by lt_id order by meta_received_at desc) = 1)
+)
+
+, purchases_per_creator as (
+    select
+        p.account_id,
+        n.name,
+        case when p.account_id in ("bec04c27-f000-4975-86e0-bf3527aed041",
+                                    "66e995df-9c23-4533-a783-9bdd0f64a2a5",
+                                    "911b44a0-a88e-4c9c-8604-a0ea15b318c2",
+                                    "574591ce-96a2-4b95-88a1-23c39d6d54e9",
+                                    "0e6a85dc-1ba2-43c7-9c1d-dd39c93738d4",
+                                    "196a7772-fb29-4326-8271-02f3cf9f0431",
+                                    "8f5478b6-539e-4bf7-8d0d-96da6174d599",
+                                    "6c265a4c-f8f8-446d-91d1-cefab69f7469",
+                                    "9c873679-95db-4f96-94db-3df80c52fb02",
+                                    "c69e5be4-015a-42ed-be41-f2504dc7e620",
+                                    "5555e72e-d6db-4ab1-9404-e8f815fee762",
+                                    "4a4efac6-5fbf-4475-b876-a0c9f609bd0a",
+                                    "dff125a0-5347-40e1-b3ac-043a3fa7ab0c",
+                                    "525d373d-44d6-4502-93e4-4c88ca335836",
+                                    "2c98c781-8cf6-4c14-8579-d8e35a8440ad",
+                                    "cb5d4368-5b26-45c0-b762-182d930e4e74",
+                                    "190ad8bd-a02b-43a7-bb2e-cf2f8fd51beb",
+                                    "5a311bd3-df82-40ba-8747-744a64798951",
+                                    "9b1a0db0-dd5e-403d-9a23-9aeea01efefb",
+                                    "35d4bd26-e371-4fee-a489-557f3825f708") then "paid UGC" else "unpaid" end as user_type,
+        sum(p.num_transactions) as total_purchases,
+        sum(p.net_revenues) as total_net_revenues
+    from purchases_per_template as p
+    left join names as n
+        on n.account_id = p.account_id
+    group by 1,2,3
+)
+
+, stats_per_creator as (
+    select
+        ca.account_id,
+        country,
+        sum(distinct_total_impressions) as total_impressions,
+        sum(total_clicks) as total_clicks,
+        sum(distinct_export_started_feed) as total_exports_feed,
+        safe_divide(sum(total_clicks), sum(distinct_total_impressions))*100 as total_ctr,
+        safe_divide(sum(distinct_export_started_feed), sum(distinct_total_impressions))*100 as total_export_rate_feed
+    from creators_accounts ca
+    inner join `ltx-dwh-prod-processed`.`app`.`feed_posts_ratio_daily` pr
+        on pr.post_id = ca.post_id
+        and date(dt) >= date_sub(date_trunc(current_date(), month), interval 1 month)
+        and date(dt) < date_trunc(current_date(), month)
+    left join names as n
+        on n.account_id = ca.account_id
+    group by 1,2
+        )
+
+select distinct
+    date_sub(date_trunc(current_date(), month), interval 1 month) as month,
+    n.account_id,
+    name,
+    country,
+    user_type,
+    total_purchases,
+    total_net_revenues,
+    total_net_revenues / total_purchases as avg_template_price,
+    total_net_revenues * 0.4 as pay_to_creator,
+    sum(total_net_revenues * 0.4) over () as total_payments_to_creators,
+    total_impressions,
+    total_clicks,
+    total_exports_feed,
+    total_ctr,
+    total_export_rate_feed
+from  
+purchases_per_creator n
+    left join stats_per_creator as s
+        on n.account_id = s.account_id
+where case when '{{user_type}}' = 'all' then true else user_type = '{{user_type}}' end
+order by pay_to_creator desc
+
+
+--select distinct
+--    account_id,
+--    name,
+--    user_type,
+--    total_purchases,
+--    total_net_revenues,
+--    total_net_revenues / total_purchases as avg_template_price,
+--    total_net_revenues * 0.4 as pay_to_creator,
+--    sum(total_net_revenues * 0.4) over () as total_payments_to_creators
+--from purchases_per_creator
+--where case when '{{user_type}}' = 'all' then true else user_type = '{{user_type}}' end
+--order by pay_to_creator desc--

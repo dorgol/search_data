@@ -1,0 +1,21 @@
+/*
+    Name: Facetune Android: Sub Screens
+    Query ID: 41151
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-24T05:47:20.952Z
+    */
+    select
+    timestamp_trunc(d.meta_received_at, day) as period,
+    d.source,
+    count(distinct d.event_id) as screens_seen,
+    100*count(distinct s.event_id)/count(distinct d.event_id) as screen_cvr,
+from `ltx-dwh-prod-raw.analytics.android_facetune2_subscription_screen_displayed` d
+left join `ltx-dwh-prod-raw.analytics_pii_free.android_facetune2_subscription_purchase_succeeded` s
+    on d.installation_id = s.installation_id
+    and d.purchase_session_id = s.purchase_session_id
+    and s.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+where true
+and d.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+group by 1,2
+having screens_seen > 100
+order by 1,3 desc

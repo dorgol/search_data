@@ -1,0 +1,76 @@
+/*
+    Name: 20230404 - [FT-1088] AI Enhance V2 - Feature Acceptance - First Feature Used
+    Query ID: 41464
+    Created By: Josh Seidman
+    Last Updated At: 2023-06-02T09:06:11.056Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1088] AI Enhance V2')
+    and display_type = 'entered_photo_editor'
+    and variant != 'Overrides'
+),
+
+enhance_as_first_feature_used as (
+    select
+        *
+    from (
+        select
+            segmentation,
+            variant,
+            fs.feature_name,
+            toolbar_item_index,
+            fs.platform_device_id as id_for_vendor,
+            fs.event_id,
+            fs.editing_session_id,
+            reason,
+            count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_num_users_used_a_feature,
+            row_number() over (partition by segmentation, variant, id_for_vendor, fs.editing_session_id order by fs.device_timestamp asc) usage_order_num
+        from users u
+        join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+            on fs.app_name = 'facetune2'
+            and fs.meta_received_at >= '2023-04-04'
+            and fs.meta_received_at >= experiment_started_meta
+            and fs.platform_device_id = u.id_for_vendor
+        left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+            on fs.feature_usage_id = fe.feature_usage_id
+    )
+    where usage_order_num = 1
+    -- and feature_name = 'aiEnhance'
+)
+
+select
+    segmentation,
+    variant,
+    feature_name,
+    min(toolbar_item_index) toolbar_item_index,
+    count(distinct id_for_vendor) num_users_used,
+    count(distinct editing_session_id) num_editing_sessions_used,
+    count(distinct case when reason = 'accepted' then event_id end) num_accepts,
+    count(distinct case when reason = 'accepted' then id_for_vendor end) num_acceptors,
+    count(distinct case when reason = 'accepted' then event_id end)/ count(distinct event_id)*100 as accept_rate_events,
+    count(distinct case when reason = 'accepted' then editing_session_id end)/ count(distinct editing_session_id)*100 as accept_rate_editing_session,
+    count(distinct case when reason = 'accepted' then id_for_vendor end)/ count(distinct id_for_vendor)*100 as accept_rate_users,
+    count(distinct case when reason = 'accepted' then id_for_vendor end)/max(total_num_users_used_a_feature)*100 pct_of_all_users_accepted
+from enhance_as_first_feature_used
+group by 1,2,3
+having num_users_used >= 100
+order by 1,2,7 desc

@@ -1,0 +1,32 @@
+/*
+    Name: VL iOS - paid templates - Purchases per Purchaser
+    Query ID: 40878
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-04T15:19:44.924Z
+    */
+    with purchasers as (
+    select distinct
+        sd.id_for_vendor as platform_device_id,
+        date_trunc(date(t.purchase_date), {{period}}) as dt,
+        count(distinct t.transaction_id) as purchases
+    from `ltx-dwh-prod-processed.subscriptions.ios_transactions` t
+        left join  `ltx-dwh-prod-processed.subscriptions.ios_subscriptions_devices` as sd
+            on sd.original_transaction_id = t.original_transaction_id
+       -- left join `ltx-dwh-prod-processed`.`subscriptions`.`redeemed_coins` as r
+       --     on cast(r.transaction_id as string) = t.transaction_id
+    where true
+            and is_sandbox is false
+            and lower(product_id) like '%template%'
+            and t.application = "videoleap"
+            and case when '{{tier}}' = "1$" then product_id like "%TA%"
+                  when '{{tier}}' = "5$" then product_id like "%TB%" 
+                  when '{{tier}}' = "10$" then product_id like "%TC%" else true end
+    group by 1,2
+)
+
+select
+    dt,
+    case when purchases > 4 then '5+ purchases' else concat(purchases, ' purchases') end as purchases,
+    count(distinct platform_device_id) as users
+from purchasers
+group by 1,2

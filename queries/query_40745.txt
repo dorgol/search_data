@@ -1,0 +1,90 @@
+/*
+    Name: PP Self Serve - Onboarding Funnel (days between steps) over time
+    Query ID: 40745
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-29T14:32:13.433Z
+    */
+    with actions as (
+
+select distinct
+    a.id as org_id,
+    su.subscription_type,
+    campaign_id,
+    date(a.created_at) as account_created_dt,
+    date(c.created_at) as campaign_created_dt,
+    date(c.activated_at) as campaign_activated_dt,
+    min(date(pg.created_at)) as application_sent_dt,
+    min(date(pg.accepted_at)) as application_accepted_dt
+from agencies a
+    left join merchants m
+      on m.agency_id = a.id
+    left join agency_memberships am
+      on am.agency_id = a.id
+    left join dashboard_users d
+      on d.id = am.dashboard_user_id
+inner join subscriptions su
+    on su.agency_id = a.id
+    and su.subscription_type in ('platform_free', 'essentials')
+inner join campaigns c
+    on m.id = c.merchant_id
+    and c.aasm_state != 'draft'
+    and c.activated_at >= c.created_at
+left join paid_gigs pg
+    on pg.campaign_id = c.id
+    and pg.aasm_state not in ('replaced', 'cancelled')
+    and pg.created_at >= c.activated_at
+where date(c.created_at) >= '{{from_date}}'
+    and primary_email not like '%lightricks%'
+    and primary_email not like '%popular%'
+    and primary_email not like '%poppays%'
+    and primary_email not like '%test%'
+    and primary_email not like '%codicate%'
+    and a.name != 'TZLILBRAND'
+    
+    --and lower(persisted_brand_name) not like '%delete%'
+    --and lower(persisted_brand_name) not like '%popular%'
+    --and lower(persisted_brand_name) not like '%test%'
+group by 1,2,3,4,5,6
+)
+
+
+, days_between as (
+select distinct
+    campaign_id,
+    campaign_created_dt,
+    campaign_activated_dt - campaign_created_dt   as created_to_activated,
+    application_sent_dt - campaign_created_dt      as created_to_applied_invited,
+    application_sent_dt - campaign_activated_dt      as activated_to_applied_invited,
+    application_accepted_dt - campaign_activated_dt      as activated_to_accepted
+from actions a1)
+
+, min_days as (
+    select
+        campaign_id,
+        campaign_created_dt,
+        min(created_to_activated) as created_to_activated,
+        min(created_to_applied_invited) as created_to_applied_invited,
+        min(activated_to_applied_invited) as activated_to_applied_invited,
+        min(activated_to_accepted) as activated_to_accepted
+    from days_between
+    group by 1,2)
+
+    
+select
+    date_trunc('{{period}}',campaign_created_dt) as dt,
+    count(distinct campaign_id) as campaigns,
+    avg(created_to_activated) as days_created_to_activated,
+    --avg(created_to_applied_invited) as days_created_to_applied_invited,
+    avg(activated_to_applied_invited) as days_activated_to_applied_invited,
+    avg(activated_to_accepted) as days_activated_to_accepted
+from min_days
+group by 1
+
+--select 
+--*,
+--    campaign_activated_dt - campaign_created_dt   as created_to_activated,
+--    application_sent_dt - campaign_created_dt      as created_to_applied_invited,
+--    application_sent_dt - campaign_activated_dt      as activated_to_applied_invited
+--from actions
+    
+    

@@ -1,0 +1,107 @@
+/*
+    Name: AF Exp Copy
+    Query ID: 41937
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-16T10:15:01.117Z
+    */
+    with experiment_users as (
+    select distinct
+        variant,
+        id_for_vendor,
+        experiment_started_device,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and experiment = "Assets First Production"
+        and variant <> "Baseline"
+        and case when '{{segmentation}}' = 'All' then segmentation = "01 All Users"
+                 when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+)
+
+, raw_button_pressed as (
+    select distinct
+        device_timestamp,
+        platform_device_id,
+        button_identifier,
+        destination,
+        open_project_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed`
+    where app_name = "videoleap"
+        and date(meta_received_at) >= "2023-03-19"
+        and button_identifier in ("home_plus_button", "create_button")
+)
+
+, raw_export_pressed as (
+    select distinct
+        device_timestamp,
+        id_for_vendor,
+        open_project_id,
+        reason
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported`
+    where date(meta_received_at) >= "2023-03-19"
+        and reason like "%export button pressed"
+)
+
+, raw_feed_clicks as (
+    select distinct
+        platform_device_id,
+        device_timestamp,
+        open_project_id,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started`
+    where meta_source = "videoleap" and platform = "ios"
+        and date(meta_received_at) >= "2023-03-19"
+        and screen_name = "assets_first.all"
+        and action = "use_template"
+        and post_position_in_feed > 0
+)
+
+, data as (
+    select
+        ex.variant,
+        count(distinct ex.id_for_vendor) as total_users,
+        count(distinct b1.platform_device_id) as clicked_plus,
+        count(distinct s1.platform_device_id) as saw_project_wizard,
+        count(distinct b2.platform_device_id) as clicked_create,
+        count(distinct case when ex.variant = "Variant 2" and b2.destination = "editor" 
+                         or ex.variant = "Variant 1" and b2.destination = "mini_editor" then b2.platform_device_id end) as changed_default_editor,
+        count(distinct case when b2.destination = "editor" then b2.platform_device_id end) as selected_editor,
+        count(distinct case when b2.destination = "mini_editor" then b2.platform_device_id end) as selected_mini_editor,
+        count(distinct ac1.platform_device_id) as selected_template_in_assets_first_drawer,
+        count(distinct case when sar.reason = "template editor export button pressed" then sar.id_for_vendor end) as export_clicked_in_mini_editor,
+        count(distinct case when sar.reason = "export button pressed" then sar.id_for_vendor end) as export_clicked_in_main_editor,
+    from experiment_users as ex
+    left join raw_button_pressed as b1
+        on  ex.experiment_started_device < b1.device_timestamp
+        and b1.button_identifier = "home_plus_button"
+        and b1.platform_device_id = ex.id_for_vendor
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` as s1
+        on s1.app_name = "videoleap"
+        and b1.device_timestamp < s1.device_timestamp
+        and s1.screen_name = "new_project_wizard"
+        and s1.platform_device_id = ex.id_for_vendor
+    left join raw_button_pressed as b2
+        on ex.experiment_started_device < b2.device_timestamp
+        and b2.button_identifier = "create_button"
+        and b2.platform_device_id = ex.id_for_vendor
+    left join raw_feed_clicks as ac1
+        on ex.experiment_started_device < ac1.device_timestamp
+        and ac1.platform_device_id = ex.id_for_vendor
+    left join raw_export_pressed as sar
+        on sar.id_for_vendor = ex.id_for_vendor
+        and b2.device_timestamp < sar.device_timestamp
+        and sar.open_project_id = b2.open_project_id
+    group by 1
+)
+
+select 
+    variant,
+    clicked_plus / total_users * 100 as clicked_plus,
+    saw_project_wizard / total_users * 100 as saw_project_wizard,
+    changed_default_editor / total_users * 100 as changed_default_editor,
+    clicked_create / total_users * 100 as clicked_create,
+    selected_editor / total_users * 100 as selected_editor,
+    export_clicked_in_main_editor / total_users * 100 as export_clicked_in_main_editor,
+    selected_mini_editor / total_users * 100 as selected_mini_editor,
+    selected_template_in_assets_first_drawer / total_users * 100 as selected_template_in_assets_first_drawer,
+    export_clicked_in_mini_editor / total_users * 100 as export_clicked_in_mini_editor,
+from data

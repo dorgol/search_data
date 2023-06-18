@@ -1,0 +1,59 @@
+/*
+    Name: PL Avatars Export Screen
+    Query ID: 40751
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-03-29T15:31:07.007Z
+    */
+    with
+presented_screen as
+
+(select 
+distinct
+platform_device_id,
+date(meta_received_at) as dt
+from `ltx-dwh-prod-raw.analytics_global.ltx_global_screen_presented`
+where app_name='editor'
+and meta_received_at >'2023-03-18'
+and screen_name like ('%image_export')
+and cast(app_version_code as int64)>=4492
+)
+
+
+select *,
+safe_divide(enhance_starters, users) *100 as enhance_users_pct,
+safe_divide(motion_starters, users) *100 as motion_users_pct,
+safe_divide(editor_starters, users) *100 as editor_users_pct,
+safe_divide(any_feature_starter, users) *100 as any_feature_users_pct,
+from
+(
+select 
+ps.dt,
+count(distinct ps.platform_device_id) as users,
+count(distinct ie.id_for_vendor) as enhance_starters,
+count(distinct fs.platform_device_id) as motion_starters,
+count(distinct efs.id_for_vendor) as editor_starters,
+count(distinct ie.flow_id) as enhance_starts,
+count(distinct fs.feature_usage_id) as motion_starts,
+count(distinct efs.flow_id) as editor_starts,
+count(distinct coalesce(ie.id_for_vendor,fs.platform_device_id,efs.id_for_vendor)) as any_feature_starter
+
+
+from presented_screen as ps
+left join `ltx-dwh-prod-raw.analytics.ios_editor_instant_edit_flow_started` as ie
+on ps.platform_device_id=ie.id_for_vendor
+and ps.dt=date(ie.meta_received_at)
+and ie.instant_edit_name='AIEnhance'
+and source in ('couples_ai_avatar','pets_ai_avatar','ai_avatar','dnd_ai_avatar')
+left join `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started` as fs
+on ps.platform_device_id=fs.platform_device_id
+and ps.dt=date(fs.meta_received_at)
+and fs.feature_name='motion'
+and fs.app_name='editor'
+and fs.source in ('ai_avatar','dnd_ai_avatar','pets_ai_avatar','couples_ai_avatar')
+left join `ltx-dwh-prod-raw.analytics.ios_editor_editor_flow_started` as efs
+on ps.platform_device_id=efs.id_for_vendor
+and ps.dt=date(efs.meta_received_at)
+and substr(efs.source,15) in ('DNDAIAvatar','AIAvatar','CouplesAIAvatar','PetsAIAvatar')
+group by 1
+)
+;

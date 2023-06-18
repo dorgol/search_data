@@ -1,0 +1,42 @@
+/*
+    Name: Videoleap - Subscriptions -  Paid Subscription Sources
+    Query ID: 40439
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-07T08:39:48.581Z
+    */
+    select
+    case 
+        when total_subs_by_source_rank <= 15 then source
+        when total_subs_by_source_rank > 15 then 'Other Sources'
+    end as source,
+    dt,
+    count(distinct attribution_user_id) as subs,
+    count(distinct attribution_user_id)/max(total_subs)*100 pct_total_subs
+from (
+    select
+        *,
+        dense_rank() over (order by total_subs_by_source desc) total_subs_by_source_rank
+    from (
+    
+        select
+            subscription.subscription_source as source,
+            timestamp_trunc(original_purchase_date, {{date_part}}) as dt,
+            attribution.attribution_user_id,
+            count(distinct attribution.attribution_user_id) over (partition by subscription.subscription_source) as total_subs_by_source,
+            count(distinct attribution.attribution_user_id) over (partition by timestamp_trunc(original_purchase_date, {{date_part}})) as total_subs,
+        from `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation_cross_sell`
+        where true
+        and date(original_purchase_date) >= date_sub(current_date(), interval 30 {{date_part}}) 
+        and date_trunc(date(original_purchase_date), {{date_part}}) <> date_trunc(current_date(), {{date_part}}) 
+        and application = 'videoleap'
+        and payments.payment_origin!='web_payments'
+         and case 
+            when '{{segmantation}}' = 'day0' then timestamp_diff(original_purchase_date, device.install_time, day) <= 0
+             when '{{segmantation}}' = 'Existing User' then timestamp_diff(original_purchase_date, device.install_time, day) > 14
+             when '{{segmantation}}' = 'All' then true
+         end 
+         and payments.revenue_so_far_alloc_cs > 0
+    )
+)
+group by 1,2
+order by 2

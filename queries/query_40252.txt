@@ -1,0 +1,57 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Feature Usage Durations
+    Query ID: 40252
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-12T12:01:25.842Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1072]Lama Inpainting')
+    and display_type = 'entered photo editor'
+)
+
+select
+    segmentation,
+    variant,
+    feature_usage_duration,
+    count(distinct id_for_vendor) num_users_used,
+    count(distinct id_for_vendor)/ max(total_num_users_used)*100 as pct_total_users_used,
+    count(distinct event_id) num_uses,
+    count(distinct event_id)/ max(total_num_uses)*100 pct_total_uses
+from (
+    select distinct
+        segmentation,
+        variant,
+        round(feature_usage_duration,0) feature_usage_duration,
+        u.id_for_vendor,
+        fe.event_id,
+        count(distinct u.id_for_vendor) over (partition by segmentation, variant) total_num_users_used,
+        count(distinct fe.event_id) over (partition by segmentation, variant) total_num_uses
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.app_name = 'facetune2'
+        and fe.meta_received_at >= '2023-03-01'
+        and fe.meta_received_at >= experiment_started_meta
+        and fe.platform_device_id = u.id_for_vendor
+        and feature_name = 'Patch'
+)
+group by 1,2,3
+order by 1,2,4

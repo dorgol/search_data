@@ -1,0 +1,41 @@
+/*
+    Name: Bundles experiment - Users saw single purchase popup
+    Query ID: 41662
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-07T13:09:41.931Z
+    */
+    -- -- only splits out consumable transactions atm - need to split out paid templates using product_id
+-- -- actual product_id should be 'com.lightricks.EnlightVideo_C_V1.TA_Videoleap.FeedTemplate.1'
+
+with experiment_users as (
+    select distinct
+        id_for_vendor,
+        variant,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and experiment = "Bundles (Production)"
+        and case when '{{segmentation}}' = 'All Users' then segmentation = "01 All Users"
+                 when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+) 
+
+select
+    coalesce(date(p.meta_received_at), date(mp.meta_received_at)) as dt,
+    count(distinct case when ex.variant = "Baseline" then p.id_for_vendor end) as baseline_users_saw_old_popup,
+    count(distinct case when ex.variant = "Variant 1" then p.id_for_vendor end) as variant_users_saw_old_popup,
+    count(distinct case when ex.variant = "Baseline" then mp.platform_device_id end) as baseline_users_saw_bundles_popup,
+    count(distinct case when ex.variant = "Variant 1" then mp.platform_device_id end) as variant_users_saw_bundles_popup,
+from experiment_users as ex
+left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_popup_presented` as p
+        on ex.id_for_vendor = p.id_for_vendor
+        and p.device_timestamp > ex.experiment_started_device
+        and p.popup_title like "%mini_to_full%"
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` as mp
+        on mp.platform_device_id = ex.id_for_vendor
+        and mp.device_timestamp > ex.experiment_started_device
+        and mp.app_name = "videoleap"
+        and mp.message_name = "template_purchase_bundles"
+        and mp.app_version_code <> "4001"
+group by 1

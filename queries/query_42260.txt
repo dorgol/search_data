@@ -1,0 +1,13 @@
+/*
+    Name: Videoleap last experiments
+    Query ID: 42260
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-28T07:27:37.521Z
+    */
+    select distinct
+    first_day,
+    experiment,
+    variant,
+from `ltx-dwh-prod-processed`.`ab_test`.`view_agg`
+where application = "videoleap"
+    and date(first_day) >= date_sub(current_date(), interval 2 week)

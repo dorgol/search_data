@@ -1,0 +1,64 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Patch non-Accepts
+    Query ID: 40044
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-05T15:35:59.394Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1072]Lama Inpainting')
+    and display_type = '{{display_type}}'
+)
+
+select
+    segmentation,
+    variant,
+    feature_name,
+    min(toolbar_item_index) toolbar_item_index,
+    count(distinct id_for_vendor) num_users_used,
+    count(distinct case when reason_type = 'network_issues' then event_id end) num_network_issues,
+    count(distinct case when reason = 'canceled' then event_id end)/ count(distinct event_id)*100 as reject_rate_events,
+    count(distinct case when reason = 'canceled' and reason_type = 'network_issues' then event_id end)/ count(distinct event_id)*100 as reject_rate_w_network_issues_events,
+from (
+    select distinct
+        segmentation,
+        variant,
+        fs.feature_name,
+        toolbar_item_index,
+        u.id_for_vendor,
+        fs.event_id,
+        reason,
+        coalesce(fe.is_subscriber, fs.is_subscriber) as is_subscriber,
+        case when json_extract_scalar(sub_feature_state, '$.deviceState.networkIsAvailable') = "false" then 'network_issues' else 'other' end as reason_type
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2023-03-01'
+        and fs.meta_received_at >= experiment_started_meta
+        and fs.platform_device_id = u.id_for_vendor
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_ended` fe
+        on fe.meta_received_at >= '2023-03-01'
+        and fs.feature_usage_id = fe.feature_usage_id
+)
+where is_subscriber = true 
+group by 1,2,3
+having num_users_used >= 100
+order by 1,2,4

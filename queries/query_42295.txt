@@ -1,0 +1,26 @@
+/*
+    Name: Global Events - Message Flow - Integration
+    Query ID: 42295
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-30T10:27:08.216Z
+    */
+    select
+    vp.platform_device_id,
+    vp.device_timestamp as view_time,
+    vp.presentation_id,
+    vp.source,
+    vp.view_name,
+    vp.view_type,
+    vp.context,
+    vp.source_flow_id,
+    vd.reason,
+    vd.destination,
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_message_view_presented` vp
+left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_message_view_dismissed` vd
+    on vd.app_name = '{{app_name}}'
+    and vp.platform_device_id = vd.platform_device_id
+    and vp.presentation_id = vd.presentation_id
+    and vd.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+where vp.app_name = '{{app_name}}'
+and vp.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+order by 1,2 desc,3

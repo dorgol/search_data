@@ -1,0 +1,65 @@
+/*
+    Name: 20230316 - FT2 iOS - [FT-1078] Voluntary AR Off churn prevention - Displayed Subscriptions Breakdown (using rev alloc)
+    Query ID: 41487
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-01T12:43:38.684Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1078] Voluntary AR Off churn prevention')
+    and display_type = '{{display_type}}'
+),
+
+last_subs_before_exp_period as (
+    select
+        segmentation,
+        case when variant = 'baseline' then 'Baseline' else variant end as variant,
+        u.id_for_vendor,
+        s.subscription.subscription_duration,
+        s.subscription.had_trial,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_users 
+    from users u
+    join `ltx-dwh-prod-processed.ulei.ulei_att_user_groups_and_devices` d
+        on d.application = 'facetune2'
+        and d.lt_defacto_id = u.lt_defacto_id
+        and u.experiment_started_meta >= d.attribution_timestamp
+    join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation` s
+        on s.application = 'facetune2'
+        -- and s.attribution.attribution_user_id = d.attribution_user_id
+        and safe_cast(d.user_id as string) = rtrim(regexp_extract(s.attribution.attribution_user_id, r'\S*[-]'), '-')
+        -- and date(original_purchase_date) <  date(experiment_started_meta)
+    where true
+    -- last subscription before exp
+    qualify row_number() over (partition by id_for_vendor, segmentation, variant order by original_purchase_date desc) = 1
+    
+)
+select
+    segmentation,
+    variant,
+    case 
+        when had_trial then subscription_duration || ' + Trial'
+        else subscription_duration
+    end as subscription_duration,
+    count(distinct id_for_vendor) num_users_w_subscription,
+    max(total_users) total_displayed_users,
+from last_subs_before_exp_period
+group by 1,2,3
+order by 1,2,3

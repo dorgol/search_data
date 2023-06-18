@@ -1,0 +1,92 @@
+/*
+    Name: VL iOS - Bundles experiment - purchases
+    Query ID: 40848
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-04-04T17:50:20.074Z
+    */
+    with experiment_users as (
+    select distinct
+        id_for_vendor,
+        segmentation, 
+        variant,
+        experiment_started_device
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant`
+    where true
+        and application = "videoleap"
+        and experiment = "Bundles (Production)"
+        -- and display_type like "mini_editor_displayed_%" 
+        and display_type = "activated_for_device"
+) 
+
+, bundles_popup as (
+    select distinct
+        mp.platform_device_id,
+        mp.device_timestamp,
+        mp.event_id as presented_event,
+        md.event_id as dismissed_event,
+        md.reason
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` as mp
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` as md
+        on mp.flow_id = md.flow_id
+        and md.app_name = "videoleap"
+        and date(md.meta_received_at) >= "2023-04-02"
+    where true
+        and mp.app_name = "videoleap"
+        and mp.message_name = "template_purchase_bundles"
+        and date(mp.meta_received_at) >= "2023-04-02"
+        and mp.app_version_code <> "4001"
+)
+
+-- , presented_bundles as (
+--     select distinct
+--         platform_device_id,
+--         json_extract(bundles, "$.num_templates") as num_templates,
+--         json_extract(bundles, "$.price") as bundle_price,
+--         json_extract(bundles, "$.currency") as currency,
+--         event_id,
+--         device_timestamp
+--     from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_content_screen_refreshed`, unnest(received_content) as bundles
+--     where true
+--         and app_name = "videoleap"
+--         and screen_name = "template_editor"
+--         and app_version_code <> "4001"
+--         and date(meta_received_at) >= "2023-04-02"
+-- )
+
+, purchase_data as (
+    select distinct
+        pos.platform_device_id,
+        bundle_data.asset_id,
+        pos.device_timestamp,
+        pos.app_version_code,
+        pos.event_id as data_event,
+        en.event_id as ended_event
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_assets_purchase_order_summary` as pos, 
+    unnest(assets) as bundle_data
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_assets_purchase_ended` as en
+        on pos.flow_id = en.flow_id
+        and en.reason = "success"
+    where true
+        and pos.app_name = "videoleap"
+        and pos.app_version_code <> "4001"
+        and date(pos.meta_received_at) >= "2023-04-02"
+)
+
+select
+    ex.variant,
+    count(distinct ex.id_for_vendor) as num_devices_in_variant,
+    count(distinct bp.presented_event) as num_bundle_screen_seen,
+    count(distinct case when bp.reason = "continue" then bp.dismissed_event end) as num_bundle_screen_continue,
+    count(distinct case when bp.reason = "cancel" then bp.dismissed_event end) as num_bundle_screen_dismissed,
+    count(distinct pos.data_event) as num_start_bundle_purchase_process,
+    count(distinct case when pos.asset_id like "%.1" then pos.ended_event end) as num_bundle_1_purchase,
+    count(distinct case when pos.asset_id like "%.3" then pos.ended_event end) as num_bundle_3_purchase,
+    count(distinct case when pos.asset_id like "%.8" then pos.ended_event end) as num_bundle_8_purchase
+from experiment_users as ex
+left join bundles_popup as bp
+    on ex.id_for_vendor = bp.platform_device_id
+    and bp.device_timestamp > ex.experiment_started_device
+left join purchase_data as pos
+    on ex.id_for_vendor = pos.platform_device_id
+    and pos.device_timestamp > ex.experiment_started_device
+group by 1

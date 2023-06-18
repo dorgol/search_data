@@ -1,0 +1,83 @@
+/*
+    Name: VL iOS - AccountID from LTID
+    Query ID: 42203
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-24T15:41:16.237Z
+    */
+    with  accounts as (
+    select distinct
+        r.lt_id,
+        r.account_id,
+        r.meta_received_at
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_registered` as r
+
+
+    union all
+
+    select distinct
+        r.lt_id,
+        r.account_id,
+        r.meta_received_at
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_registered` as r
+)
+
+, accounts2 as (
+    select distinct
+        lt_id,
+        account_id
+    from accounts
+        qualify (row_number() over (partition by account_id order by meta_received_at desc) = 1)
+        )
+    
+select * from accounts2
+where lt_id in (
+'gVTeHTYaSlHRn71lxSmM',
+'bi9JKAntvIn0aWwH92CV',
+'m37pSE1jOmXhTc3W911B',
+'RafHDtiNulvHXSElt7bJ',
+'vo6jOSPwhrF5n-Po7igt',
+'N-zloP5YuXIBTtxdw_XY',
+'dBIGiTm0UHNo66yxrnal',
+'qfnKWRt-6IzY11pHhb-G',
+'LMTa4rbTFCLEWat2nWcw',
+'fozHbo3Lf3WEtIkjzVsh',
+'YSf2gW_z_vWFDQj5ggkb',
+'KKiZRL9RiKp-1tEYoK1Z',
+'d4xi8V7bx4McTYs6GW3C',
+'SsB2x3chGRLgXFJTxnsT',
+'XFAtZNZhJYYDDACnismt',
+'UeYFTPVHHiVLjk-EgFbr',
+'zL-mAibOAYXbHhvZwfsX',
+'QGwpL6fTWvjZBQjEd-Ue',
+'Z9F-TbOpeDcSQjtmZaJe',
+'t8_i3Vufj5QvKe0vkA5M',
+'gaoH_u_0KioCBQr9PvGn',
+'ca3a-Qxd9_1ANHLvFNp3',
+'0scmnoEQEs5F3-LG7_46',
+'tYih22pyQiRc5-dG3y-e',
+'vaXMJ8VgaX_ZE_hvXiNw',
+'JLeoEUgERBYuW_v_mstJ',
+'ATu6DWlnyoWWHce_P41E',
+'SnPWPgW-NWd-FuzcAFPx',
+'iR7U-LtsUYgaXuXN26eI',
+'7HkYRe525Xen5QHzHhXc',
+'Iyqm3wjPmqjVLFE--e6F',
+'7W47rVQTXemOlOm347Ok',
+'nlMRiw0SPo682MBaYUWi',
+'NwTs5NFtbH7sn1MhvjCf',
+'NwTs5NFtbH7sn1MhvjCf',
+'6boTe73hCScZ1tjXwnx5',
+'faWCqw7xeB0F9N3KMSQx',
+'dBIGiTm0UHNo66yxrnal',
+'HUpSMh1WGyjG4UGjmkPD',
+'AYtNXo2tPGYr6b5vga3p',
+'Vk9SpIvJF5PK---dbSQt',
+'R0RIycMWxIatvqpBp00x',
+'8m9Ns5nv23l1NHmGnt81',
+'zAVahWatPphqm4ERzY7H',
+'btVCiZmrLd3stfp2eIwo',
+'XpEGYMHwElXbMatQ-Zat',
+'N-pHW_0qgR-B3WHg3Q_Y',
+'T3OoUVbuK-8joRIlcLgE',
+'FH_7GaOmHBJspec-07De'
+)

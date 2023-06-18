@@ -1,0 +1,86 @@
+/*
+    Name: 20221221 -  [FT-1057] Makeup LAM (Combined) - Makeup Usage - Makeup Users - Until 7 days from First Usage
+    Query ID: 40491
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-21T13:47:36.571Z
+    */
+    with 
+users as (
+    select
+        *
+    from (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.country,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.display_type,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where case 
+            when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+            when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+            when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+            when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+            else true end
+        and  d.application = 'facetune2'
+        and (
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - New - Exp Var%') or
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Baseline%') or 
+        lower(d.experiment) like lower('%[FT-1057] Makeup LAM - Existing - Exp Var%')
+        )
+    )
+    where true
+    and display_type = 'activated_for_device'
+),
+
+makeup_usage as (
+    select
+        segmentation,
+        variant,
+        fs.id_for_vendor,
+        experiment_started_meta,
+        min(fs.device_timestamp) first_time_used_makeup_in_experiment,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_feature_started` fs
+        on fs.meta_received_at >= '2022-12-21'
+        and fs.id_for_vendor = u.id_for_vendor
+        and fs.meta_received_at >= experiment_started_meta
+        and feature_name = 'Makeup'
+    group by 1,2,3,4
+)
+
+select
+    segmentation,
+    variant,
+    feature_name,
+    toolbar_item_index,
+    count(distinct event_id) num_feature_uses,
+    count(distinct platform_device_id) num_feature_users,
+    count(distinct event_id)/max(num_total_uses)*100 pct_total_uses,
+    count(distinct platform_device_id)/max(num_total_users)*100 pct_total_users
+from (
+    select
+        segmentation,
+        variant,
+        fs.feature_name,
+        fs.event_id,
+        fs.platform_device_id,
+        min(toolbar_item_index) over (partition by segmentation, variant, fs.feature_name) toolbar_item_index,
+        count(distinct fs.event_id) over (partition by segmentation, variant) num_total_uses,
+        count(distinct fs.platform_device_id) over (partition by segmentation, variant) num_total_users,
+    from makeup_usage u
+    join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started` fs
+        on fs.app_name = 'facetune2'
+        and fs.meta_received_at >= '2022-02-21'
+        and fs.meta_received_at >= experiment_started_meta
+        and timestamp_diff(fs.device_timestamp, first_time_used_makeup_in_experiment, day) <= 7
+        and fs.platform_device_id = u.id_for_vendor
+)
+group by 1,2,3,4
+having num_feature_uses > 100
+order by 1,2,4

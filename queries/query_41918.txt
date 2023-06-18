@@ -1,0 +1,41 @@
+/*
+    Name: Global Events - Import Flow Direct Import - Integration
+    Query ID: 41918
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-16T06:30:38.304Z
+    */
+    select
+    iae.platform_device_id,
+    iae.device_timestamp as import_time,
+    -- ips.app_trim_video_length_limit,
+    -- ips.app_trim_video_length_subscription_restriction_limit,
+    -- ips.asset_id as preview_asset_id,
+    -- ips.process_id,
+    iae.asset_id,
+    iae.asset_title,
+    iae.asset_type,
+    iae.format,
+    iae.imported_asset_duration,
+    iae.imported_asset_height,
+    iae.imported_asset_width,
+    iae.original_asset_duration,
+    iae.original_asset_height,
+    iae.original_asset_width,
+    iae.provider,
+    iae.import_details,
+    iae.restrictions,
+    iae.eligibility_waiver,
+    iae.result,
+    iae.error,
+    iae.source,
+from `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_import_asset_ended` iae
+-- left join `ltx-dwh-stg-raw.analytics_global_integration.ltx_global_import_preview_started` ips
+--     on ips.app_name = '{{app_name}}'
+--     and fs.platform_device_id = ips.platform_device_id
+--     and fs.flow_id = ips.flow_id
+--     and vp.presentation_id = ips.presentation_id
+--     and ips.process_id = iae.process_id
+--     and ips.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+where iae.app_name = '{{app_name}}'
+and iae.meta_received_at >= timestamp_sub(current_timestamp(), interval 7 day)
+order by 1,2 asc,6 asc

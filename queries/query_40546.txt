@@ -1,0 +1,49 @@
+/*
+    Name: VL iOS - Branded Templates - Context Screen Buttons Pressed (Simply - TooShy NEW VERSION)
+    Query ID: 40546
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-23T09:14:32.645Z
+    */
+        select
+        case when button_identifier is null then '1. no button pressed' 
+             when button_identifier = 'lets_go' then '2. Lets Go!'
+             when button_identifier = 'continue' then '3. Continue'
+             when button_identifier = 'collab_add_yours' then '4. Add yours'
+             when button_identifier = 'add_clips' then '5. Add clips'
+             when button_identifier = 'clips_missing' then '6. Clips missing'
+             when button_identifier = 'collab_replace' then '7. Replace'
+             when button_identifier = 'watch_collab' then '8. Watch your Collab*'
+        
+        
+        else button_identifier end as button_identifier,
+        count(distinct mp.id_for_vendor) as context_screen_users
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_user_action_started` ui
+        on ui.platform_device_id = u.id_for_vendor
+        and ui.action = 'start_collab'
+        and date(ui.meta_received_at) >= '2023-03-21'
+        and ui.post_id = '5d7fc1c1-298c-48f7-a892-ceee8eb08bf9'
+    
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` te
+        on u.id_for_vendor = te.id_for_vendor
+        and date(te.meta_received_at) >= '2023-03-21'
+        and ui.action_id = te.action_identifier
+        
+    left join `ltx-dwh-prod-raw.analytics.ios_videoleap_message_presented`  mp
+        on u.id_for_vendor = mp.id_for_vendor
+        and mp.open_project_id = te.open_project_id
+        and mp.message_name = 'collab_context_screen'
+        and date(mp.meta_received_at) >= '2023-03-21'
+        
+    left join `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` bp
+        on mp.id_for_vendor = bp.platform_device_id
+        and bp.open_project_id = mp.open_project_id
+        and button_location = 'collab_context_screen'
+        and date(bp.meta_received_at) >= '2023-03-21'
+        
+    where u.experiment in ('IOS Feed Branded Campaign 11.22', 'IOS Feed Branded Campaign 01.23')
+        and segmentation = '01 All Users'
+        and display_type = 'activated_for_device'
+    
+    group by 1
+    order by 1 asc

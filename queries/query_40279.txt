@@ -1,0 +1,94 @@
+/*
+    Name: 20230301 - FT2 iOS - [FT-1072] LAMA Inpainting - Cumulative Paid CVR
+    Query ID: 40279
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-13T07:48:47.137Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        timestamp_diff(current_timestamp(), experiment_started_meta, day) days_since_start,
+        country,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and (
+        lower(d.experiment) = lower('[FT-1072]Lama Inpainting')
+    )
+    and display_type = '{{display}}'
+),
+all_days as (
+    select distinct
+       days_since_start as days
+    from users
+),
+
+users_day_x as (
+    select
+        *,
+        sum(num_users_day_x) over (partition by segmentation, variant order by days_since_start rows between current row and unbounded following) num_users_at_least_day_x,
+        sum(num_users_day_x) over (partition by segmentation, variant order by days_since_start rows between unbounded preceding and current row) num_users_until_day_x
+    from (
+        select
+            segmentation,
+            variant,
+            days_since_start,
+            count(distinct u.id_for_vendor) num_users_day_x,
+        from users u
+        group by 1,2,3
+    )
+),
+
+subs_day_x as (
+    select
+        *,
+        sum(num_paid_subs_day_x) over (partition by segmentation, variant order by days_since_start rows between current row and unbounded following) num_paid_subs_at_least_day_x,
+        sum(num_paid_subs_day_x) over (partition by segmentation, variant order by days_since_start rows between unbounded preceding and current row) num_paid_subs_until_day_x
+    from (
+        select
+            segmentation,
+            variant,
+            days_since_start,
+            count(distinct case when revenue_so_far > 0 then u.id_for_vendor end) num_paid_subs_day_x,
+        from users u
+        join `ltx-dwh-prod-processed`.`subscriptions`.`subscription_to_defacto` s
+            on s.application = 'facetune2'
+            and s.lt_defacto_id = u.lt_defacto_id
+            and original_purchase_date >= experiment_started_meta
+        join `ltx-dwh-prod-processed`.`agg`.`subscriptions` a
+            on a.original_transaction_id = s.original_transaction_id
+        group by 1,2,3
+    )
+)
+
+select
+    segmentation,
+    variant,
+    days_since_start,
+    num_users_day_x,
+    num_paid_subs_day_x,
+    num_users_at_least_day_x,
+    num_users_until_day_x, 
+    num_paid_subs_until_day_x,
+    num_paid_subs_until_day_x/num_users_until_day_x*100 cvr_of_users_until_day_x,
+    num_paid_subs_day_x/num_users_day_x*100 cvr_of_users_on_day_x,
+    num_paid_subs_at_least_day_x/num_users_at_least_day_x*100 cvr_of_users_at_least_day_x
+from users_day_x u
+left join subs_day_x s
+    using(segmentation, variant, days_since_start)
+order by 1,3,2

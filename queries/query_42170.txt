@@ -1,0 +1,116 @@
+/*
+    Name: VL iOS- Pick4Me experiment - users funnel by variant
+    Query ID: 42170
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-23T16:44:03.437Z
+    */
+    with experiment_users as (
+    select distinct
+        variant,
+        id_for_vendor,
+        experiment_started_device,
+        experiment_started_meta
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` as ex
+    where application = "videoleap"
+        and lower(experiment) like lower('Pick for Me (PROD)')
+        and case when '{{segmentation}}' = 'All' then segmentation = "01 All Users"
+                 when '{{segmentation}}' = 'New Users' then segmentation = "02 New Users"
+                 when '{{segmentation}}' = 'Existing Users' then segmentation = "03 Existing Users" end
+)
+
+, raw_button_pressed as (
+    select distinct
+        device_timestamp,
+        platform_device_id,
+        button_identifier,
+        destination,
+        open_project_id
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_button_pressed`
+    where app_name = "videoleap"
+        and date(meta_received_at) >= "2023-03-19"
+        and button_identifier in ("home_plus_button", "create_button", "pick_for_me", "pick_for_me_again")
+)
+
+, raw_export_pressed as (
+    select distinct
+        device_timestamp,
+        id_for_vendor,
+        open_project_id,
+        reason
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported`
+    where date(meta_received_at) >= "2023-03-19"
+        and reason like "%export button pressed"
+)
+
+, raw_feed_clicks as (
+    select distinct
+        platform_device_id,
+        device_timestamp,
+        open_project_id,
+    from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started`
+    where meta_source = "videoleap" and platform = "ios"
+        and date(meta_received_at) >= "2023-03-19"
+        and screen_name = "assets_first.all"
+        and action = "use_template"
+        and post_position_in_feed > 0
+)
+
+, data as (
+    select
+        ex.variant,
+        count(distinct ex.id_for_vendor) as total_users,
+        count(distinct b1.platform_device_id) as clicked_plus,
+        count(distinct b3.platform_device_id) as clicked_pick_for_me,
+        count(distinct b4.platform_device_id) as clicked_pick_for_me_again,
+        count(distinct s1.platform_device_id) as saw_project_wizard,
+        count(distinct b2.platform_device_id) as clicked_create,
+        count(distinct case when b2.destination = "editor" then b2.platform_device_id end) as selected_editor,
+        count(distinct case when b2.destination = "mini_editor" then b2.platform_device_id end) as selected_mini_editor,
+        count(distinct ac1.platform_device_id) as selected_template_in_assets_first_drawer,
+        count(distinct case when sar.reason = "template editor export button pressed" then sar.id_for_vendor end) as export_clicked_in_mini_editor,
+        count(distinct case when sar.reason = "export button pressed" then sar.id_for_vendor end) as export_clicked_in_main_editor,
+    from experiment_users as ex
+    left join raw_button_pressed as b1
+        on  ex.experiment_started_device < b1.device_timestamp
+        and b1.button_identifier = "home_plus_button"
+        and b1.platform_device_id = ex.id_for_vendor
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_presented` as s1
+        on s1.app_name = "videoleap"
+        and b1.device_timestamp < s1.device_timestamp
+        and s1.screen_name = "new_project_wizard"
+        and s1.platform_device_id = ex.id_for_vendor
+    left join raw_button_pressed as b2
+        on ex.experiment_started_device < b2.device_timestamp
+        and b2.button_identifier = "create_button"
+        and b2.platform_device_id = ex.id_for_vendor
+    left join raw_feed_clicks as ac1
+        on ex.experiment_started_device < ac1.device_timestamp
+        and ac1.platform_device_id = ex.id_for_vendor
+    left join raw_export_pressed as sar
+        on sar.id_for_vendor = ex.id_for_vendor
+        and b2.device_timestamp < sar.device_timestamp
+        and sar.open_project_id = b2.open_project_id
+    left join raw_button_pressed as b3
+        on ex.experiment_started_device < b3.device_timestamp
+        and b3.button_identifier = "pick_for_me"
+        and b3.platform_device_id = ex.id_for_vendor
+    left join raw_button_pressed as b4
+        on ex.experiment_started_device < b4.device_timestamp
+        and b4.button_identifier = "pick_for_me_again"
+        and b4.platform_device_id = ex.id_for_vendor
+    group by 1
+)
+
+select 
+    *,
+    clicked_plus / total_users * 100 as clicked_plus_pct,
+    clicked_pick_for_me / total_users * 100 as clicked_pick_for_me_pct,
+    clicked_pick_for_me_again / total_users * 100 as clicked_pick_for_me_again_pct,
+    saw_project_wizard / total_users * 100 as saw_project_wizard_pct,
+    clicked_create / total_users * 100 as clicked_create_pct,
+    selected_editor / total_users * 100 as selected_editor_pct,
+    export_clicked_in_main_editor / total_users * 100 as export_clicked_in_main_editor_pct,
+    selected_mini_editor / total_users * 100 as selected_mini_editor_pct,
+    selected_template_in_assets_first_drawer / total_users * 100 as selected_template_in_assets_first_drawer_pct,
+    export_clicked_in_mini_editor / total_users * 100 as export_clicked_in_mini_editor_pct,
+from data

@@ -1,0 +1,95 @@
+/*
+    Name: PL Main Editor Daily Feature Retention
+    Query ID: 41552
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-02T17:41:53.405Z
+    */
+    
+with base as
+(select distinct dt,
+platform_device_id
+from
+`ltx-dwh-prod-processed`.`agg`.`app_device_date`
+where
+dt >= "2023-04-01"
+    and dt < date_trunc(current_date, {{Time granularity}})
+    and app_name = "editor"
+    and platform = "ios"
+    --and d.current_store_country <> "China"
+  and dt = first_active_dt
+ )
+,
+
+fs as
+(select 
+date(efs.meta_received_at) as dt,
+id_for_vendor as platform_device_id,
+feature_name,
+count(distinct event_id) as feature_starts
+from
+`ltx-dwh-prod-raw`.`analytics`.`ios_editor_feature_visited` as efs
+ where
+    -- efs.app_name='editor'
+    --and 
+    efs.feature_name in (
+    'Cutout'
+    --'Adjust'
+    --'Retouch'
+    --'ai_cars'
+ --  'ai_scenes'
+  -- 'ai_transform'
+  --'motion'
+ -- 'text to image'
+ -- 'sketch to image'
+    )
+   and efs.meta_received_at>="2023-04-01"
+   group by 1,2,3
+)
+
+
+select *,
+max(users) over(partition by cohort_dt) as d0,
+safe_divide(users, max(users) over(partition by cohort_dt))*100 as retention
+from
+(
+select
+cohort_dt,
+days,
+count(distinct platform_device_id) as users,
+
+from
+(
+--exported_users as (
+  select
+  d.dt as cohort_dt,
+  efs.platform_device_id,
+    date_diff( efs.dt,date(d.dt), day) as days
+  from base as d
+  left join fs as efs
+    on d.platform_device_id = efs.platform_device_id
+    and d.dt <= efs.dt
+    --and efs.app_name='editor'
+    --and efs.feature_name in ('ai_cars', 'ai_scenes')
+   --and efs.meta_received_at>="2023-03-05"
+   
+   /*left join 
+   `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_started` as im_s
+   on d.platform_device_id = im_s.platform_device_id
+    and d.dt = date(im_s.meta_received_at)
+    and im_s.app_name='editor'
+    and im_s.source in ('ai_scenes','ai_cars')
+    and im_s.meta_received_at>="2023-03-05"
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_import_ended` as im_e
+   on im_e.platform_device_id = im_s.platform_device_id
+   and im_e.process_id=im_s.process_id
+    and im_e.app_name='editor'
+    and im_e.reason='success'
+    and im_e.meta_received_at>="2023-03-05"
+    */
+
+  
+--limit 100
+--)
+)
+group by 1,2
+)

@@ -1,0 +1,20 @@
+/*
+    Name: Felix - Conversion Rate (Onboarding) - 1
+    Query ID: 41031
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-17T15:32:00.232Z
+    */
+    select 
+    app_name,
+    count(distinct global_subscription_id) as count_subscriptions,
+    count(distinct case when first_payment_date is not null and revenue_so_far > 0 then global_subscription_id end) as converted_subscriptions,
+    count(distinct case
+        when first_payment_date is not null and revenue_so_far > 0 then global_subscription_id end)/count(distinct global_subscription_id) as conversion -- revenue_so_far?        
+from `ltx-dwh-prod-processed.agg.subscriptions`
+where app_name in ('videoleap','facetune2')
+    and platform = 'ios'
+    and had_trial = true
+group by 1
+order by 1
+    
+    

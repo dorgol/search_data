@@ -1,0 +1,41 @@
+/*
+    Name: Facetune: Filter & Backdrops
+    Query ID: 41135
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-24T13:09:07.280Z
+    */
+    with usage as (
+    select distinct
+        feature_name,
+        e.id_for_vendor,
+        usage_id,
+        sub_feature_path,
+        e.accepted,
+        row_number() over (partition by feature_name, usage_id order by s.device_timestamp desc) as last_used,
+    from `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_ended` e
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_sub_feature_started` s
+        on s.id_for_vendor = e.id_for_vendor
+        and s.feature_usage_id = e.usage_id
+        and s.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+        and s.sub_feature_path not like 'Adjust%'
+        and s.sub_feature_path != 'Remove'
+        and s.sub_feature_path != 'Photo'
+    where true -- e.accepted
+    and e.feature_name in ('Filters', 'Backdrop')
+    and e.meta_received_at >= timestamp_sub(current_timestamp(), interval 30 day)
+)
+
+
+select
+    feature_name,
+    sub_feature_path,
+    count(distinct case when last_used = 1 and accepted then id_for_vendor end) as accepters,
+    count(distinct case when last_used = 1 and accepted then usage_id end) as num_accepts,
+    count(distinct id_for_vendor) as starters,
+    count(distinct usage_id) as starts,
+    round(100*count(distinct case when last_used = 1 and accepted then usage_id end)/count(distinct usage_id),2) as accept_rate,
+from usage
+where true --last_used = 1
+group by 1,2
+having accepters > 1000
+order by 1,3 desc

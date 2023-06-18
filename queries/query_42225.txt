@@ -1,0 +1,146 @@
+/*
+    Name: Felix - VL iOS - SEARCH - Overall Usage Funnel Over Time
+    Query ID: 42225
+    Created By: Felix Ambrose
+    Last Updated At: 2023-05-25T15:19:31.622Z
+    */
+    -- VL Feed Funnel
+
+
+with first_feed_active_date as (
+    select 
+        platform_device_id,
+        min(dt) as first_feed_active_dt
+    from `ltx-dwh-prod-processed.app.feed_unnested_items_info`
+    where application = "videoleap"
+        and platform = "ios"
+    group by 1
+ )
+
+, users as (
+        select distinct
+            ii.platform_device_id,
+            ii.first_feed_active_dt
+        from first_feed_active_date ii
+        )
+        
+, actions as (
+        
+        select
+            'Feed Presented' as action,
+            date_trunc(ui.meta_received_at,day) as dt,
+            count(distinct u.platform_device_id) as users
+        from users u 
+        inner join ltx-dwh-prod-processed.app.feed_unnested_items_info as ui
+            on u.platform_device_id = ui.platform_device_id 
+            and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 60 day)
+            and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+            
+        group by 1,2
+          
+        
+        
+        union all
+        
+        select 
+            'Use Template Clicked' as action,
+            date_trunc(ui.meta_received_at,day) as dt,
+            count(distinct u.platform_device_id) as users
+        from users u 
+        inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_user_action_started` ui
+            on u.platform_device_id = ui.platform_device_id
+            and action = 'use_template'
+            and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 60 day)
+            and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+            
+        group by 1,2
+    
+        union all
+        
+        select 
+            'Video Asset Imported' as action,
+            date_trunc(sd.meta_received_at,day) as dt,
+            count(distinct u.platform_device_id) as users
+        from users u
+        inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_import_wizard_screen_dismissed` as sd
+            on u.platform_device_id = sd.id_for_vendor
+            and sd.reason = 'Next button pressed'
+            and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 60 day)
+            and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+            
+        group by 1,2
+        
+        
+            
+        union all
+        
+        select
+            "Remake Export started" as action,
+            date_trunc(sr.meta_received_at,day) as dt,
+            count(distinct u.platform_device_id) as users
+        from users u
+        inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_template_editing_started` as t
+            on u.platform_device_id = t.id_for_vendor
+        inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_session_analytics_reported` as sr
+            on t.open_project_id = sr.open_project_id
+            and sr.reason like "%export button pressed"
+            and date_trunc(date(sr.meta_received_at), day) >= date_sub(current_date(), interval 60 day)
+            and date_trunc(current_date(), day) != date_trunc(date(sr.meta_received_at), day)
+            
+        group by 1,2
+            
+        union all
+        
+        select 
+            'Remake Exported' as action,
+            date_trunc(ex.meta_received_at,day) as dt,
+            count(distinct u.platform_device_id) as users
+        from users u
+        inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_export_started` xs
+            on u.platform_device_id = xs.id_for_vendor
+        inner join `ltx-dwh-prod-raw.analytics.ios_videoleap_media_exported` ex
+            on xs.id_for_vendor = ex.id_for_vendor
+            and xs.export_id = ex.export_id
+            and date_trunc(date(ex.meta_received_at), day) >= date_sub(current_date(), interval 60 day)
+            and date_trunc(current_date(), day) != date_trunc(date(ex.meta_received_at), day)
+            
+            and xs.parent_template_id is not null
+        group by 1,2
+        
+        
+        union all
+        
+        select 
+            'Post Published' as action,
+            date_trunc(a.meta_received_at,day) as dt,
+            count(distinct u.platform_device_id) as users,
+        from users u
+        inner join `ltx-dwh-prod-raw.analytics_global.ltx_global_feed_post_upload_ended` a
+            on u.platform_device_id = a.platform_device_id
+            and date_trunc(date(meta_received_at), day) >= date_sub(current_date(), interval 60 day)
+            and date_trunc(current_date(), day) != date_trunc(date(meta_received_at), day)
+            
+    
+        group by 1,2
+    
+    
+        )
+    
+, total_users as (
+        select 
+        dt,
+        max(users) over (partition by dt) as total_users
+        from actions a
+        where action = 'Feed Presented')
+    
+  --  select distinct action from actions
+        
+    select
+        *,
+        100*users/total_users as pct_of_users
+    from actions a
+    join total_users t
+        on t.dt = a.dt
+    where action != 'Feed Presented' -- don't want to show feed presented in the chart, but need them for the %s
+
+    

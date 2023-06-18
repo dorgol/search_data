@@ -1,0 +1,17 @@
+/*
+    Name: Felix - Subscribers per week (Onboarding)
+    Query ID: 41027
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-14T09:21:10.112Z
+    */
+    select 
+    --date_trunc(first_payment_date, week) as purchase_date,
+    date_trunc(original_purchase_date, week) as purchase_date,
+    --had_trial,
+    count(global_subscription_id) as count_subscriptions 
+from `ltx-dwh-prod-processed.agg.subscriptions`
+where app_real_world_name = 'Videoleap iOS'
+and first_payment_date is not null 
+group by 1--,2
+order by 1--,2 asc
+

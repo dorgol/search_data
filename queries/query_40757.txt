@@ -1,0 +1,71 @@
+/*
+    Name: VL iOS - Identifying SMBs - Weekly Usage Pattern (daily)
+    Query ID: 40757
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-29T17:08:28.644Z
+    */
+    with users as (
+  select distinct
+    u.platform_device_id,
+    case when origin_page_response is null then 'No Answer' 
+                when origin_page_response like '%personal%' then 'I edit for personal use' 
+                when origin_page_response like '%influencer%' then 'Im an influencer/creator' 
+                when origin_page_response like '%business%' then 'I promote a business'
+                when origin_page_response like '%Other%' then 'Other' else origin_page_response end as response
+    
+  from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_presented` u
+        
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_questionnaire_page_transition` pq
+        on u.platform_device_id = pq.platform_device_id
+        and pq.app_name = 'videoleap'
+        and pq.origin_page_index = 0
+        and pq.origin_page_name = 'So, what brings you here?'
+    where u.app_name = 'videoleap'
+    qualify row_number() over (partition by u.platform_device_id order by pq.meta_received_at desc) = 1
+    )
+    
+, usage as (
+    select
+        u.platform_device_id,
+        u.response,
+        session_id,
+        --extract(day from date (min(af.device_timestamp))) as session_ts,
+        --extract(hour from timestamp (min(af.device_timestamp))) as session_hr_ts,
+        --date_trunc((min(af.device_timestamp)), hour) as hour,
+        extract(DAYOFWEEK from date (min(af.device_timestamp))) as day
+    from users u
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_app_foregrounded` af
+        on af.id_for_vendor = u.platform_device_id
+        and date(af.device_timestamp) between '2023-03-13' and '2023-03-19'
+    group by 1,2,3)
+
+, total_sessions as (
+    select
+        response,
+        count(distinct session_id) as total_sessions
+    from usage
+    group by 1)
+
+, usage_agg as (
+    select 
+        u.response,
+        --concat(u.session_ts,'-',session_hr_ts) as session_ts,
+        --hour,
+        case when day = 1 then '7. Sunday'
+             when day = 2 then '1. Monday'
+             when day = 3 then '2. Tuesday'
+             when day = 4 then '3. Wednesday'
+             when day = 5 then '4. Thursday'
+             when day = 6 then '5. Friday'
+             when day = 7 then '6. Saturday' else 'error' end as day,
+        ts.total_sessions,
+        count(distinct u.session_id) as sessions
+    from usage u
+    inner join total_sessions ts
+        on ts.response = u.response
+    group by 1,2,3)
+    
+select
+    *,
+    safe_divide(sessions, total_sessions)*100 as pct_sessions
+from usage_agg

@@ -1,0 +1,39 @@
+/*
+    Name: VL - Num exported projects by type and published by day
+    Query ID: 42384
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-05-31T10:16:31.398Z
+    */
+    with data as (
+    select
+        date_trunc(d.dt, {{Time granularity}}) as time,
+        "ios" as platform,
+        count(distinct ex.open_project_id) as num_projects,
+        count(distinct ex.export_id) as num_exports,
+        count(distinct case when te.parent_template_id is null then ex.export_id end) as num_original_exports,
+        count(distinct case when te.parent_template_id is not null then ex.export_id end) as num_remake_exports,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date` as d
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_exported` as ex
+        on d.platform_device_id = ex.id_for_vendor
+        and d.dt = date(ex.meta_received_at)
+        and case when '{{Day}}' = "day0" then d.dt = d.first_active_dt
+                 when '{{Day}}' = "non day0" then d.dt > d.first_active_dt
+                 else true end
+    inner join `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as te
+        on te.export_id = ex.export_id
+    where date(dt) >= '2023-01-01'
+        and date_trunc(d.dt, {{Time granularity}}) < date_trunc(current_date(), {{Time granularity}})
+        and d.app_name = "videoleap"
+        and d.platform = "ios"
+    group by 1,2
+)
+
+select
+    time,
+    num_projects,
+    num_exports,
+    num_original_exports,
+    num_remake_exports,
+    safe_divide(num_original_exports, num_exports)*100 as original_export_pct,
+    safe_divide(num_remake_exports, num_exports)*100 as remake_export_pct
+from data

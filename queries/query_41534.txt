@@ -1,0 +1,60 @@
+/*
+    Name: 20230316 - FT2 iOS - [FT-1078] Voluntary AR Off churn prevention - Popup Interaction - Specific Feature
+    Query ID: 41534
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-02T11:57:23.075Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        lt_defacto_id,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1078] Voluntary AR Off churn prevention')
+    and display_type = '{{display_type}}'
+)
+
+select
+    segmentation,
+    case when variant = 'baseline' then 'Baseline' else variant end as variant,
+    message_id,
+    message_source,
+    count(distinct mp.platform_device_id) num_users,
+    count(distinct mp.platform_device_id)/nullif(max(total_users),0)*100 pct_users_saw,
+    count(distinct mp.event_id)/nullif(count(distinct mp.platform_device_id),0) avg_times_seen,
+    
+    count(distinct case when md.reason = 'accepted' then mp.platform_device_id end)/nullif(count(distinct mp.platform_device_id),0)*100 pct_users_accepted_popup,
+    count(distinct case when md.reason in ('rejected', 'closed', 'dismissed') then mp.platform_device_id end)/nullif(count(distinct mp.platform_device_id),0)*100 pct_users_rejected_popup,
+    count(distinct case when md.reason in ('ignored') then mp.platform_device_id end)/nullif(count(distinct mp.platform_device_id),0)*100 pct_users_ignored_popup,
+    count(distinct case when md.reason is null then mp.platform_device_id end)/nullif(count(distinct mp.platform_device_id),0)*100 pct_users_not_dismissed_popup,
+    
+    count(distinct case when md.reason = 'accepted' then mp.event_id end)/nullif(count(distinct mp.event_id),0)*100 pct_times_accepted_popup,
+    count(distinct case when md.reason in ('rejected', 'closed', 'dismissed') then mp.event_id end)/nullif(count(distinct mp.event_id),0)*100 pct_times_rejected_popup,
+    count(distinct case when md.reason in ('ignored') then mp.event_id end)/nullif(count(distinct mp.event_id),0)*100 pct_times_ignored_popup,
+    count(distinct case when md.reason is null then mp.event_id end)/nullif(count(distinct mp.event_id),0)*100 pct_times_not_dismissed_popup,
+    
+from users u
+join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_presented` mp
+    on app_name = 'facetune2'
+    and (message_id like '%Voluntary%' or message_id like '%AutoRenewOffBanner_02_23%')
+    and mp.platform_device_id = u.id_for_vendor
+left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` md
+    on md.flow_id = mp.flow_id
+where variant <> 'Baseline'
+group by 1,2,3,4
+order by 1,2,3,4

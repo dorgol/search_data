@@ -1,0 +1,65 @@
+/*
+    Name: Felix - VL Export Participation Over Time (Onboarding)
+    Query ID: 41298
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-24T12:10:42.510Z
+    */
+    -- Find percentage of users who exported a project on month0 over time
+
+-- lt_defacto_id, by date of launch. Whether they exported a project in month 0
+
+declare start_date date default '2022-08-01';
+
+with monthly_users as (
+    select 
+        date_trunc(first_launch, month) as first_launch_month,
+        count(distinct lt_defacto_id) as count_users,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where date(first_launch) > '2022-08-01'
+        and lower(app_name) in ('videoleap', 'videoleap_android')        
+    group by 1
+
+),
+
+
+exports as (
+    select 
+        lt_defacto_id,
+        date(date_trunc(first_launch, day)) as first_launch_date,
+        date_trunc(first_launch, month) as first_launch_month,
+        date(dt) as dt,
+    
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where cntd_exports > 0
+        and  date(first_launch) > '2022-08-01'
+        and lower(app_name) in ('videoleap', 'videoleap_android')
+),
+
+aggregation as (
+
+    select 
+        lt_defacto_id,
+        first_launch_month,
+        case 
+        when date_diff(dt, first_launch_date, day) <= 31 then True 
+        else False end as if_exported,
+        min(dt) as first_export,
+    from exports    
+    group by 1,2,3
+    
+)
+
+
+select 
+    aggregation.first_launch_month,
+    --first_export,
+    count_users,
+    sum(case when if_exported is True then 1 else 0 end) as exports_first_month,
+    (sum(case when if_exported is True then 1 else 0 end)/count_users)*100 as export_rate
+    
+    
+from aggregation
+inner join monthly_users
+    using(first_launch_month)
+group by 1,2
+

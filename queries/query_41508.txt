@@ -1,0 +1,53 @@
+/*
+    Name: 20230329 - [FT-1081] Feature Touchpoint Subscription - Subscription Sources
+    Query ID: 41508
+    Created By: Josh Seidman
+    Last Updated At: 2023-05-02T07:05:31.292Z
+    */
+    with users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed.ab_test.raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = '{{app}}'
+    and lower(d.experiment) like lower('%{{experiment}}%')
+    and display_type = '{{display}}'
+)
+
+select
+    segmentation,
+    variant,
+    subscription_source,
+    max(total_subs) total_subs,
+    count(distinct id_for_vendor) num_subs,
+    count(distinct id_for_vendor) / max(total_subs)*100 pct_total_subs
+from (
+        select
+            segmentation,
+            variant,
+            u.id_for_vendor,
+            subscription_source,
+            display_type,
+            count(distinct id_for_vendor) over (partition by segmentation, variant) total_subs
+        from users u
+        join `ltx-dwh-prod-processed`.`agg`.`subscriptions` s
+            on app_name = 'facetune2'
+            and s.platform_device_id = u.id_for_vendor
+            and original_purchase_date >= experiment_started_meta
+            where true
+)
+group by 1,2,3
+order by 1,2,5 desc

@@ -1,0 +1,85 @@
+/*
+    Name: Facetune: Device Feature Event Flow
+    Query ID: 41185
+    Created By: Nicky Kamins
+    Last Updated At: 2023-04-24T05:46:55.230Z
+    */
+    select
+    *
+from (
+    select
+        app_version_code,
+        editing_session_id,
+        'start' as event,
+        device_timestamp,
+        feature_name,
+        null as reason,
+        null as sub_feature_state,
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_started`
+    where app_name = '{{app_name}}'
+    and meta_received_at >= '{{Start Date}}'
+    and meta_received_at <= '{{End Date}}'
+    and platform_device_id = '{{PDID}}'
+    and app_version_code = '{{Build Number}}' --3.20
+    -- and editing_session_id = '974410D4-A53A-4E64-94BD-C4F336962B17'
+    -- group by 1,2
+
+    union all 
+
+    select
+        app_version_code,
+        editing_session_id,
+        'press' as event,
+        device_timestamp,
+        screen_name as feature_name,
+        null as reason,
+        button_identifier as sub_feature_state,
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed`
+    where app_name = '{{app_name}}'
+    and meta_received_at >= '{{Start Date}}'
+    and meta_received_at <= '{{End Date}}'
+    and platform_device_id = '{{PDID}}'
+    and app_version_code = '{{Build Number}}' --3.20
+    and screen_name like '%photo_editor_screen'
+    -- and editing_session_id = '974410D4-A53A-4E64-94BD-C4F336962B17'
+    -- group by 1,2
+
+    union all 
+
+    select
+        app_version_code,
+        editing_session_id,
+        'sub_feature_ended' as event,
+        device_timestamp,
+        sub_feature_name as feature_name,
+        null as reason,
+        cast(final_value_of_slider as string) as sub_feature_state,
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_sub_feature_ended_with_change`
+    where app_name = '{{app_name}}'
+    and meta_received_at >= '{{Start Date}}'
+    and meta_received_at <= '{{End Date}}'
+    and platform_device_id = '{{PDID}}'
+    and app_version_code = '{{Build Number}}' --3.20
+    -- and editing_session_id = '974410D4-A53A-4E64-94BD-C4F336962B17'
+    -- group by 1,2
+
+    union all 
+        
+    select
+        app_version_code,
+        editing_session_id,
+        'end' as event,
+        device_timestamp,
+        feature_name,
+        reason,
+        sub_feature_state,
+    from `ltx-dwh-prod-raw.analytics_global.ltx_global_feature_ended`
+    where app_name = '{{app_name}}'
+    and meta_received_at >= '{{Start Date}}'
+    and meta_received_at <= '{{End Date}}'
+    and platform_device_id = '{{PDID}}'
+    and app_version_code = '{{Build Number}}' --3.20
+    -- and editing_session_id = '974410D4-A53A-4E64-94BD-C4F336962B17'
+    -- group by 1,2
+)
+order by 1,2,4 asc

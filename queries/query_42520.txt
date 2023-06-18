@@ -1,0 +1,27 @@
+/*
+    Name: Creators hashtags- num posts with hashtags
+    Query ID: 42520
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-06-06T08:19:10.174Z
+    */
+    with raw_hashtags as (
+    select
+        ex.template_description,
+        date(ex.meta_received_at) as dt,
+        coalesce(p1.post_id, p.post_id) as post_id
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_media_export_started` as ex
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feed_post_upload_ended` as p
+        on ex.export_id = p.export_id
+    left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_post_published` as p1
+        on ex.export_id = p1.export_id
+    where ex.template_description is not null and ex.template_description <> ""
+    and date(ex.meta_received_at) >= "2023-01-01"
+)
+
+select
+    dt,
+    count(distinct post_id) as num_posts_with_description,
+    count(distinct case when template_description like "%#%" then post_id end) as num_posts_with_hashtags,
+    count(distinct case when template_description like "%#%" then post_id end) / count(distinct post_id) * 100 as pct_posts_with_hashtags
+from raw_hashtags
+group by 1

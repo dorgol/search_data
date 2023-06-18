@@ -1,0 +1,13 @@
+/*
+    Name: VLA - delayed watermark experiment - assignment to variants
+    Query ID: 40669
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-03-28T11:11:37.559Z
+    */
+    select distinct
+    variant,
+    count(distinct installation_id) as num_users_assigned
+from `ltx-dwh-prod-raw`.`analytics`.`android_videoleap_assignment_state_changed`
+where date(meta_received_at) >= "2023-01-01"
+    and experiment = "watermark"
+group by 1

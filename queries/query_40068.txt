@@ -1,0 +1,130 @@
+/*
+    Name: delete
+    Query ID: 40068
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-06T10:02:56.362Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        timestamp_diff(current_timestamp(), experiment_started_meta, day) days_since_start,
+        country,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1054] Touchpoint Based Subscription 3')
+    and display_type = 'activated_for_device'
+),
+users_with_display as (
+    select
+        u.experiment,
+        u.variant,
+        u.segmentation,
+        u.country,
+        u.id_for_vendor,
+        u.experiment_started_meta,
+        u.display_type,
+        u.days_since_start,
+        u.lt_defacto_id,
+        array_agg(
+            case 
+                when presentation_type like '%touchPointHeal%' then 'displayed_heal' 
+                when variant in ('Baseline', 'Variant 2') and configuration_identifier like '%TouchPointBased_retouch.heal%' or configuration_identifier like '%TouchPointBased_BlockedTrial_retouch.heal%' then 'displayed_heal' 
+                when presentation_type like '%touchPointAllFeatures%' then 'displayed_all_features' 
+                when variant in ('Baseline') and configuration_identifier not like '%TouchPointBased_retouch.heal%' and configuration_identifier like '%TouchPointBased%' and (source in ('acceptedVIPFeature', 'subfeatureMenuVIPNavigationButton', 'FreeTrialAlert','contentScreenshotAlert', 'deeplink_ft1_FT2UpgradeButton', 'deeplink_ft1_FT2Interstitial') or source like '%VideoEditor%')  then 'displayed_all_features' 
+                else 'activated_for_device'
+            end
+        ) all_display
+    from users u
+    left join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_store_entered` se
+        on true
+        and meta_received_at >= '2022-12-06'
+        and meta_received_at >= experiment_started_meta
+        and u.id_for_vendor = se.id_for_vendor
+    group by 1,2,3,4,5,6,7,8,9
+),
+users_filtered as (
+    select
+        *
+    from users_with_display u
+    where true
+    and case 
+            when '{{display_type}}' = 'displayed_any_screens' then (contains_substr(all_display, 'displayed_all_features') = true or contains_substr(all_display, 'displayed_heal') = true)
+            when '{{display_type}}' = 'displayed_all_features' then contains_substr(all_display, 'displayed_all_features') = true 
+            when '{{display_type}}' = 'displayed_heal' then contains_substr(all_display, 'displayed_heal') = true 
+            when '{{display_type}}' = 'activated_for_device' then contains_substr(all_display, 'activated_for_device') = true 
+        end
+),
+all_days as (
+    select distinct
+       days_since_start as days
+    from users_filtered 
+),
+
+users_day_x as (
+    select
+        *,
+        sum(num_users_day_x) over (partition by segmentation, variant order by days_since_start rows between current row and unbounded following) num_users_at_least_day_x,
+        sum(num_users_day_x) over (partition by segmentation, variant order by days_since_start rows between unbounded preceding and current row) num_users_until_day_x
+    from (
+        select
+            segmentation,
+            variant,
+            days_since_start,
+            count(distinct u.id_for_vendor) num_users_day_x,
+        from users_filtered u
+        group by 1,2,3
+    )
+),
+
+subs_day_x as (
+    select
+        *,
+        sum(num_subs_day_x) over (partition by segmentation, variant order by days_since_start rows between current row and unbounded following) num_subs_at_least_day_x,
+        sum(num_subs_day_x) over (partition by segmentation, variant order by days_since_start rows between unbounded preceding and current row) num_subs_until_day_x
+    from (
+        select
+            segmentation,
+            variant,
+            days_since_start,
+            count(distinct u.id_for_vendor) num_subs_day_x,
+        from users_filtered u
+        join `ltx-dwh-prod-processed`.`subscriptions`.`subscription_to_defacto` s
+            on s.application = 'facetune2'
+            and s.lt_defacto_id = u.lt_defacto_id
+            and original_purchase_date >= experiment_started_meta
+        group by 1,2,3
+    )
+)
+
+select
+    segmentation,
+    case when variant = 'Variant1' then 'Variant 1' when variant = 'baseline' then 'Baseline' else variant end as variant,
+    days_since_start,
+    num_users_day_x,
+    num_subs_day_x,
+    num_users_at_least_day_x,
+    num_users_until_day_x, 
+    num_subs_until_day_x,
+    num_subs_until_day_x/num_users_until_day_x*100 cvr_of_users_until_day_x,
+    num_subs_day_x/num_users_day_x*100 cvr_of_users_on_day_x,
+    num_subs_at_least_day_x/num_users_at_least_day_x*100 cvr_of_users_at_least_day_x
+from users_day_x u
+left join subs_day_x s
+    using(segmentation, variant, days_since_start)
+order by 1,3,2

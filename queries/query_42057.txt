@@ -1,0 +1,41 @@
+/*
+    Name: VL iOS - unlimited experiment - initial query - num devices (live)
+    Query ID: 42057
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-28T07:41:34.511Z
+    */
+    with experiment_raw_data as (
+    select
+        experiment,
+        variant,
+        id_for_vendor,
+        min(date(meta_received_at)) as device_activation_dt
+    from `ltx-dwh-prod-raw`.`analytics`.`ios_videoleap_assignment_state_changed` as ex
+    where ex.experiment = "Unlimited (Production)"
+    group by 1,2,3
+)
+
+, install_time as (
+    select distinct
+        ex.experiment,
+        ex.variant,
+        ex.id_for_vendor as platform_device_id,
+        ex.device_activation_dt,
+        date_diff(ex.device_activation_dt, date(d.install_time), day) as assignment_day_from_install,
+        date(d.install_time) as install_time,
+        date_diff(ex.device_activation_dt, date(d.first_active_dt), day) as assignment_day_from_first_active_dt,
+        date(first_active_dt) as first_active_dt,
+    from experiment_raw_data as ex
+    left join `ltx-dwh-prod-processed`.`agg`.`app_device` as d
+        on d.platform_device_id = ex.id_for_vendor
+)
+
+
+select
+    variant,
+    -- case when assignment_day_from_install = 0 or assignment_day_from_install is null then "day0" else "non day0" end as day0,
+    case when assignment_day_from_first_active_dt = 0 or assignment_day_from_first_active_dt is null then "day0" else "non day0" end as day0,
+    count(distinct platform_device_id) as num_devices
+from install_time
+group by 1,2
+order by 1,2

@@ -1,0 +1,35 @@
+/*
+    Name: Photoleap: Period Active Users - By Subscription User Type (Excluding Day 0)
+    Query ID: 41685
+    Created By: Nicky Kamins
+    Last Updated At: 2023-05-08T11:55:34.830Z
+    */
+    with dau as (
+    select
+        date_trunc(f.dt, {{period}}) as period,
+        f.attribution_user_id,
+        max(s.lt_subscription_id is not null) as is_subscriber,
+    from `ltx-dwh-prod-processed`.`agg`.`app_attribution_user_date` f
+    left join `ltx-dwh-prod-processed`.`subscriptions`.`unified_subscriptions_revenue_allocation_cross_sell` s
+        on f.attribution_user_id = s.attribution.attribution_user_id
+        and date(s.original_purchase_date) <= f.dt
+        and date(s.payments.last_expiration_date) >= f.dt
+        and s.application = 'editor'
+    where date_trunc(dt, {{period}}) >= date_sub(current_date(), interval 90 {{period}})
+    and date_trunc(current_date(), {{period}}) != date_trunc(dt, {{period}})
+    and date_trunc(date(attribution_timestamp), {{period}}) != date_trunc(dt, {{period}})
+    and f.app_name = 'editor'
+    and case  
+        when '{{countries}}' = 'Global' then true 
+        when '{{countries}}' = 'Rest of the World' then f.current_store_country not in ('US','CN')
+        else f.current_store_country = '{{countries}}' end
+    group by 1,2
+)
+
+select distinct
+    period,
+    count(distinct case when is_subscriber then attribution_user_id end) over (partition by period) as subscribers,
+    count(distinct case when not is_subscriber then attribution_user_id end) over (partition by period) as free_users,
+    100*count(distinct case when is_subscriber then attribution_user_id end) over (partition by period)/count(distinct attribution_user_id) over (partition by period) as pct_subscribers
+from dau
+order by 1,2

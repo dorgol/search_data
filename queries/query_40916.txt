@@ -1,0 +1,44 @@
+/*
+    Name: VL iOS - Feed - Day0 Search Terms
+    Query ID: 40916
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-04-06T14:51:38.258Z
+    */
+    with installs as (
+    select distinct
+        platform_device_id,
+        date(first_active_dt) as first_dt,
+    from `ltx-dwh-prod-processed`.`agg`.`app_device_date`
+    where app_name = 'videoleap'
+    and date(first_active_dt) >= '2022-07-01')
+
+
+, searches as (
+        select distinct
+        trim(lower(f.search_query)) as search_term,
+        f.platform_device_id,
+        u.first_dt
+    from installs u
+    inner join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_app_feed_screen_presented` as f
+        on f.platform_device_id = u.platform_device_id
+    where f.screen_name like "%search.%"
+        and f.meta_source = "videoleap" and f.platform = "ios"
+        and date(f.meta_received_at) = first_dt
+)
+
+, total as (
+    select
+        search_term,
+        count(distinct platform_device_id) users
+    from searches
+    group by 1
+    qualify row_number() over (order by users desc) <= 10) -- top 10 overall search terms
+
+select
+    date_trunc(first_dt, week) as wk0,
+    case when t.search_term is null then 'other' else s.search_term end as search_term,
+    count(distinct platform_device_id) as users
+from searches s
+    left join total t
+        on t.search_term = s.search_term
+group by 1,2

@@ -1,0 +1,259 @@
+/*
+    Name: 20230221 - FT2 iOS - [FT-1069] First Import Flow V2 - High Level Funnel - Variant
+    Query ID: 40073
+    Created By: Josh Seidman
+    Last Updated At: 2023-03-06T10:10:58.899Z
+    */
+    with
+users as
+(
+    select
+        segmentation,
+        application,
+        experiment,
+        variant,
+        display_type,
+        id_for_vendor,
+        experiment_started_meta,
+        experiment_started_meta_by_type,
+        lt_defacto_id
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        when '{{segments}}' = 'All Users Without Existing Segmentation' then segmentation in ('01 All Users','02 New Users','03 Existing Users' )
+        else true end
+    and  d.application = 'facetune2'
+    and lower(d.experiment) like lower('[FT-1069] First import flow V2')
+    and display_type = '{{display_type}}'
+)
+
+select
+    *
+from (
+    select
+        segmentation,
+        variant,
+        '01. ' || 'first_launch' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        case 
+            when permission = 'app_tracking_transparency' then '02. ' || permission || '_popup' 
+            when permission = 'push_notifications' then '08. ' || permission || '_popup' 
+            when permission = 'photos_access' then '09. ' || permission || '_popup' 
+        end as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_authorization_popup_prompted` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '03. ' || 'new_privacy_policy' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join  `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_popup_resolved` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+    where true
+    and identifier = 'privacy_policy_notification'
+    group by 1,2,3
+
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '04. ' || 'started_questionnaire' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_intro_session_started` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '05. ' || 'questionnaire_p' || destination_page_index as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_intro_questionnaire_transition` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+        and destination_page_index <> 0
+        and destination_page_index <> 4
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '06. ' || 'saw_login' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_login_screen_started` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        case 
+            when se.source in ('firstTimeIninitialFlow') then '07. ' || 'saw_subscribe_on_launch'
+            -- when se.source = 'homescreen_importSubscriptionAlert' then 'saw_homescreen_import_sub_screen'
+        end as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_store_entered` se
+        on farm_fingerprint('facetune2'|| se.id_for_vendor) = u.lt_defacto_id
+        and se.meta_received_at >= '2023-02-21'
+        and se.meta_received_at >= experiment_started_meta
+        and se.source in ('firstTimeIninitialFlow') --,'homescreen_importSubscriptionAlert')  
+    group by 1,2,3
+        
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '10. ' || 'imported_image' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_loaded` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '11. ' || 'feature_started' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_started` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '12. ' || 'subfeature_started' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_sub_feature_started` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '13. ' || 'feature_accept_attempted' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw`.`analytics`.`ios_facetune2_button_pressed` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+        and destination in ( 'blocking_subscription_screen','main_photo_editor_screen')
+        and button_identifier = 'accept'
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '14. ' || 'feature_accepted' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_feature_ended` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.accepted
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+    group by 1,2,3
+    
+    union all
+    
+    select
+        segmentation,
+        variant,
+        '15. ' || 'exported_image' as label,
+        count(distinct u.lt_defacto_id) as num_users,
+    from users u
+    join `ltx-dwh-prod-raw.analytics.ios_facetune2_image_exported` iss
+        on farm_fingerprint('facetune2'|| iss.id_for_vendor) = u.lt_defacto_id
+        and iss.meta_received_at >= '2023-02-21'
+        and iss.meta_received_at >= experiment_started_meta
+    group by 1,2,3
+)
+where true
+and variant = '{{variant}}'
+and label in (
+    '01. first_launch',
+    '07. saw_subscribe_on_launch',
+    '08. push_notifications_popup',
+    '09. photos_access_popup',
+    '10. imported_image',
+    '11. feature_started',
+    '12. subfeature_started',
+    '13. feature_accept_attempted',
+    '14. feature_accepted',
+    '15. exported_image'
+)
+order by 1,2,3
+
+-- All
+-- 01. first_launch
+-- 02. app_tracking_transparency_popup
+-- 03. new_privacy_policy
+-- 04. started_questionnaire
+-- 05. questionnaire_p1
+-- 05. questionnaire_p2
+-- 05. questionnaire_p3
+-- 06. saw_login
+-- 07. saw_subscribe_on_launch
+-- 08. push_notifications_popup
+-- 09. photos_access_popup
+-- 10. imported_image
+-- 11. feature_started
+-- 12. subfeature_started
+-- 13. feature_accept_attempted
+-- 14. feature_accepted
+-- 15. exported_image

@@ -1,0 +1,31 @@
+/*
+    Name: PP - Creator Costs
+    Query ID: 40153
+    Created By: Joseph Rouncefield
+    Last Updated At: 2023-03-08T11:03:36.786Z
+    */
+    
+    select 
+        a.Name,
+        --pg.user_id,
+        --pg.accepted_at,
+        --pg.aasm_state,
+        --pg.campaign_id,
+        --pg.cost_in_cents,
+        --pg.service_fees_in_cents,
+        --pg.other_fees_in_cents
+        sum(case when cost_in_cents is null then 0 else cast(service_fees_in_cents as float) end)/100 as cost_usd,
+        sum(case when service_fees_in_cents is null then 0 else service_fees_in_cents end)/100 as service_fees_usd,
+        sum(case when other_fees_in_cents is null then 0 else other_fees_in_cents end)/100 as other_fees_usd
+    from agencies a
+    inner join merchants m
+        on m.agency_id = a.id
+    inner join campaigns c
+        on m.id = c.merchant_id
+    inner join paid_gigs pg
+        on pg.campaign_id = c.id 
+    where a.name in (
+                    'Anti-fog usa')
+        and accepted_at is not null
+        and pg.aasm_state != 'replaced'
+    group by 1

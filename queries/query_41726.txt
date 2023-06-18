@@ -1,0 +1,77 @@
+/*
+    Name: Photoleap- Both Users- For User Research
+    Query ID: 41726
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-10T08:26:08.471Z
+    */
+    with fun_base as
+(
+select
+distinct platform_device_id
+
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started`
+where app_name='editor'
+and platform='ios'
+and date(meta_received_at)>=date_add(current_date(), interval -14 day) 
+and date(meta_received_at)<current_date()
+and export_source not in ('ai_enhance','ai_enhance.video','background_blur.video','colorize.video','filters.video','remove_object.video','replace_background.video',
+'replace_sky.video',
+'retouch.video')
+
+union distinct
+(
+select distinct id_for_vendor as platform_device_id
+from `ltx-dwh-prod-raw`.`analytics`.`ios_editor_quickart_exported`
+where date(meta_received_at)>=date_add(current_date(), interval -14 day) 
+and date(meta_received_at)<current_date()
+)
+)
+,
+fun_exclusion as
+(select distinct id_for_vendor as platform_device_id
+from`ltx-dwh-prod-raw`.`analytics`.`ios_editor_instant_edit_exported` 
+where date(meta_received_at)<current_date()
+union distinct
+(
+select
+distinct platform_device_id
+
+from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_export_started`
+where app_name='editor'
+and platform='ios'
+--and date(meta_received_at)>=date_add(current_date(), interval -14 day) 
+--and date(meta_received_at)<current_date()
+and export_source in ('ai_enhance','ai_enhance.video','background_blur.video','colorize.video','filters.video','remove_object.video','replace_background.video',
+'replace_sky.video',
+'retouch.video')
+and date(meta_received_at)>=date_add(current_date(), interval -14 day) 
+and date(meta_received_at)<current_date()
+)
+
+union distinct 
+select distinct id_for_vendor as platform_device_id
+from `ltx-dwh-prod-raw`.`analytics`.`ios_editor_feature_visited`
+where dismiss_action ='ENFeatureExitStateAccepted'
+and (feature_name in ('Glitch', 'Urban', 'Sketch', 'LightFX', 'Duo', 'Vignette', 'Doodle', 'EffectsBrush', 'Fill', 'Inpaint', 'Cutout', 'LayerCrop', 'Filter', 'Adjust', 'Frame', 'Target', 'Reshape', 'Blur','Retouch','RemoveObject')
+    or editor_type in ('ENEditorTypeSimple', 'ENEditorUsageTypeSimpleEditor'))
+and date(meta_received_at)>=date_add(current_date(), interval -14 day) 
+and date(meta_received_at)<current_date()
+)
+
+
+(
+select 
+distinct 
+--fb.*,
+dev.lt_id
+from fun_base as fb
+inner join fun_exclusion as fe
+on fb.platform_device_id=fe.platform_device_id
+inner join `ltx-dwh-prod-processed`.`devices`.`unified_devices` as dev
+on fb.platform_device_id=dev.id_for_vendor
+and dev.application='editor'
+where fe.platform_device_id is not null
+and dev.lt_id is not null
+order by 1
+limit 300
+)

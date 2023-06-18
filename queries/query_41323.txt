@@ -1,0 +1,49 @@
+/*
+    Name: Felix Onboarding - MRR (Transactions) - 2
+    Query ID: 41323
+    Created By: Felix Ambrose
+    Last Updated At: 2023-04-24T15:50:10.713Z
+    */
+    declare start_date date default '2022-01-01';
+
+with transactions as (
+    select distinct 
+        lt_transaction_id,
+        lt_subscription_id,
+        date(date_trunc(purchase_date, month)) as purchase_date,
+        date(date_trunc(original_purchase_date, month)) as subscription_start,
+        date(date_trunc(subscription.subscription_renewal_date_calc, month)) as subscription_end,
+        subscription.subscription_duration,
+        case when subscription.subscription_duration = '1y' then payments.actual_proceeds/12
+        else payments.actual_proceeds end as proceeds
+    from 
+        `ltx-dwh-prod-processed`.`subscriptions`.`unified_transactions`
+    where date(original_purchase_date) > start_date 
+        and license_applications in ('videoleap') -- videoleap_android
+        and payments.actual_proceeds > 0
+        
+),
+
+month_list as (
+
+    select distinct
+        subscription_start as month
+    from 
+        transactions
+)
+
+select  
+    --month,
+    --sum(proceeds) as MRR
+    lt_subscription_id,
+    month,
+    proceeds
+    
+from month_list
+left join
+    transactions on case 
+                    when subscription_duration = '1m' then month_list.month = transactions.purchase_date
+                    when subscription_duration = '1y' then transactions.purchase_date between date_sub(month_list.month , interval 12 month) and month_list.month end
+order by 1 asc, 2 asc                    
+limit 1000
+

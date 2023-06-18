@@ -1,0 +1,205 @@
+/*
+    Name: VL Android - ARPU in Pricing countries
+    Query ID: 40932
+    Created By: Rachel HaCohen
+    Last Updated At: 2023-05-30T11:03:28.606Z
+    */
+    with dates as
+(
+select dt,days_from
+from
+  (
+  select GENERATE_DATE_ARRAY (date_trunc(date_add(current_date() , interval -2 year),day), current_date(),interval 1 day) as dt
+  ),unnest(dt) as dt
+  cross join
+    (
+  select * from unnest([0,7,35,180,375]) as days_from
+    )
+)
+
+-- the following 3 CTE's are to bring calculation for paid users
+
+, max_pct_all as (
+select
+   dates.dt as attribution_date,
+   dates.days_from,
+   attribution.attribution_user_id,
+   attribution.attribution_user_group_number,
+   application,
+--   subscription.current_subscription_store_country as country,
+   max(projected.adjusted_pct_to_pay) all_max_pct
+from dates
+join `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation`
+    on true
+      and dates.dt = date(attribution.attribution_timestamp)
+      and date_diff(current_date(),date(attribution.attribution_timestamp),day)>dates.days_from -- only for users that reached dayx+1
+      and dates.days_from >= date_diff(date(purchase_date),date(attribution.attribution_timestamp),day) -- all purchases until dayx including
+--      and date(attribution.attribution_timestamp) >= '2023-01-01' -- to delete
+--      and application = 'facetune2' -- to delete
+      and case when '{{country}}' = 'Pricing countries' then subscription.current_subscription_store_country in ("AU", "CA", "GB") else true end
+group by 1,2,3,4,5
+)
+
+,max_pct_subs as (
+select
+   dates.dt as attribution_date,
+   dates.days_from,
+   attribution.attribution_user_id,
+   attribution.attribution_user_group_number,
+   application,
+   max(projected.adjusted_pct_to_pay) sub_max_pct
+from dates
+join `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation`
+    on true
+      and dates.dt = date(attribution.attribution_timestamp)
+      and date_diff(current_date(),date(attribution.attribution_timestamp),day)>dates.days_from -- only for users that reached dayx+1
+      and dates.days_from >= date_diff(date(purchase_date),date(attribution.attribution_timestamp),day) -- all purchases until dayx including
+      and subscription.product_category = 'subscription'
+      and case when '{{country}}' = 'Pricing countries' then subscription.current_subscription_store_country in ("AU", "CA", "GB") 
+                 when '{{country}}' = 'US' then subscription.current_subscription_store_country in ("US") 
+                 else true end
+--      and date(attribution.attribution_timestamp) >= '2023-01-01' -- to delete
+--      and application = 'facetune2' -- to delete
+group by 1,2,3,4,5
+)
+
+,paid_users as (
+select
+    a.attribution_date,
+    a.days_from,
+    a.application,
+    case when a.attribution_user_group_number = 1 then 'new'
+         when a.attribution_user_group_number > 1 then 'reactivated'
+         else 'bug'
+    end as new_or_reactivated,
+    cast(sum (sub_max_pct) as int) as paid_converted_users,
+    cast(sum (all_max_pct) as int) as total_paid_users,
+from max_pct_all a
+left join max_pct_subs s
+  on true
+  and a.attribution_date = s.attribution_date
+  and a.days_from = s.days_from
+  and a.attribution_user_id = s.attribution_user_id
+  and a.attribution_user_group_number = s.attribution_user_group_number
+  and a.application = s.application
+group by 1,2,3,4
+)
+
+, result as (
+    select
+        dates.dt as attribution_date,
+        dates.days_from as days_from_attribution_date,
+        u.vertical,
+        u.platform,
+        u.app_name as application,
+        u.app_real_world_name,
+        case when u.attribution_user_group_number = 1 then 'new'
+             when u.attribution_user_group_number > 1 then 'reactivated'
+             else 'bug'
+        end as new_or_reactivated,
+        --u.current_purchase_platform_array,
+        --t.payments.month0_late_or_renewal,
+        --t.payments.month0_year0_backlog,
+        --t.subscription.subscription_duration,
+        count (distinct u.attribution_user_id) as cohort_size,
+        count (distinct case when subscription.product_category = 'subscription' then t.attribution.attribution_user_id end) as converted_users,
+        paid_converted_users,
+        total_paid_users,
+        sum(case when subscription.product_category = 'asset' then t.projected.adjusted_actual_proceeds_alloc end) as assets_revenue_until_day_x,
+        sum(case when subscription.product_category = 'subscription' then t.projected.adjusted_actual_proceeds_alloc end) as subscriptions_revenue_until_day_x,
+        sum(t.projected.adjusted_actual_proceeds_alloc) as total_revenue_until_day_x,
+    
+        -- break down by purchase_platform
+    
+        sum(case when subscription.product_category = 'asset' and t.payments.purchase_platform  = 'ios'
+            then t.projected.adjusted_actual_proceeds_alloc end) as assets_revenue_pp_ios_until_day_x,
+        sum(case when subscription.product_category = 'asset' and t.payments.purchase_platform  = 'android'
+            then t.projected.adjusted_actual_proceeds_alloc end) as assets_revenue_pp_android_until_day_x,
+        sum(case when subscription.product_category = 'asset' and t.payments.purchase_platform  = 'web'
+            then t.projected.adjusted_actual_proceeds_alloc end) as assets_revenue_pp_web_until_day_x,
+    
+        sum(case when subscription.product_category = 'subscription' and t.payments.purchase_platform  = 'ios'
+            then t.projected.adjusted_actual_proceeds_alloc end) as subscriptions_revenue_pp_ios_until_day_x,
+        sum(case when subscription.product_category = 'subscription' and t.payments.purchase_platform  = 'android'
+            then t.projected.adjusted_actual_proceeds_alloc end) as subscriptions_revenue_pp_android_until_day_x,
+        sum(case when subscription.product_category = 'subscription' and t.payments.purchase_platform  = 'web'
+            then t.projected.adjusted_actual_proceeds_alloc end) as subscriptions_revenue_pp_web_until_day_x,
+    
+        sum(case when t.payments.purchase_platform  = 'ios' then t.projected.adjusted_actual_proceeds_alloc end) as total_revenue_pp_ios_until_day_x,
+        sum(case when t.payments.purchase_platform  = 'android' then t.projected.adjusted_actual_proceeds_alloc end) as total_revenue_pp_android_until_day_x,
+        sum(case when t.payments.purchase_platform  = 'web' then t.projected.adjusted_actual_proceeds_alloc end) as total_revenue_pp_web_until_day_x,
+    
+        --- same revenue metric over the actua_proceeds instead of the adjusted_actual_proceeds_alloc
+    
+        count (distinct case when subscription.product_category = 'subscription' and t.payments.actual_proceeds_alloc>0 then t.attribution.attribution_user_id end) as paid_converted_users_wopt, -- need to check if we need to sum the revenue first
+        count (distinct case when subscription.product_category = 'asset' and t.payments.actual_proceeds_alloc>0 then t.attribution.attribution_user_id end) as asset_users_wopt,
+        count (distinct case when t.payments.actual_proceeds_alloc>0 then t.attribution.attribution_user_id end) as total_paid_users_wopt,
+    
+        sum(case when subscription.product_category = 'subscription' then t.payments.actual_proceeds_alloc end) as subscriptions_revenue_until_day_x_wopt,
+        sum(case when subscription.product_category = 'asset' then t.payments.actual_proceeds_alloc end) as assets_revenue_until_day_x_wopt,
+        sum(t.payments.actual_proceeds_alloc) as total_revenue_until_day_x_wopt,
+    
+        -- break down by purchase_platform
+    
+        sum(case when subscription.product_category = 'asset' and t.payments.purchase_platform  = 'ios'
+            then t.payments.actual_proceeds_alloc end) as assets_revenue_pp_ios_until_day_x_wopt,
+        sum(case when subscription.product_category = 'asset' and t.payments.purchase_platform  = 'android'
+            then t.payments.actual_proceeds_alloc end) as assets_revenue_pp_android_until_day_x_wopt,
+        sum(case when subscription.product_category = 'asset' and t.payments.purchase_platform  = 'web'
+            then t.payments.actual_proceeds_alloc end) as assets_revenue_pp_web_until_day_x_wopt,
+    
+        sum(case when subscription.product_category = 'subscription' and t.payments.purchase_platform  = 'ios'
+            then t.payments.actual_proceeds_alloc end) as subscriptions_revenue_pp_ios_until_day_x_wopt,
+        sum(case when subscription.product_category = 'subscription' and t.payments.purchase_platform  = 'android'
+            then t.payments.actual_proceeds_alloc end) as subscriptions_revenue_pp_android_until_day_x_wopt,
+        sum(case when subscription.product_category = 'subscription' and t.payments.purchase_platform  = 'web'
+            then t.payments.actual_proceeds_alloc end) as subscriptions_revenue_pp_web_until_day_x_wopt,
+    
+        sum(case when t.payments.purchase_platform  = 'ios' then t.payments.actual_proceeds_alloc end) as total_revenue_pp_ios_until_day_x_wopt,
+        sum(case when t.payments.purchase_platform  = 'android' then t.payments.actual_proceeds_alloc end) as total_revenue_pp_android_until_day_x_wopt,
+        sum(case when t.payments.purchase_platform  = 'web' then t.payments.actual_proceeds_alloc end) as total_revenue_pp_web_until_day_x_wopt,
+    from
+        dates
+    join `ltx-dwh-prod-processed.agg.app_attribution_user` as u
+        on true
+        and dates.dt = date(u.attribution_timestamp)
+        and date_diff(current_date(),date(u.attribution_timestamp),day)>dates.days_from -- only for users that reached dayx+1
+        and case when '{{country}}' = 'Pricing countries' then u.current_store_country in ("AU", "CA", "GB") 
+                 when '{{country}}' = 'US' then u.current_store_country in ("US") 
+                 else true end
+    --    and date(u.attribution_timestamp) >= '2023-01-01' -- to delete
+    --    and u.app_name = 'facetune2' -- to delete
+    left join `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` t
+        on true
+        and u.attribution_user_id = t.attribution.attribution_user_id
+        and dates.days_from >= date_diff(date(t.purchase_date),date(u.attribution_timestamp),day) -- all purchases until dayx including
+        
+        and case when '{{country}}' = 'Pricing countries' then subscription.current_subscription_store_country in ("AU", "CA", "GB") 
+                 when '{{country}}' = 'US' then subscription.current_subscription_store_country in ("US") 
+                 else true end
+    left join paid_users
+        on true
+        and date(u.attribution_timestamp) = paid_users.attribution_date
+        and u.app_name = paid_users.application
+        and dates.days_from = paid_users.days_from
+        and case when u.attribution_user_group_number = 1 then 'new'
+             when u.attribution_user_group_number > 1 then 'reactivated'
+             else 'bug'
+            end = paid_users.new_or_reactivated
+    where true
+    group by 1,2,3,4,5,6,7,10,11
+)
+
+select distinct
+    date_trunc(attribution_date, week) as attribution_date,
+    days_from_attribution_date,
+    sum(subscriptions_revenue_until_day_x) as subscriptions_revenue_until_day_x, 
+    sum(subscriptions_revenue_until_day_x) / sum(cohort_size) as ARPU
+-- from `ltx-dwh-prod-processed`.`agg`.`revenue_metrics_by_cohort`
+from result
+where true
+    and vertical = "Videoleap"
+    and platform = "android"
+    and attribution_date >= "2022-01-01"
+    and attribution_date < date_trunc(current_date(), week)
+group by 1,2

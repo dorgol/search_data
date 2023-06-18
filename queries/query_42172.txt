@@ -1,0 +1,44 @@
+/*
+    Name: PL Retrial eligibility
+    Query ID: 42172
+    Created By: Mitesh Hirani
+    Last Updated At: 2023-05-23T15:55:58.211Z
+    */
+    
+with 
+trials as
+(
+SELECT 
+distinct id_for_vendor,
+date(last_subscription_renewal_date) as last_active
+ FROM `ltx-dwh-prod-processed.subscriptions.unified_subscriptions_state` WHERE --DATE(original_purchase_date) >= "2023-05-01"
+--and 
+application='editor'
+and had_trial=true
+and is_in_trial_period=false
+and is_active=false
+-- LIMIT 1000
+)
+
+,
+usage as 
+(
+select 
+dt,
+platform_device_id
+from `ltx-dwh-prod-processed.agg.app_device_date`
+where app_name='editor'
+and dt>='2023-03-01'
+)
+
+
+select 
+date_trunc(usage.dt,week) as dt,
+count(distinct usage.platform_device_id) as users,
+count(distinct trials.id_for_vendor) as eligibe_for_retrial,
+safe_divide(count(distinct trials.id_for_vendor),count(distinct usage.platform_device_id))*100 as pct_of_wau_eligble
+from usage
+left join trials
+on usage.platform_device_id=trials.id_for_vendor
+and trials.last_active<usage.dt
+group by 1

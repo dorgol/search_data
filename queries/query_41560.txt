@@ -1,0 +1,52 @@
+/*
+    Name: [FT-1073] beautyFeedPPU_03_2023 transactions
+    Query ID: 41560
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-05-22T07:42:43.872Z
+    */
+    with users as
+    (
+        select distinct 
+            d.experiment,
+            d.first_day, 
+            d.variant,
+            d.segmentation,
+            d.id_for_vendor,
+            d.experiment_started_meta,
+            d.experiment_started_meta_by_type,
+            d.display_type,
+        from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+        where 
+        true
+        and d.application = '{{app_name}}'
+        and lower(d.experiment) like lower('%{{experiment}}%')
+        and lower(d.experiment) not like lower('%AU_UK%')
+        and d.display_type = 'reached home screen'
+        and date(d.experiment_started_meta) >= '{{start_date}}'
+        and case 
+            when '{{segmentation}}' = 'All Users' then d.segmentation = '01 All Users' 
+            when '{{segmentation}}' = 'New Users' then d.segmentation = '02 New Users' 
+            when '{{segmentation}}' = 'Existing Users' then d.segmentation = '03 Existing Users' 
+            else true end
+        group by 1,2,3,4,5,6,7,8
+)
+
+
+SELECT distinct
+    date_trunc(t.purchase_date, {{period}}) as period,
+    t.subscription.product_id, 
+    count(distinct t.subscription.original_transaction_id) over (partition by date_trunc(t.purchase_date, {{period}}),t.subscription.product_id) as transactions,
+    count(distinct t.subscription.original_transaction_id) over () as total_transactions,
+    sum(payments.actual_proceeds) over (partition by date_trunc(t.purchase_date, {{period}}),t.subscription.product_id) as revenue,
+    sum(payments.actual_proceeds) over () as total_rev
+FROM users u
+join `ltx-dwh-prod-processed.subscriptions.purchase_to_verified_devices` as sd
+    on sd.lt_defacto_id = farm_fingerprint('{{app_name}}' || coalesce(u.id_for_vendor, '')) 
+join `ltx-dwh-prod-processed.subscriptions.unified_transactions_revenue_allocation` t
+    on sd.lt_subscription_id = t.lt_subscription_id 
+WHERE true
+and t.application = '{{app_name}}'
+and DATE(t.purchase_date) >= '{{start_date}}'
+and date(t.original_purchase_date) >= '{{start_date}}'
+and t.subscription.product_id like '%Facetune2.FeedTemplate%'
+and payments.actual_proceeds > 0

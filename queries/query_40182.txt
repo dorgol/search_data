@@ -1,0 +1,118 @@
+/*
+    Name: [FT-1067] Beauty Feed - Feature Retention - Variant 2 - cumulative
+    Query ID: 40182
+    Created By: Shiri Zangvil Hassidov
+    Last Updated At: 2023-03-09T12:47:31.329Z
+    */
+    with 
+users as (
+    select distinct 
+        d.experiment,
+        d.first_day, 
+        d.variant,
+        d.segmentation,
+        d.country,
+        d.id_for_vendor,
+        d.experiment_started_meta,
+        d.display_type,
+        count(distinct id_for_vendor) over (partition by segmentation, variant) total_activated_users
+    from `ltx-dwh-prod-processed`.`ab_test`.`raw_final_devices_and_variant` d
+    where case 
+        when '{{segments}}' = 'All Users' then segmentation = '01 All Users' 
+        when '{{segments}}' = 'New Users' then segmentation = '02 New Users' 
+        when '{{segments}}' = 'Existing Users' then segmentation = '03 Existing Users' 
+        else true end
+    and  d.application = '{{app_name}}'
+    and lower(d.experiment) like lower('%{{experiment}}%') 
+    and display_type = '{{display}}'
+),
+
+feature_usage as (
+    select distinct
+        segmentation,
+        variant,
+        fs.platform_device_id,
+        event_id,
+        device_timestamp,
+        feature_name,
+        is_subscriber,
+        experiment_started_meta,
+        count(distinct event_id) over (partition by platform_device_id, segmentation, variant, feature_name) num_times_used_feature,
+        count(distinct platform_device_id) over (partition by segmentation, variant, feature_name) total_used_feature
+    from users u
+    join (
+        select platform_device_id, feature_name, is_subscriber, event_id, device_timestamp, meta_received_at
+        from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_feature_started`
+        where app_name = '{{app_name}}'
+        and meta_received_at >= '{{start_date}}'
+        and cast(app_version_code as int64) >= {{since_version}}
+        and case when feature_name = 'BeautyPresets' then source like 'main_toolbar%' else true end
+        
+        union all
+        
+        select platform_device_id, 'BeautyPresets' as feature_name, is_subscriber, event_id, device_timestamp, meta_received_at
+        from `ltx-dwh-prod-raw.analytics_global.ltx_global_button_pressed` n
+        where true
+        and n.app_name = '{{app_name}}'
+        and cast(n.app_version_code as int64) >= {{since_version}}
+        and date(n.meta_received_at) >= '{{start_date}}'
+        and n.screen_name = 'home_screen'
+        and n.button_identifier = 'beautyFeed'
+        
+        union all
+        
+        select platform_device_id, 'BeautyPresets' as feature_name, is_subscriber, event_id, device_timestamp, meta_received_at
+        from `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_screen_dismissed` q
+        where true
+        and q.app_name = '{{app_name}}'
+        and cast(q.app_version_code as int64) >= {{since_version}}
+        and date(q.meta_received_at) >= '{{start_date}}'
+        and q.screen_name = 'beauty_quickstart'
+        and q.destination = 'beauty_feed'
+        
+        union all
+        
+        select d.platform_device_id, 'BeautyPresets' as feature_name, d.is_subscriber, d.event_id, d.device_timestamp, d.meta_received_at
+        from `ltx-dwh-prod-raw.analytics_global.ltx_global_message_presented` m
+        left join `ltx-dwh-prod-raw`.`analytics_global`.`ltx_global_message_dismissed` d
+            on true
+            and d.app_name = '{{app_name}}'
+            and d.platform_device_id = m.platform_device_id
+            and cast(d.app_version_code as int64) >= {{since_version}}
+            and date(d.meta_received_at) >= '{{start_date}}'
+            and d.flow_id = m.flow_id
+            and d.reason = 'accepted'
+        where true
+        and m.app_name = '{{app_name}}'
+        and cast(m.app_version_code as int64) >= {{since_version}}
+        and date(m.meta_received_at) >= '{{start_date}}'
+        and m.message_name = 'beautyFeedWhatsNew'
+
+        )fs
+        on fs.platform_device_id = u.id_for_vendor
+        and fs.meta_received_at >= u.experiment_started_meta
+        
+),
+
+series as (
+select * from unnest(generate_array(1,5)) as num_times
+)
+
+
+select
+    segmentation,
+    variant,
+    feature_name,
+    num_times,
+    total_used_feature,
+    count(distinct platform_device_id) num_feature_users,
+    100* count(distinct platform_device_id) / total_used_feature as pct_num_feature_users
+from feature_usage f
+join series s
+    on s.num_times <= num_times_used_feature
+where true
+--and is_subscriber
+and variant = 'Variant2'
+and feature_name in ('BeautyPresets','Face','Retouch','Reshape','Looks','Makeup','aiEnhance')
+group by 1,2,3,4,5
+order by 1,2,3,4
