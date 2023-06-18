@@ -9,11 +9,9 @@ os.environ["OPENAI_ORGANIZATION"] = st.secrets["OPENAI_ORGANIZATION"]
 user_input = st.text_input("I'm looking for data about",
                            "number of installations per period in Facetune2")
 
-indexing(split=True, chunk_size=2000, chunk_overlap=400)
 
 vectordb = load_db()
 retriever, docs = get_relevant(vectordb, user_input)
-st.write(docs)
 response = summary_query(docs, user_input)
 
 st.write(response['output_text'])
