@@ -4,3 +4,4 @@ streamlit==1.23.1
 tqdm==4.65.0
 openai
 chromadb
+tiktoken
