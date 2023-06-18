@@ -43,26 +43,8 @@ def create_contains_condition(field, value):
     return {"$contains": f"{field}: {value}"}
 
 
-# def filter_db(db, query_text, conditions):
-#     """
-#     Filter the ChromaDB based on the specified conditions.
-#
-#     Args:
-#         db: The ChromaDB object.
-#         query_text (str): The query text to search for.
-#         conditions (list): List of condition dictionaries.
-#
-#     Returns:
-#         ChromaDB: Filtered ChromaDB object containing the filtered results.
-#     """
-#     where_document = create_condition("$or", *conditions)
-#     filtered_results = db._collection.query(query_texts=query_text, where_document=where_document)
-#     filtered_db = ChromaDB(filtered_results)
-#     return filtered_db
-
-
 def get_relevant(db, filter_input):
-    retriever = db.as_retriever(search_kwargs={"k": 5})
+    retriever = db.as_retriever(search_kwargs={"k": 10})
     docs = retriever.get_relevant_documents(filter_input)
     return retriever, docs
 
