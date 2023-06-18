@@ -14,7 +14,7 @@ import config
 from config import model_name
 
 # os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
-
+st.write(os.environ["OPENAI_API_KEY"])
 
 def create_condition(operator, *conditions):
     """
