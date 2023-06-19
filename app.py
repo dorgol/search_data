@@ -16,7 +16,7 @@ def reindex():
     return vectordb
 
 
-vectordb = reindex()
+vectordb = load_db()
 retriever, docs = get_relevant(vectordb, user_input)
 response = summary_query(docs, user_input)
 
