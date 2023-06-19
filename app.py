@@ -1,7 +1,7 @@
 import os
 import streamlit as st
-from indexing import load_db, indexing
-from generate import get_relevant, summary_query
+from src.indexing import load_db, indexing
+from src.generate import get_relevant, summary_query
 
 os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["OPENAI_ORGANIZATION"] = st.secrets["OPENAI_ORGANIZATION"]
