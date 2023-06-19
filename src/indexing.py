@@ -38,7 +38,7 @@ def indexing(split=False, **kwargs):
 
 
 def load_db():
-    persist_directory = 'db'
+    persist_directory = 'app/search_data/db'
     embedding = OpenAIEmbeddings(openai_api_key=os.environ['OPENAI_API_KEY'],
                                  openai_organization=os.environ['OPENAI_ORGANIZATION'])
     vectordb = Chroma(persist_directory=persist_directory, embedding_function=embedding)
